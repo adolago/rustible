@@ -4,7 +4,8 @@
 //! For shell commands (pipes, redirects, etc.), use the shell module.
 
 use super::{
-    Diff, Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParamExt,
 };
 use std::process::Command;
 
@@ -98,6 +99,10 @@ impl Module for CommandModule {
 
     fn description(&self) -> &'static str {
         "Execute commands without going through a shell"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::RemoteCommand
     }
 
     fn required_params(&self) -> &[&'static str] {

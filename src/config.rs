@@ -259,8 +259,10 @@ impl Default for SshConfig {
     fn default() -> Self {
         Self {
             ssh_args: vec![
-                "-o".to_string(), "ControlMaster=auto".to_string(),
-                "-o".to_string(), "ControlPersist=60s".to_string(),
+                "-o".to_string(),
+                "ControlMaster=auto".to_string(),
+                "-o".to_string(),
+                "ControlPersist=60s".to_string(),
             ],
             ssh_common_args: vec![],
             ssh_extra_args: vec![],
@@ -488,10 +490,7 @@ impl Config {
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
         // Determine format based on extension
-        let extension = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let file_config: Config = match extension {
             "yml" | "yaml" => serde_yaml::from_str(&content)?,
@@ -513,21 +512,62 @@ impl Config {
         // For simplicity, other takes precedence for non-default values
         Config {
             defaults: Defaults {
-                inventory: other.defaults.inventory.or_else(|| self.defaults.inventory.clone()),
-                remote_user: other.defaults.remote_user.or_else(|| self.defaults.remote_user.clone()),
-                forks: if other.defaults.forks != 5 { other.defaults.forks } else { self.defaults.forks },
-                module_name: if other.defaults.module_name != "command" { other.defaults.module_name } else { self.defaults.module_name.clone() },
+                inventory: other
+                    .defaults
+                    .inventory
+                    .or_else(|| self.defaults.inventory.clone()),
+                remote_user: other
+                    .defaults
+                    .remote_user
+                    .or_else(|| self.defaults.remote_user.clone()),
+                forks: if other.defaults.forks != 5 {
+                    other.defaults.forks
+                } else {
+                    self.defaults.forks
+                },
+                module_name: if other.defaults.module_name != "command" {
+                    other.defaults.module_name
+                } else {
+                    self.defaults.module_name.clone()
+                },
                 host_key_checking: other.defaults.host_key_checking,
-                timeout: if other.defaults.timeout != 30 { other.defaults.timeout } else { self.defaults.timeout },
+                timeout: if other.defaults.timeout != 30 {
+                    other.defaults.timeout
+                } else {
+                    self.defaults.timeout
+                },
                 gathering: other.defaults.gathering,
-                transport: if other.defaults.transport != "ssh" { other.defaults.transport } else { self.defaults.transport.clone() },
+                transport: if other.defaults.transport != "ssh" {
+                    other.defaults.transport
+                } else {
+                    self.defaults.transport.clone()
+                },
                 hash_behaviour: other.defaults.hash_behaviour,
                 retry_files_enabled: other.defaults.retry_files_enabled,
-                retry_files_save_path: other.defaults.retry_files_save_path.or_else(|| self.defaults.retry_files_save_path.clone()),
-                roles_path: if other.defaults.roles_path.is_empty() { self.defaults.roles_path.clone() } else { other.defaults.roles_path },
-                collections_path: if other.defaults.collections_path.is_empty() { self.defaults.collections_path.clone() } else { other.defaults.collections_path },
-                action_plugins: if other.defaults.action_plugins.is_empty() { self.defaults.action_plugins.clone() } else { other.defaults.action_plugins },
-                strategy_plugins: if other.defaults.strategy_plugins.is_empty() { self.defaults.strategy_plugins.clone() } else { other.defaults.strategy_plugins },
+                retry_files_save_path: other
+                    .defaults
+                    .retry_files_save_path
+                    .or_else(|| self.defaults.retry_files_save_path.clone()),
+                roles_path: if other.defaults.roles_path.is_empty() {
+                    self.defaults.roles_path.clone()
+                } else {
+                    other.defaults.roles_path
+                },
+                collections_path: if other.defaults.collections_path.is_empty() {
+                    self.defaults.collections_path.clone()
+                } else {
+                    other.defaults.collections_path
+                },
+                action_plugins: if other.defaults.action_plugins.is_empty() {
+                    self.defaults.action_plugins.clone()
+                } else {
+                    other.defaults.action_plugins
+                },
+                strategy_plugins: if other.defaults.strategy_plugins.is_empty() {
+                    self.defaults.strategy_plugins.clone()
+                } else {
+                    other.defaults.strategy_plugins
+                },
                 strategy: other.defaults.strategy,
             },
             connection: other.connection,
@@ -536,13 +576,31 @@ impl Config {
             colors: other.colors,
             logging: other.logging,
             vault: VaultConfig {
-                password_file: other.vault.password_file.or_else(|| self.vault.password_file.clone()),
-                identity_list: if other.vault.identity_list.is_empty() { self.vault.identity_list.clone() } else { other.vault.identity_list },
-                encrypt_vault_id: other.vault.encrypt_vault_id.or_else(|| self.vault.encrypt_vault_id.clone()),
+                password_file: other
+                    .vault
+                    .password_file
+                    .or_else(|| self.vault.password_file.clone()),
+                identity_list: if other.vault.identity_list.is_empty() {
+                    self.vault.identity_list.clone()
+                } else {
+                    other.vault.identity_list
+                },
+                encrypt_vault_id: other
+                    .vault
+                    .encrypt_vault_id
+                    .or_else(|| self.vault.encrypt_vault_id.clone()),
             },
             galaxy: other.galaxy,
-            module_paths: if other.module_paths.is_empty() { self.module_paths.clone() } else { other.module_paths },
-            role_paths: if other.role_paths.is_empty() { self.role_paths.clone() } else { other.role_paths },
+            module_paths: if other.module_paths.is_empty() {
+                self.module_paths.clone()
+            } else {
+                other.module_paths
+            },
+            role_paths: if other.role_paths.is_empty() {
+                self.role_paths.clone()
+            } else {
+                other.role_paths
+            },
             environment: {
                 let mut env = self.environment.clone();
                 env.extend(other.environment);
@@ -655,7 +713,7 @@ mod tests {
         assert_eq!(config.defaults.forks, 5);
         assert_eq!(config.defaults.timeout, 30);
         assert_eq!(config.defaults.transport, "ssh");
-        assert!(!config.privilege_escalation.become);
+        assert!(!config.privilege_escalation.r#become);
     }
 
     #[test]

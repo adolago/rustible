@@ -4,7 +4,8 @@
 //! permissions, ownership, and symbolic links.
 
 use super::{
-    Diff, Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParamExt,
 };
 use std::fs;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
@@ -281,6 +282,10 @@ impl Module for FileModule {
 
     fn description(&self) -> &'static str {
         "Manage file and directory state"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::NativeTransport
     }
 
     fn required_params(&self) -> &[&'static str] {

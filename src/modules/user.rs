@@ -3,7 +3,8 @@
 //! This module manages user accounts on the system.
 
 use super::{
-    Diff, Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParamExt,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -414,6 +415,10 @@ impl Module for UserModule {
 
     fn description(&self) -> &'static str {
         "Manage user accounts"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::RemoteCommand
     }
 
     fn required_params(&self) -> &[&'static str] {

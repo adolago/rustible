@@ -4,7 +4,8 @@
 //! to a destination file.
 
 use super::{
-    Diff, Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParamExt,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -163,6 +164,10 @@ impl Module for TemplateModule {
 
     fn description(&self) -> &'static str {
         "Render Tera/Jinja2 templates to a destination"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::NativeTransport
     }
 
     fn required_params(&self) -> &[&'static str] {

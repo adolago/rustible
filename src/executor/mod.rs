@@ -172,7 +172,10 @@ impl Executor {
 
     /// Run a complete playbook
     #[instrument(skip(self, playbook), fields(playbook_name = %playbook.name))]
-    pub async fn run_playbook(&self, playbook: &Playbook) -> ExecutorResult<HashMap<String, HostResult>> {
+    pub async fn run_playbook(
+        &self,
+        playbook: &Playbook,
+    ) -> ExecutorResult<HashMap<String, HostResult>> {
         info!("Starting playbook: {}", playbook.name);
 
         let mut all_results: HashMap<String, HostResult> = HashMap::new();
@@ -283,7 +286,12 @@ impl Executor {
             // Filter hosts that haven't failed
             let active_hosts: Vec<_> = hosts
                 .iter()
-                .filter(|h| !results.get(*h).map(|r| r.failed || r.unreachable).unwrap_or(false))
+                .filter(|h| {
+                    !results
+                        .get(*h)
+                        .map(|r| r.failed || r.unreachable)
+                        .unwrap_or(false)
+                })
                 .cloned()
                 .collect();
 
@@ -342,11 +350,9 @@ impl Executor {
                             break;
                         }
 
-                        let ctx = ExecutionContext {
-                            host: host.clone(),
-                            check_mode: config.check_mode,
-                            diff_mode: config.diff_mode,
-                        };
+                        let ctx = ExecutionContext::new(host.clone())
+                            .with_check_mode(config.check_mode)
+                            .with_diff_mode(config.diff_mode);
 
                         let task_result = task.execute(&ctx, &runtime, &handlers, &notified).await;
 
@@ -414,11 +420,9 @@ impl Executor {
                 tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.unwrap();
 
-                    let ctx = ExecutionContext {
-                        host: host.clone(),
-                        check_mode: config.check_mode,
-                        diff_mode: config.diff_mode,
-                    };
+                    let ctx = ExecutionContext::new(host.clone())
+                        .with_check_mode(config.check_mode)
+                        .with_diff_mode(config.diff_mode);
 
                     let result = task.execute(&ctx, &runtime, &handlers, &notified).await;
 
@@ -487,10 +491,7 @@ impl Executor {
                 .map_err(|e| ExecutorError::ParseError(format!("Invalid regex: {}", e)))?;
 
             let all_hosts = runtime.get_all_hosts();
-            let matched: Vec<_> = all_hosts
-                .into_iter()
-                .filter(|h| re.is_match(h))
-                .collect();
+            let matched: Vec<_> = all_hosts.into_iter().filter(|h| re.is_match(h)).collect();
 
             return Ok(matched);
         }

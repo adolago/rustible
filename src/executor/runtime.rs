@@ -13,6 +13,8 @@ use serde_json::Value as JsonValue;
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
+use crate::connection::Connection;
+
 /// Scope levels for variable resolution
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VarScope {
@@ -199,7 +201,7 @@ pub struct InventoryGroup {
 }
 
 /// Execution context passed to tasks
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ExecutionContext {
     /// Current host being executed on
     pub host: String,
@@ -207,6 +209,25 @@ pub struct ExecutionContext {
     pub check_mode: bool,
     /// Whether to show diffs
     pub diff_mode: bool,
+    /// Optional connection for remote execution
+    pub connection: Option<Arc<dyn Connection>>,
+    /// Python interpreter path on remote host
+    pub python_interpreter: String,
+}
+
+impl std::fmt::Debug for ExecutionContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecutionContext")
+            .field("host", &self.host)
+            .field("check_mode", &self.check_mode)
+            .field("diff_mode", &self.diff_mode)
+            .field(
+                "connection",
+                &self.connection.as_ref().map(|c| c.identifier()),
+            )
+            .field("python_interpreter", &self.python_interpreter)
+            .finish()
+    }
 }
 
 impl ExecutionContext {
@@ -215,6 +236,8 @@ impl ExecutionContext {
             host: host.into(),
             check_mode: false,
             diff_mode: false,
+            connection: None,
+            python_interpreter: "/usr/bin/python3".to_string(),
         }
     }
 
@@ -225,6 +248,18 @@ impl ExecutionContext {
 
     pub fn with_diff_mode(mut self, diff: bool) -> Self {
         self.diff_mode = diff;
+        self
+    }
+
+    /// Set the connection for remote execution
+    pub fn with_connection(mut self, conn: Arc<dyn Connection>) -> Self {
+        self.connection = Some(conn);
+        self
+    }
+
+    /// Set the Python interpreter path
+    pub fn with_python_interpreter(mut self, path: impl Into<String>) -> Self {
+        self.python_interpreter = path.into();
         self
     }
 }
@@ -437,7 +472,10 @@ impl RuntimeContext {
         }
 
         // Add special vars
-        merged.insert("inventory_hostname".to_string(), JsonValue::String(host.to_string()));
+        merged.insert(
+            "inventory_hostname".to_string(),
+            JsonValue::String(host.to_string()),
+        );
         merged.insert(
             "inventory_hostname_short".to_string(),
             JsonValue::String(host.split('.').next().unwrap_or(host).to_string()),
@@ -640,24 +678,15 @@ mod tests {
         ctx.set_play_var("var1".to_string(), serde_json::json!("play"));
 
         // Play should override global
-        assert_eq!(
-            ctx.get_var("var1", None),
-            Some(serde_json::json!("play"))
-        );
+        assert_eq!(ctx.get_var("var1", None), Some(serde_json::json!("play")));
 
         // Task should override play
         ctx.set_task_var("var1".to_string(), serde_json::json!("task"));
-        assert_eq!(
-            ctx.get_var("var1", None),
-            Some(serde_json::json!("task"))
-        );
+        assert_eq!(ctx.get_var("var1", None), Some(serde_json::json!("task")));
 
         // Extra should override all
         ctx.set_extra_var("var1".to_string(), serde_json::json!("extra"));
-        assert_eq!(
-            ctx.get_var("var1", None),
-            Some(serde_json::json!("extra"))
-        );
+        assert_eq!(ctx.get_var("var1", None), Some(serde_json::json!("extra")));
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //! (apt, dnf, yum, pacman, zypper, etc.).
 
 use super::{
-    Diff, Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParallelizationHint, ParamExt,
 };
 use std::collections::HashMap;
 use std::process::Command;
@@ -234,6 +235,15 @@ impl Module for PackageModule {
 
     fn description(&self) -> &'static str {
         "Manage packages using the system package manager"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::RemoteCommand
+    }
+
+    fn parallelization_hint(&self) -> ParallelizationHint {
+        // Package managers use locks - only one can run per host at a time
+        ParallelizationHint::HostExclusive
     }
 
     fn required_params(&self) -> &[&'static str] {

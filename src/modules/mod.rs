@@ -11,10 +11,13 @@ pub mod file;
 // TODO: lineinfile module needs to be converted to sync Module trait
 // pub mod lineinfile;
 pub mod package;
+pub mod python;
 pub mod service;
 pub mod shell;
 pub mod template;
 pub mod user;
+
+pub use python::PythonModuleExecutor;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -54,6 +57,9 @@ pub enum ModuleError {
 
     #[error("Unsupported operation: {0}")]
     Unsupported(String),
+
+    #[error("Ansible module not found: {0}")]
+    ModuleNotFound(String),
 }
 
 /// Result type for module operations
@@ -82,6 +88,75 @@ impl fmt::Display for ModuleStatus {
             ModuleStatus::Skipped => write!(f, "skipped"),
         }
     }
+}
+
+/// Classification of modules based on their execution characteristics.
+///
+/// This enables intelligent parallelization and backwards compatibility with
+/// Ansible modules by categorizing how each module executes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ModuleClassification {
+    /// Tier 1: Logic modules that run entirely on the control node.
+    /// Examples: debug, set_fact, assert, fail, meta, include_tasks
+    /// These never touch the remote host and execute in nanoseconds.
+    LocalLogic,
+
+    /// Tier 2: File/transport modules implemented natively in Rust.
+    /// Examples: copy, template, file, lineinfile, fetch
+    /// These use direct SSH/SFTP operations without remote Python.
+    NativeTransport,
+
+    /// Tier 3: Remote command execution modules.
+    /// Examples: command, shell, service, package, user
+    /// These execute commands on the remote host via SSH.
+    #[default]
+    RemoteCommand,
+
+    /// Tier 4: Python fallback for Ansible module compatibility.
+    /// Used for any module without a native Rust implementation.
+    /// Executes via AnsiballZ-compatible Python wrapper.
+    PythonFallback,
+}
+
+impl fmt::Display for ModuleClassification {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ModuleClassification::LocalLogic => write!(f, "local_logic"),
+            ModuleClassification::NativeTransport => write!(f, "native_transport"),
+            ModuleClassification::RemoteCommand => write!(f, "remote_command"),
+            ModuleClassification::PythonFallback => write!(f, "python_fallback"),
+        }
+    }
+}
+
+/// Hints for how a module can be parallelized across hosts.
+///
+/// The executor uses these hints to determine safe concurrency levels
+/// and prevent race conditions or resource contention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ParallelizationHint {
+    /// Safe to run simultaneously across all hosts.
+    /// No shared state, no resource contention expected.
+    #[default]
+    FullyParallel,
+
+    /// Requires exclusive access per host.
+    /// Example: apt/yum operations that acquire package manager locks.
+    HostExclusive,
+
+    /// Network rate-limited operations.
+    /// Example: API calls to cloud providers with rate limits.
+    RateLimited {
+        /// Maximum requests per second across all hosts
+        requests_per_second: u32,
+    },
+
+    /// Requires global exclusive access.
+    /// Only one instance can run across the entire inventory.
+    /// Example: Cluster-wide configuration changes.
+    GlobalExclusive,
 }
 
 /// Represents a difference between current and desired state
@@ -291,6 +366,28 @@ pub trait Module: Send + Sync {
 
     /// Returns a description of what the module does
     fn description(&self) -> &'static str;
+
+    /// Returns the classification of this module for execution optimization.
+    ///
+    /// The classification determines how the executor handles this module:
+    /// - `LocalLogic`: Runs on control node only, no remote execution
+    /// - `NativeTransport`: Uses native Rust SSH/SFTP operations
+    /// - `RemoteCommand`: Executes commands on remote host (default)
+    /// - `PythonFallback`: Falls back to Ansible Python module execution
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::RemoteCommand
+    }
+
+    /// Returns parallelization hints for the executor.
+    ///
+    /// This helps the executor determine safe concurrency levels:
+    /// - `FullyParallel`: Can run on all hosts simultaneously (default)
+    /// - `HostExclusive`: Only one task per host (e.g., package managers)
+    /// - `RateLimited`: Network rate-limited operations
+    /// - `GlobalExclusive`: Only one instance across entire inventory
+    fn parallelization_hint(&self) -> ParallelizationHint {
+        ParallelizationHint::FullyParallel
+    }
 
     /// Execute the module with the given parameters
     fn execute(&self, params: &ModuleParams, context: &ModuleContext)

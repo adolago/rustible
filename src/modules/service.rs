@@ -3,7 +3,8 @@
 //! This module manages system services using systemd (or other init systems).
 
 use super::{
-    Diff, Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParamExt,
 };
 use std::process::Command;
 
@@ -230,6 +231,10 @@ impl Module for ServiceModule {
 
     fn description(&self) -> &'static str {
         "Manage system services"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::RemoteCommand
     }
 
     fn required_params(&self) -> &[&'static str] {

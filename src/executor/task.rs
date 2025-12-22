@@ -123,7 +123,11 @@ impl TaskResult {
     }
 
     /// Convert to RegisteredResult
-    pub fn to_registered(&self, stdout: Option<String>, stderr: Option<String>) -> RegisteredResult {
+    pub fn to_registered(
+        &self,
+        stdout: Option<String>,
+        stderr: Option<String>,
+    ) -> RegisteredResult {
         RegisteredResult {
             changed: self.changed,
             failed: self.status == TaskStatus::Failed,
@@ -312,13 +316,18 @@ impl Task {
             let should_run = self.evaluate_condition(condition, ctx, runtime).await?;
             if !should_run {
                 debug!("Task skipped due to when condition: {}", condition);
-                return Ok(TaskResult::skipped(format!("Skipped: condition '{}' was false", condition)));
+                return Ok(TaskResult::skipped(format!(
+                    "Skipped: condition '{}' was false",
+                    condition
+                )));
             }
         }
 
         // Handle loops
         if let Some(ref items) = self.loop_items {
-            return self.execute_loop(items, ctx, runtime, handlers, notified).await;
+            return self
+                .execute_loop(items, ctx, runtime, handlers, notified)
+                .await;
         }
 
         // Execute the module
@@ -332,7 +341,8 @@ impl Task {
 
         // Register result if needed
         if let Some(ref register_name) = self.register {
-            self.register_result(register_name, &result, ctx, runtime).await?;
+            self.register_result(register_name, &result, ctx, runtime)
+                .await?;
         }
 
         // Notify handlers if task changed
@@ -350,10 +360,7 @@ impl Task {
             return Ok(TaskResult {
                 status: TaskStatus::Ok,
                 changed: false,
-                msg: Some(format!(
-                    "Ignored error: {}",
-                    result.msg.unwrap_or_default()
-                )),
+                msg: Some(format!("Ignored error: {}", result.msg.unwrap_or_default())),
                 result: result.result,
                 diff: result.diff,
             });
@@ -382,13 +389,16 @@ impl Task {
             {
                 let mut rt = runtime.write().await;
                 rt.set_task_var(self.loop_var.clone(), item.clone());
-                rt.set_task_var("ansible_loop".to_string(), serde_json::json!({
-                    "index": index,
-                    "index0": index,
-                    "first": index == 0,
-                    "last": index == items.len() - 1,
-                    "length": items.len(),
-                }));
+                rt.set_task_var(
+                    "ansible_loop".to_string(),
+                    serde_json::json!({
+                        "index": index,
+                        "index0": index,
+                        "first": index == 0,
+                        "last": index == items.len() - 1,
+                        "length": items.len(),
+                    }),
+                );
             }
 
             // Execute for this item
@@ -486,13 +496,85 @@ impl Task {
             "include_tasks" | "import_tasks" => self.execute_include_tasks(&args).await,
             "meta" => self.execute_meta(&args).await,
             _ => {
-                // Unknown module - in real implementation, this would call an external module
-                debug!("Unknown module: {}, simulating execution", self.module);
+                // Python fallback for unknown modules
+                // Check if we can find the module in Ansible's module library
+                let mut executor = crate::modules::PythonModuleExecutor::new();
 
-                if ctx.check_mode {
-                    Ok(TaskResult::ok().with_msg("Check mode - no changes"))
+                if let Some(module_path) = executor.find_module(&self.module) {
+                    debug!(
+                        "Found Ansible module {} at {} - Python fallback available",
+                        self.module,
+                        module_path.display()
+                    );
+
+                    // In check mode, report that we would execute
+                    if ctx.check_mode {
+                        return Ok(TaskResult::ok().with_msg(format!(
+                            "Check mode - would execute Python module: {}",
+                            self.module
+                        )));
+                    }
+
+                    // Execute via Python if connection is available
+                    if let Some(ref connection) = ctx.connection {
+                        // Convert args to ModuleParams-compatible format
+                        let module_params: std::collections::HashMap<String, serde_json::Value> =
+                            args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+                        match executor
+                            .execute(
+                                connection.as_ref(),
+                                &self.module,
+                                &module_params,
+                                &ctx.python_interpreter,
+                            )
+                            .await
+                        {
+                            Ok(output) => {
+                                let msg = output.msg.clone();
+                                let mut result = if output.changed {
+                                    TaskResult::changed()
+                                } else {
+                                    TaskResult::ok()
+                                };
+                                result.msg = Some(msg);
+                                if !output.data.is_empty() {
+                                    result.result = Some(
+                                        serde_json::to_value(&output.data).unwrap_or_default(),
+                                    );
+                                }
+                                Ok(result)
+                            }
+                            Err(e) => Err(ExecutorError::RuntimeError(format!(
+                                "Python module {} failed: {}",
+                                self.module, e
+                            ))),
+                        }
+                    } else {
+                        // No connection available - simulate for localhost or log warning
+                        if ctx.host == "localhost" || ctx.host == "127.0.0.1" {
+                            warn!(
+                                "Python module {} would need local execution (not implemented)",
+                                self.module
+                            );
+                        } else {
+                            warn!(
+                                "Python module {} requires connection to {} (not available)",
+                                self.module, ctx.host
+                            );
+                        }
+                        Ok(TaskResult::changed().with_msg(format!(
+                            "Executed Python module: {} (simulated - no connection)",
+                            self.module
+                        )))
+                    }
                 } else {
-                    Ok(TaskResult::changed().with_msg(format!("Executed module: {}", self.module)))
+                    // Module not found anywhere
+                    Err(ExecutorError::ModuleNotFound(format!(
+                        "Module '{}' not found. Not a native module and not found in Ansible module paths. \
+                        Ensure Ansible is installed or set ANSIBLE_LIBRARY environment variable.",
+                        self.module
+                    )))
                 }
             }
         };
@@ -561,7 +643,10 @@ impl Task {
             let should_fail = self.evaluate_condition(condition, ctx, runtime).await?;
             if should_fail {
                 result.status = TaskStatus::Failed;
-                result.msg = Some(format!("Failed due to failed_when condition: {}", condition));
+                result.msg = Some(format!(
+                    "Failed due to failed_when condition: {}",
+                    condition
+                ));
             }
         }
         Ok(result)
@@ -625,10 +710,13 @@ impl Task {
         ctx: &ExecutionContext,
         _runtime: &Arc<RwLock<RuntimeContext>>,
     ) -> ExecutorResult<TaskResult> {
-        let cmd = args.get("cmd")
+        let cmd = args
+            .get("cmd")
             .or_else(|| args.get("_raw_params"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("command module requires 'cmd' argument".into()))?;
+            .ok_or_else(|| {
+                ExecutorError::RuntimeError("command module requires 'cmd' argument".into())
+            })?;
 
         if ctx.check_mode {
             return Ok(TaskResult::skipped("Check mode - command not executed"));
@@ -656,9 +744,9 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let dest = args.get("dest")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("copy module requires 'dest' argument".into()))?;
+        let dest = args.get("dest").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutorError::RuntimeError("copy module requires 'dest' argument".into())
+        })?;
 
         if ctx.check_mode {
             return Ok(TaskResult::ok().with_msg("Check mode - would copy file"));
@@ -673,16 +761,15 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let path = args.get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("file module requires 'path' argument".into()))?;
+        let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutorError::RuntimeError("file module requires 'path' argument".into())
+        })?;
 
-        let state = args.get("state")
-            .and_then(|v| v.as_str())
-            .unwrap_or("file");
+        let state = args.get("state").and_then(|v| v.as_str()).unwrap_or("file");
 
         if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg(format!("Check mode - would ensure {} is {}", path, state)));
+            return Ok(TaskResult::ok()
+                .with_msg(format!("Check mode - would ensure {} is {}", path, state)));
         }
 
         debug!("Would ensure {} state for: {}", state, path);
@@ -695,13 +782,13 @@ impl Task {
         ctx: &ExecutionContext,
         _runtime: &Arc<RwLock<RuntimeContext>>,
     ) -> ExecutorResult<TaskResult> {
-        let src = args.get("src")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("template module requires 'src' argument".into()))?;
+        let src = args.get("src").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutorError::RuntimeError("template module requires 'src' argument".into())
+        })?;
 
-        let dest = args.get("dest")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("template module requires 'dest' argument".into()))?;
+        let dest = args.get("dest").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutorError::RuntimeError("template module requires 'dest' argument".into())
+        })?;
 
         if ctx.check_mode {
             return Ok(TaskResult::ok().with_msg("Check mode - would template file"));
@@ -716,15 +803,20 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let name = args.get("name")
-            .ok_or_else(|| ExecutorError::RuntimeError("package module requires 'name' argument".into()))?;
+        let name = args.get("name").ok_or_else(|| {
+            ExecutorError::RuntimeError("package module requires 'name' argument".into())
+        })?;
 
-        let state = args.get("state")
+        let state = args
+            .get("state")
             .and_then(|v| v.as_str())
             .unwrap_or("present");
 
         if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg(format!("Check mode - would ensure package {:?} is {}", name, state)));
+            return Ok(TaskResult::ok().with_msg(format!(
+                "Check mode - would ensure package {:?} is {}",
+                name, state
+            )));
         }
 
         debug!("Would ensure package {:?} is {}", name, state);
@@ -736,20 +828,23 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let name = args.get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("service module requires 'name' argument".into()))?;
+        let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutorError::RuntimeError("service module requires 'name' argument".into())
+        })?;
 
-        let state = args.get("state")
-            .and_then(|v| v.as_str());
-        let enabled = args.get("enabled")
-            .and_then(|v| v.as_bool());
+        let state = args.get("state").and_then(|v| v.as_str());
+        let enabled = args.get("enabled").and_then(|v| v.as_bool());
 
         if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg(format!("Check mode - would manage service {}", name)));
+            return Ok(
+                TaskResult::ok().with_msg(format!("Check mode - would manage service {}", name))
+            );
         }
 
-        debug!("Would manage service: {} (state: {:?}, enabled: {:?})", name, state, enabled);
+        debug!(
+            "Would manage service: {} (state: {:?}, enabled: {:?})",
+            name, state, enabled
+        );
         Ok(TaskResult::changed().with_msg(format!("Service {} managed", name)))
     }
 
@@ -758,12 +853,14 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let name = args.get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("user module requires 'name' argument".into()))?;
+        let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutorError::RuntimeError("user module requires 'name' argument".into())
+        })?;
 
         if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg(format!("Check mode - would manage user {}", name)));
+            return Ok(
+                TaskResult::ok().with_msg(format!("Check mode - would manage user {}", name))
+            );
         }
 
         debug!("Would manage user: {}", name);
@@ -775,12 +872,14 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let name = args.get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("group module requires 'name' argument".into()))?;
+        let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutorError::RuntimeError("group module requires 'name' argument".into())
+        })?;
 
         if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg(format!("Check mode - would manage group {}", name)));
+            return Ok(
+                TaskResult::ok().with_msg(format!("Check mode - would manage group {}", name))
+            );
         }
 
         debug!("Would manage group: {}", name);
@@ -792,9 +891,9 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let path = args.get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("lineinfile requires 'path' argument".into()))?;
+        let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutorError::RuntimeError("lineinfile requires 'path' argument".into())
+        })?;
 
         if ctx.check_mode {
             return Ok(TaskResult::ok().with_msg(format!("Check mode - would modify {}", path)));
@@ -809,12 +908,14 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let path = args.get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("blockinfile requires 'path' argument".into()))?;
+        let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutorError::RuntimeError("blockinfile requires 'path' argument".into())
+        })?;
 
         if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg(format!("Check mode - would modify block in {}", path)));
+            return Ok(
+                TaskResult::ok().with_msg(format!("Check mode - would modify block in {}", path))
+            );
         }
 
         debug!("Would modify block in: {}", path);
@@ -826,7 +927,8 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         _ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let path = args.get("path")
+        let path = args
+            .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ExecutorError::RuntimeError("stat requires 'path' argument".into()))?;
 
@@ -847,11 +949,9 @@ impl Task {
         Ok(TaskResult::ok().with_result(serde_json::json!({ "stat": stat_result })))
     }
 
-    async fn execute_fail(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-    ) -> ExecutorResult<TaskResult> {
-        let msg = args.get("msg")
+    async fn execute_fail(&self, args: &IndexMap<String, JsonValue>) -> ExecutorResult<TaskResult> {
+        let msg = args
+            .get("msg")
             .and_then(|v| v.as_str())
             .unwrap_or("Failed as requested");
 
@@ -864,19 +964,25 @@ impl Task {
         ctx: &ExecutionContext,
         runtime: &Arc<RwLock<RuntimeContext>>,
     ) -> ExecutorResult<TaskResult> {
-        let that = args.get("that")
+        let that = args
+            .get("that")
             .ok_or_else(|| ExecutorError::RuntimeError("assert requires 'that' argument".into()))?;
 
         let conditions: Vec<&str> = match that {
             JsonValue::String(s) => vec![s.as_str()],
             JsonValue::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
-            _ => return Err(ExecutorError::RuntimeError("assert 'that' must be string or array".into())),
+            _ => {
+                return Err(ExecutorError::RuntimeError(
+                    "assert 'that' must be string or array".into(),
+                ))
+            }
         };
 
         for condition in conditions {
             let result = self.evaluate_condition(condition, ctx, runtime).await?;
             if !result {
-                let fail_msg = args.get("fail_msg")
+                let fail_msg = args
+                    .get("fail_msg")
                     .or_else(|| args.get("msg"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("Assertion failed");
@@ -885,7 +991,8 @@ impl Task {
             }
         }
 
-        let success_msg = args.get("success_msg")
+        let success_msg = args
+            .get("success_msg")
             .and_then(|v| v.as_str())
             .unwrap_or("All assertions passed");
 
@@ -896,9 +1003,7 @@ impl Task {
         &self,
         args: &IndexMap<String, JsonValue>,
     ) -> ExecutorResult<TaskResult> {
-        let seconds = args.get("seconds")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let seconds = args.get("seconds").and_then(|v| v.as_u64()).unwrap_or(0);
 
         if seconds > 0 {
             debug!("Pausing for {} seconds", seconds);
@@ -913,14 +1018,12 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let host = args.get("host")
+        let host = args
+            .get("host")
             .and_then(|v| v.as_str())
             .unwrap_or(&ctx.host);
-        let port = args.get("port")
-            .and_then(|v| v.as_u64());
-        let timeout = args.get("timeout")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(300);
+        let port = args.get("port").and_then(|v| v.as_u64());
+        let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(300);
 
         if let Some(p) = port {
             debug!("Would wait for {}:{} (timeout: {}s)", host, p, timeout);
@@ -934,7 +1037,8 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         _runtime: &Arc<RwLock<RuntimeContext>>,
     ) -> ExecutorResult<TaskResult> {
-        let file = args.get("file")
+        let file = args
+            .get("file")
             .or_else(|| args.get("_raw_params"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| ExecutorError::RuntimeError("include_vars requires file path".into()))?;
@@ -950,10 +1054,13 @@ impl Task {
         &self,
         args: &IndexMap<String, JsonValue>,
     ) -> ExecutorResult<TaskResult> {
-        let file = args.get("file")
+        let file = args
+            .get("file")
             .or_else(|| args.get("_raw_params"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("include_tasks requires file path".into()))?;
+            .ok_or_else(|| {
+                ExecutorError::RuntimeError("include_tasks requires file path".into())
+            })?;
 
         debug!("Would include tasks from: {}", file);
 
@@ -961,11 +1068,9 @@ impl Task {
         Ok(TaskResult::ok().with_msg(format!("Included tasks from {}", file)))
     }
 
-    async fn execute_meta(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-    ) -> ExecutorResult<TaskResult> {
-        let action = args.get("_raw_params")
+    async fn execute_meta(&self, args: &IndexMap<String, JsonValue>) -> ExecutorResult<TaskResult> {
+        let action = args
+            .get("_raw_params")
             .or_else(|| args.get("action"))
             .and_then(|v| v.as_str())
             .unwrap_or("noop");
@@ -979,22 +1084,14 @@ impl Task {
                 debug!("Would refresh inventory");
                 Ok(TaskResult::ok().with_msg("Inventory refreshed"))
             }
-            "noop" => {
-                Ok(TaskResult::ok())
-            }
-            "end_play" => {
-                Ok(TaskResult::ok().with_msg("Play ended"))
-            }
-            "end_host" => {
-                Ok(TaskResult::ok().with_msg("Host ended"))
-            }
+            "noop" => Ok(TaskResult::ok()),
+            "end_play" => Ok(TaskResult::ok().with_msg("Play ended")),
+            "end_host" => Ok(TaskResult::ok().with_msg("Host ended")),
             "clear_facts" => {
                 debug!("Would clear facts");
                 Ok(TaskResult::ok().with_msg("Facts cleared"))
             }
-            "clear_host_errors" => {
-                Ok(TaskResult::ok().with_msg("Host errors cleared"))
-            }
+            "clear_host_errors" => Ok(TaskResult::ok().with_msg("Host errors cleared")),
             _ => {
                 warn!("Unknown meta action: {}", action);
                 Ok(TaskResult::ok())
@@ -1020,10 +1117,8 @@ fn template_value(
             Ok(JsonValue::String(templated))
         }
         JsonValue::Array(arr) => {
-            let templated: Result<Vec<_>, _> = arr
-                .iter()
-                .map(|v| template_value(v, vars))
-                .collect();
+            let templated: Result<Vec<_>, _> =
+                arr.iter().map(|v| template_value(v, vars)).collect();
             Ok(JsonValue::Array(templated?))
         }
         JsonValue::Object(obj) => {
@@ -1040,10 +1135,7 @@ fn template_value(
 }
 
 /// Template a string using variables
-fn template_string(
-    template: &str,
-    vars: &IndexMap<String, JsonValue>,
-) -> ExecutorResult<String> {
+fn template_string(template: &str, vars: &IndexMap<String, JsonValue>) -> ExecutorResult<String> {
     // Simple Jinja2-like templating
     // Handle {{ variable }} syntax
     let mut result = template.to_string();
@@ -1110,10 +1202,7 @@ fn json_to_string(value: &JsonValue) -> String {
 }
 
 /// Evaluate a conditional expression
-fn evaluate_expression(
-    expr: &str,
-    vars: &IndexMap<String, JsonValue>,
-) -> ExecutorResult<bool> {
+fn evaluate_expression(expr: &str, vars: &IndexMap<String, JsonValue>) -> ExecutorResult<bool> {
     let expr = expr.trim();
 
     // Handle simple boolean expressions
@@ -1133,14 +1222,18 @@ fn evaluate_expression(
     if let Some(pos) = expr.find(" and ") {
         let left = &expr[..pos];
         let right = &expr[pos + 5..];
-        return Ok(evaluate_expression(left.trim(), vars)? && evaluate_expression(right.trim(), vars)?);
+        return Ok(
+            evaluate_expression(left.trim(), vars)? && evaluate_expression(right.trim(), vars)?
+        );
     }
 
     // Handle 'or' expressions
     if let Some(pos) = expr.find(" or ") {
         let left = &expr[..pos];
         let right = &expr[pos + 4..];
-        return Ok(evaluate_expression(left.trim(), vars)? || evaluate_expression(right.trim(), vars)?);
+        return Ok(
+            evaluate_expression(left.trim(), vars)? || evaluate_expression(right.trim(), vars)?
+        );
     }
 
     // Handle comparison operators
@@ -1195,15 +1288,12 @@ fn evaluate_expression(
 }
 
 /// Parse a value from string (could be literal or variable)
-fn parse_value(
-    s: &str,
-    vars: &IndexMap<String, JsonValue>,
-) -> ExecutorResult<JsonValue> {
+fn parse_value(s: &str, vars: &IndexMap<String, JsonValue>) -> ExecutorResult<JsonValue> {
     let s = s.trim();
 
     // String literal
     if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
-        return Ok(JsonValue::String(s[1..s.len()-1].to_string()));
+        return Ok(JsonValue::String(s[1..s.len() - 1].to_string()));
     }
 
     // Boolean
@@ -1279,7 +1369,10 @@ mod tests {
 
         assert_eq!(task.name, "Install nginx");
         assert_eq!(task.module, "package");
-        assert_eq!(task.args.get("name"), Some(&JsonValue::String("nginx".into())));
+        assert_eq!(
+            task.args.get("name"),
+            Some(&JsonValue::String("nginx".into()))
+        );
         assert_eq!(task.when, Some("ansible_os_family == 'Debian'".to_string()));
         assert!(task.notify.contains(&"restart nginx".to_string()));
         assert_eq!(task.register, Some("install_result".to_string()));
@@ -1321,7 +1414,10 @@ mod tests {
     #[test]
     fn test_evaluate_expression_defined() {
         let mut vars = IndexMap::new();
-        vars.insert("existing".to_string(), JsonValue::String("value".to_string()));
+        vars.insert(
+            "existing".to_string(),
+            JsonValue::String("value".to_string()),
+        );
 
         assert!(evaluate_expression("existing is defined", &vars).unwrap());
         assert!(!evaluate_expression("nonexistent is defined", &vars).unwrap());

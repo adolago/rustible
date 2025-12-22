@@ -4,7 +4,8 @@
 //! permissions, ownership, and backup creation.
 
 use super::{
-    Diff, Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParamExt,
 };
 use std::fs;
 use std::io::{Read, Write};
@@ -98,6 +99,10 @@ impl Module for CopyModule {
 
     fn description(&self) -> &'static str {
         "Copy files to a destination"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::NativeTransport
     }
 
     fn validate_params(&self, params: &ModuleParams) -> ModuleResult<()> {

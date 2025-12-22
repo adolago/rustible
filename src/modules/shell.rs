@@ -4,7 +4,8 @@
 //! like pipes, redirects, environment variable expansion, etc.
 
 use super::{
-    Diff, Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParamExt,
 };
 use std::process::Command;
 
@@ -62,6 +63,10 @@ impl Module for ShellModule {
 
     fn description(&self) -> &'static str {
         "Execute shell commands with full shell features"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::RemoteCommand
     }
 
     fn required_params(&self) -> &[&'static str] {
