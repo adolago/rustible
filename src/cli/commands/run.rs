@@ -107,6 +107,14 @@ impl RunArgs {
                 .warning("No inventory specified, using localhost");
         }
 
+        // Validate limit pattern if specified
+        if let Some(ref limit) = ctx.limit {
+            if let Err(e) = Self::validate_limit_pattern(limit) {
+                ctx.output.error(&e);
+                return Ok(1);
+            }
+        }
+
         // Parse extra vars
         let extra_vars = ctx.parse_extra_vars()?;
         ctx.output.debug(&format!("Extra vars: {:?}", extra_vars));
@@ -129,6 +137,9 @@ impl RunArgs {
             ctx.output.error("Playbook must be a list of plays");
             return Ok(1);
         }
+
+        // Close all pooled connections
+        ctx.close_connections().await;
 
         // Print recap
         ctx.output.recap(&stats);
@@ -444,23 +455,198 @@ impl RunArgs {
             return Ok(false);
         }
 
-        // For other modules, this would connect to the host and execute
-        // For now, we simulate execution
-        if host == "localhost" {
-            // Local execution
-            ctx.output.debug(&format!("Local execution of {}", module));
+        // Handle set_fact locally (no remote execution needed)
+        if module == "set_fact" {
+            return Ok(true);
+        }
 
-            // Simulate some execution time
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // For command/shell modules, execute remotely if not localhost
+        if module == "command" || module == "shell" {
+            let cmd = if let Some(args) = args {
+                args.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| args.get("cmd").and_then(|c| c.as_str()).map(|s| s.to_string()))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
 
-            // Return changed=true for demonstration
+            if cmd.is_empty() {
+                return Err(anyhow::anyhow!("No command specified"));
+            }
+
+            if host == "localhost" || host == "127.0.0.1" {
+                // Local execution
+                ctx.output.debug(&format!("Local execution: {}", cmd));
+                let parts: Vec<&str> = cmd.split_whitespace().collect();
+                if parts.is_empty() {
+                    return Err(anyhow::anyhow!("Empty command"));
+                }
+
+                let output = std::process::Command::new(if module == "shell" { "sh" } else { parts[0] })
+                    .args(if module == "shell" { vec!["-c", &cmd] } else { parts[1..].to_vec() })
+                    .output()
+                    .map_err(|e| anyhow::anyhow!("Failed to execute command: {}", e))?;
+
+                if output.status.success() {
+                    return Ok(true);
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(anyhow::anyhow!("Command failed: {}", stderr));
+                }
+            } else {
+                // Remote execution via SSH
+                return self.execute_remote_command(ctx, host, &cmd).await;
+            }
+        }
+
+        // For other modules, simulate execution for now
+        Ok(true)
+    }
+
+    /// Execute a command on a remote host via SSH
+    /// Uses connection pooling to reuse connections across multiple commands
+    async fn execute_remote_command(
+        &self,
+        ctx: &CommandContext,
+        host: &str,
+        cmd: &str,
+    ) -> Result<bool> {
+        // Get host connection details from inventory
+        let (ansible_host, ansible_user, ansible_port, ansible_key) =
+            self.get_host_connection_info(ctx, host)?;
+
+        // Get or create a pooled connection
+        let conn = ctx
+            .get_connection(
+                host,
+                &ansible_host,
+                &ansible_user,
+                ansible_port,
+                ansible_key.as_deref(),
+            )
+            .await?;
+
+        // Execute command on the pooled connection
+        let result = conn
+            .execute(cmd, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("Command execution failed: {}", e))?;
+
+        if result.success {
             Ok(true)
         } else {
-            // Remote execution would go here
-            ctx.output
-                .debug(&format!("Would execute {} on remote host {}", module, host));
-            Ok(true)
+            Err(anyhow::anyhow!(
+                "Command failed with exit code {}: {}",
+                result.exit_code,
+                if result.stderr.is_empty() {
+                    result.stdout
+                } else {
+                    result.stderr
+                }
+            ))
         }
+    }
+
+    /// Get connection info for a host from inventory
+    fn get_host_connection_info(
+        &self,
+        ctx: &CommandContext,
+        host: &str,
+    ) -> Result<(String, String, u16, Option<String>)> {
+        // Try to load from inventory
+        if let Some(inv_path) = ctx.inventory() {
+            if inv_path.exists() {
+                let content = std::fs::read_to_string(inv_path)?;
+                let inventory: serde_yaml::Value = serde_yaml::from_str(&content)?;
+
+                // Look for host-specific vars
+                if let Some(all) = inventory.get("all") {
+                    // Get global vars
+                    let global_user = all
+                        .get("vars")
+                        .and_then(|v| v.get("ansible_user"))
+                        .and_then(|u| u.as_str())
+                        .map(|s| s.to_string());
+                    let global_key = all
+                        .get("vars")
+                        .and_then(|v| v.get("ansible_ssh_private_key_file"))
+                        .and_then(|k| k.as_str())
+                        .map(|s| s.to_string());
+
+                    // Get host-specific vars
+                    if let Some(hosts) = all.get("hosts") {
+                        if let Some(host_config) = hosts.get(host) {
+                            let ansible_host = host_config
+                                .get("ansible_host")
+                                .and_then(|h| h.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| host.to_string());
+                            let ansible_user = host_config
+                                .get("ansible_user")
+                                .and_then(|u| u.as_str())
+                                .map(|s| s.to_string())
+                                .or(global_user)
+                                .unwrap_or_else(|| {
+                                    std::env::var("USER").unwrap_or_else(|_| "root".to_string())
+                                });
+                            let ansible_port = host_config
+                                .get("ansible_port")
+                                .and_then(|p| p.as_u64())
+                                .unwrap_or(22) as u16;
+                            let ansible_key = host_config
+                                .get("ansible_ssh_private_key_file")
+                                .and_then(|k| k.as_str())
+                                .map(|s| s.to_string())
+                                .or(global_key);
+
+                            return Ok((ansible_host, ansible_user, ansible_port, ansible_key));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Default: use host as-is with current user
+        let user = self.user.clone().unwrap_or_else(|| {
+            std::env::var("USER").unwrap_or_else(|_| "root".to_string())
+        });
+        let key = self.private_key.as_ref().map(|p| p.to_string_lossy().to_string());
+
+        Ok((host.to_string(), user, 22, key))
+    }
+
+    /// Validate a limit pattern
+    /// Returns an error message if the pattern is invalid
+    fn validate_limit_pattern(limit: &str) -> std::result::Result<(), String> {
+        // Check for limit from file (@filename)
+        if let Some(file_path) = limit.strip_prefix('@') {
+            let path = std::path::Path::new(file_path);
+            if !path.exists() {
+                return Err(format!("Limit file not found: {}", file_path));
+            }
+            return Ok(());
+        }
+
+        // Split by colon to check each part
+        for part in limit.split(':') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+
+            // Strip leading operators (!, &)
+            let pattern = part.trim_start_matches('!').trim_start_matches('&');
+
+            // Check for regex pattern
+            if let Some(regex_str) = pattern.strip_prefix('~') {
+                if regex::Regex::new(regex_str).is_err() {
+                    return Err(format!("Invalid regex pattern in limit: {}", regex_str));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

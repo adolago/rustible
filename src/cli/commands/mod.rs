@@ -10,7 +10,11 @@ pub mod vault;
 use crate::cli::output::OutputFormatter;
 use crate::config::Config;
 use anyhow::Result;
+use rustible::connection::Connection;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Common context shared between commands
 pub struct CommandContext {
@@ -34,16 +38,14 @@ pub struct CommandContext {
     pub forks: usize,
     /// Connection timeout
     pub timeout: u64,
+    /// Connection pool for reusing SSH connections
+    pub connections: Arc<RwLock<HashMap<String, Arc<dyn Connection + Send + Sync>>>>,
 }
 
 impl CommandContext {
     /// Create a new command context from CLI arguments
     pub fn new(cli: &crate::cli::Cli, config: Config) -> Self {
-        let output = OutputFormatter::new(
-            !cli.no_color,
-            cli.is_json(),
-            cli.verbosity(),
-        );
+        let output = OutputFormatter::new(!cli.no_color, cli.is_json(), cli.verbosity());
 
         Self {
             config,
@@ -56,12 +58,94 @@ impl CommandContext {
             limit: cli.limit.clone(),
             forks: cli.forks,
             timeout: cli.timeout,
+            connections: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Get or create a connection for a host
+    /// This pools connections to avoid creating new SSH sessions for every command
+    pub async fn get_connection(
+        &self,
+        host: &str,
+        ansible_host: &str,
+        ansible_user: &str,
+        ansible_port: u16,
+        ansible_key: Option<&str>,
+    ) -> Result<Arc<dyn Connection + Send + Sync>> {
+        // Check if we already have a connection for this host
+        {
+            let connections = self.connections.read().await;
+            if let Some(conn) = connections.get(host) {
+                if conn.is_alive().await {
+                    self.output.debug(&format!("Reusing connection for {}", host));
+                    return Ok(Arc::clone(conn));
+                }
+            }
+        }
+
+        self.output.debug(&format!(
+            "Creating new SSH connection: {}@{}:{}",
+            ansible_user, ansible_host, ansible_port
+        ));
+
+        // Build host config for SSH connection
+        let mut host_config = rustible::connection::HostConfig::default();
+        host_config.hostname = Some(ansible_host.to_string());
+        host_config.port = Some(ansible_port);
+        host_config.user = Some(ansible_user.to_string());
+        if let Some(key_path) = ansible_key {
+            // Expand ~ to home directory
+            let expanded_path = if key_path.starts_with("~/") {
+                if let Some(home) = dirs::home_dir() {
+                    home.join(&key_path[2..]).to_string_lossy().to_string()
+                } else {
+                    key_path.to_string()
+                }
+            } else {
+                key_path.to_string()
+            };
+            host_config.identity_file = Some(expanded_path);
+        }
+
+        // Create SSH connection
+        let conn_config = rustible::connection::ConnectionConfig::default();
+        let conn = rustible::connection::ssh::SshConnection::connect(
+            ansible_host,
+            ansible_port,
+            ansible_user,
+            Some(host_config),
+            &conn_config,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", host, e))?;
+
+        let conn: Arc<dyn Connection + Send + Sync> = Arc::new(conn);
+
+        // Cache the connection
+        {
+            let mut connections = self.connections.write().await;
+            connections.insert(host.to_string(), Arc::clone(&conn));
+        }
+
+        Ok(conn)
+    }
+
+    /// Close all cached connections
+    pub async fn close_connections(&self) {
+        let connections: Vec<_> = {
+            let mut pool = self.connections.write().await;
+            pool.drain().map(|(_, v)| v).collect()
+        };
+
+        for conn in connections {
+            let _ = conn.close().await;
         }
     }
 
     /// Get the effective inventory path
     pub fn inventory(&self) -> Option<&PathBuf> {
-        self.inventory_path.as_ref()
+        self.inventory_path
+            .as_ref()
             .or(self.config.defaults.inventory.as_ref())
     }
 

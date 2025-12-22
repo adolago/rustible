@@ -1,0 +1,134 @@
+---
+# Rustible Heavy-Duty Test Inventory
+# Generated for svr-host Proxmox VM cluster
+
+all:
+  vars:
+    ansible_user: testuser
+    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519"
+    ansible_python_interpreter: /usr/bin/python3
+    # Rustible-specific vars
+    rustible_test_mode: true
+    rustible_timeout: 60
+
+  children:
+    # Test orchestration controller
+    test_controller:
+      hosts:
+        test-ctrl:
+          ansible_host: 192.168.178.201
+          role: orchestrator
+
+    # Primary SSH target fleet (5 hosts)
+    ssh_targets:
+      vars:
+        test_group: ssh_primary
+      hosts:
+        ssh-target-401:
+          ansible_host: 192.168.178.141
+          test_id: 1
+        ssh-target-402:
+          ansible_host: 192.168.178.142
+          test_id: 2
+        ssh-target-403:
+          ansible_host: 192.168.178.143
+          test_id: 3
+        ssh-target-404:
+          ansible_host: 192.168.178.144
+          test_id: 4
+        ssh-target-405:
+          ansible_host: 192.168.178.145
+          test_id: 5
+
+    # Scale test fleet (10 hosts for stress testing)
+    scale_fleet:
+      vars:
+        test_group: scale
+        minimal_resources: true
+      hosts:
+        scale-501:
+          ansible_host: 192.168.178.151
+          scale_id: 1
+        scale-502:
+          ansible_host: 192.168.178.152
+          scale_id: 2
+        scale-503:
+          ansible_host: 192.168.178.153
+          scale_id: 3
+        scale-504:
+          ansible_host: 192.168.178.154
+          scale_id: 4
+        scale-505:
+          ansible_host: 192.168.178.155
+          scale_id: 5
+        scale-506:
+          ansible_host: 192.168.178.156
+          scale_id: 6
+        scale-507:
+          ansible_host: 192.168.178.157
+          scale_id: 7
+        scale-508:
+          ansible_host: 192.168.178.158
+          scale_id: 8
+        scale-509:
+          ansible_host: 192.168.178.159
+          scale_id: 9
+        scale-510:
+          ansible_host: 192.168.178.160
+          scale_id: 10
+
+    # Docker host for container tests
+    docker_hosts:
+      vars:
+        test_group: docker
+        docker_enabled: true
+      hosts:
+        docker-host:
+          ansible_host: 192.168.178.210
+          docker_api: "tcp://192.168.178.210:2375"
+
+    # Heterogeneous OS targets (future expansion)
+    heterogeneous:
+      vars:
+        test_group: multi_os
+      hosts:
+        ubuntu-target:
+          ansible_host: 192.168.178.220
+          os_family: debian
+          os_version: "24.04"
+        debian-target:
+          ansible_host: 192.168.178.221
+          os_family: debian
+          os_version: "13"
+        rocky-target:
+          ansible_host: 192.168.178.222
+          os_family: redhat
+          os_version: "9"
+
+    # Logical groupings for test scenarios
+    webservers:
+      children:
+        ssh_targets:
+
+    databases:
+      hosts:
+        scale-501:
+        scale-502:
+
+    loadbalancers:
+      hosts:
+        scale-503:
+
+    # All test targets (excludes controller)
+    test_targets:
+      children:
+        ssh_targets:
+        scale_fleet:
+        docker_hosts:
+        heterogeneous:
+
+    # Linux hosts (all)
+    linux:
+      children:
+        test_controller:
+        test_targets:

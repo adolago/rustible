@@ -458,6 +458,43 @@ cargo clippy --all-features
 cargo fmt
 ```
 
+### Heavy-Duty Integration Tests
+
+Rustible includes a comprehensive VM-based test infrastructure for real-world integration testing. The test suite uses Proxmox VE to spin up LXC containers and VMs for testing SSH connections, parallel execution, and chaos scenarios.
+
+**Test Infrastructure:**
+
+| Component | Count | Purpose |
+|-----------|-------|---------|
+| SSH targets | 5 LXC | Real SSH connection tests |
+| Scale fleet | 10 LXC | Parallel execution stress tests |
+| Docker host | 1 VM | Docker connection tests |
+
+**Running Heavy-Duty Tests:**
+
+```bash
+# Deploy test infrastructure (requires Proxmox access)
+cd tests/infrastructure
+./provision.sh deploy
+
+# Run all integration tests
+./run-tests.sh all
+
+# Run specific test suites
+./run-tests.sh ssh           # Real SSH integration
+./run-tests.sh parallel      # Multi-host stress tests
+./run-tests.sh chaos         # Failure injection tests
+./run-tests.sh docker        # Docker connection tests
+
+# Check infrastructure status
+./run-tests.sh status
+
+# Cleanup
+./provision.sh teardown
+```
+
+See `tests/infrastructure/README.md` for detailed setup instructions.
+
 ## Roadmap
 
 - [x] Core playbook execution

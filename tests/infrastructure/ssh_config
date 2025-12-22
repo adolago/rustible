@@ -1,0 +1,82 @@
+# Rustible Test Infrastructure SSH Config
+# Usage: ssh -F tests/infrastructure/ssh_config <hostname>
+
+Host test-ctrl
+    HostName 192.168.178.201
+    User testuser
+
+Host ssh-target-*
+    User testuser
+
+Host ssh-target-401
+    HostName 192.168.178.141
+
+Host ssh-target-402
+    HostName 192.168.178.142
+
+Host ssh-target-403
+    HostName 192.168.178.143
+
+Host ssh-target-404
+    HostName 192.168.178.144
+
+Host ssh-target-405
+    HostName 192.168.178.145
+
+Host scale-*
+    User testuser
+
+Host scale-501
+    HostName 192.168.178.151
+
+Host scale-502
+    HostName 192.168.178.152
+
+Host scale-503
+    HostName 192.168.178.153
+
+Host scale-504
+    HostName 192.168.178.154
+
+Host scale-505
+    HostName 192.168.178.155
+
+Host scale-506
+    HostName 192.168.178.156
+
+Host scale-507
+    HostName 192.168.178.157
+
+Host scale-508
+    HostName 192.168.178.158
+
+Host scale-509
+    HostName 192.168.178.159
+
+Host scale-510
+    HostName 192.168.178.160
+
+Host docker-host
+    HostName 192.168.178.210
+    User testuser
+
+Host ubuntu-target
+    HostName 192.168.178.220
+    User testuser
+
+Host debian-target
+    HostName 192.168.178.221
+    User testuser
+
+Host rocky-target
+    HostName 192.168.178.222
+    User testuser
+
+Host *
+    IdentityFile ~/.ssh/id_ed25519
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    ConnectTimeout 10
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
