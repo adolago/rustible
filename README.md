@@ -11,7 +11,109 @@ Rustible was created to address common pain points with existing configuration m
 - **Type Safety**: Catch configuration errors at parse time, not runtime
 - **Parallel by Default**: Execute tasks across hosts concurrently out of the box
 - **Better Error Messages**: Rich, contextual error reporting helps you fix issues faster
-- **Ansible Compatibility**: YAML playbook syntax compatible with Ansible for easy migration
+- **Ansible Syntax Compatibility**: Uses the same YAML playbook syntax as Ansible for seamless migration
+
+## Ansible Syntax Compatibility
+
+Rustible is designed to be a **drop-in replacement for Ansible** with the same playbook syntax. Your existing Ansible playbooks should work with Rustible with minimal or no modifications.
+
+### What's Compatible
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Playbook YAML syntax | ✅ Full | Identical structure: plays, tasks, handlers |
+| Inventory formats | ✅ Full | YAML, INI, JSON, dynamic scripts |
+| Task properties | ✅ Full | `when`, `loop`, `register`, `notify`, `become`, `tags`, etc. |
+| Host patterns | ✅ Full | Groups, wildcards, regex, intersections, exclusions |
+| Variable interpolation | ✅ Full | `{{ variable }}` syntax with Jinja2-compatible templating |
+| Handlers | ✅ Full | Including `listen` for multiple triggers |
+| Blocks | ✅ Full | `block`, `rescue`, `always` for error handling |
+| Privilege escalation | ✅ Full | `become`, `become_user`, `become_method` |
+| Vault encryption | ✅ Full | AES-256-GCM encryption for sensitive data |
+| Roles | ✅ Full | Role structure with defaults, tasks, handlers, templates |
+| Python modules | ✅ Full | Any Ansible Python module via AnsiballZ execution |
+| FQCN modules | ✅ Full | `ansible.builtin.apt`, `community.general.*`, etc. |
+| Galaxy support | 🔄 Planned | Collection installation coming soon |
+
+### Module Execution Strategy
+
+Rustible uses a tiered module execution strategy for optimal performance:
+
+1. **Native Rust Modules**: Built-in modules (`command`, `copy`, `file`, `package`, `service`, etc.) execute as native Rust code for maximum speed
+2. **Python Fallback**: Unknown modules automatically fall back to Ansible's Python execution using AnsiballZ-style bundling
+3. **FQCN Resolution**: Supports Fully Qualified Collection Names (e.g., `ansible.builtin.apt`, `community.general.ufw`)
+
+This means you can use **any existing Ansible module** - if Rustible doesn't have a native implementation, it will execute the Python version from your installed Ansible collections.
+
+### On Using the Exact Same Syntax as Ansible
+
+**TL;DR**: Yes, Rustible aims for 100% syntax compatibility with Ansible playbooks.
+
+The goal of Rustible is not to create a new DSL or configuration language, but to provide a faster, more reliable execution engine for the same playbook format that Ansible users already know. This design decision was intentional:
+
+1. **Zero Migration Cost**: Existing Ansible playbooks work without rewrites
+2. **Familiar Tooling**: Teams don't need to learn a new syntax
+3. **Ecosystem Compatibility**: Leverage existing Ansible collections and modules
+4. **Gradual Adoption**: Use Rustible for some playbooks while keeping Ansible for others
+
+#### How It Works
+
+Rustible parses the same YAML structures that Ansible uses:
+
+```yaml
+# This playbook works identically in both Ansible and Rustible
+- name: Configure web servers
+  hosts: webservers
+  become: true
+  gather_facts: true
+
+  vars:
+    http_port: 80
+
+  tasks:
+    - name: Install nginx
+      ansible.builtin.package:
+        name: nginx
+        state: present
+      when: ansible_os_family == "Debian"
+      notify: Restart nginx
+
+    - name: Copy configuration
+      ansible.builtin.template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+      register: nginx_config
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "Config changed: {{ nginx_config.changed }}"
+
+  handlers:
+    - name: Restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+```
+
+#### Current Limitations
+
+While Rustible aims for full compatibility, some advanced features are still in development:
+
+- **Ansible Galaxy CLI**: Use `ansible-galaxy` to install collections, then run with Rustible
+- **Callback Plugins**: Custom Python callbacks not yet supported
+- **Some Connection Types**: WinRM and Kubernetes connections are planned
+
+#### Philosophy
+
+Rustible follows the principle of **"same interface, better implementation"**. The Ansible playbook format has become a de facto standard in the configuration management space. Rather than fragmenting the ecosystem with yet another syntax, Rustible focuses on:
+
+- Faster execution through compiled Rust and async I/O
+- Better error messages with rich context
+- Type safety that catches errors at parse time
+- Native implementations of common modules for performance
+- Seamless fallback to Python for full compatibility
+
+This approach allows teams to adopt Rustible incrementally without rewriting their automation infrastructure
 
 ## Features
 
