@@ -1,0 +1,129 @@
+# Example Rustible Inventory
+# This file defines hosts and groups for automation
+
+all:
+  # Variables that apply to all hosts
+  vars:
+    ansible_user: deploy
+    ansible_ssh_private_key_file: ~/.ssh/id_rsa
+    environment: production
+
+  # Direct hosts under 'all'
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: /usr/bin/python3
+
+  # Child groups
+  children:
+    # Web servers group
+    webservers:
+      vars:
+        http_port: 80
+        https_port: 443
+        max_connections: 1000
+      hosts:
+        web01.example.com:
+          ansible_host: 192.168.1.10
+          priority: primary
+        web02.example.com:
+          ansible_host: 192.168.1.11
+          priority: secondary
+        web03.example.com:
+          ansible_host: 192.168.1.12
+          priority: secondary
+
+    # Database servers group
+    dbservers:
+      vars:
+        db_port: 5432
+        db_engine: postgresql
+        backup_enabled: true
+      hosts:
+        db01.example.com:
+          ansible_host: 192.168.1.20
+          role: primary
+          replication: master
+        db02.example.com:
+          ansible_host: 192.168.1.21
+          role: replica
+          replication: slave
+
+    # Cache servers group
+    cacheservers:
+      vars:
+        cache_port: 6379
+        max_memory: 4gb
+      hosts:
+        cache01.example.com:
+          ansible_host: 192.168.1.30
+        cache02.example.com:
+          ansible_host: 192.168.1.31
+
+    # Application servers group
+    appservers:
+      vars:
+        app_port: 8080
+        workers: 4
+      hosts:
+        app01.example.com:
+          ansible_host: 192.168.1.40
+        app02.example.com:
+          ansible_host: 192.168.1.41
+        app03.example.com:
+          ansible_host: 192.168.1.42
+
+    # Monitoring servers
+    monitoring:
+      vars:
+        prometheus_port: 9090
+        grafana_port: 3000
+      hosts:
+        monitor01.example.com:
+          ansible_host: 192.168.1.50
+
+    # Environment-based groups
+    production:
+      children:
+        webservers: {}
+        dbservers: {}
+        cacheservers: {}
+        appservers: {}
+
+    staging:
+      vars:
+        environment: staging
+      hosts:
+        staging01.example.com:
+          ansible_host: 192.168.2.10
+          roles:
+            - web
+            - app
+            - db
+
+    development:
+      vars:
+        environment: development
+        debug: true
+      hosts:
+        dev01.example.com:
+          ansible_host: 192.168.3.10
+          ansible_user: developer
+
+    # Region-based groups
+    us_east:
+      hosts:
+        web01.example.com: {}
+        db01.example.com: {}
+        app01.example.com: {}
+
+    us_west:
+      hosts:
+        web02.example.com: {}
+        db02.example.com: {}
+        app02.example.com: {}
+
+    europe:
+      hosts:
+        web03.example.com: {}
+        app03.example.com: {}

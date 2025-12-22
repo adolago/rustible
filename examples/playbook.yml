@@ -1,0 +1,199 @@
+---
+# Example Rustible Playbook
+# This demonstrates various features of Rustible
+
+# Play 1: Configure the localhost
+- name: Configure local development environment
+  hosts: localhost
+  gather_facts: true
+  become: false
+
+  vars:
+    app_name: "rustible-demo"
+    app_version: "1.0.0"
+    packages:
+      - curl
+      - jq
+      - tree
+
+  tasks:
+    - name: Print welcome message
+      debug:
+        msg: "Welcome to {{ app_name }} v{{ app_version }}"
+
+    - name: Display system information
+      debug:
+        msg: |
+          Hostname: {{ ansible_hostname | default('unknown') }}
+          OS: {{ ansible_os_family | default('unknown') }}
+          Architecture: {{ ansible_architecture | default('unknown') }}
+
+    - name: Ensure temp directory exists
+      file:
+        path: /tmp/rustible-demo
+        state: directory
+        mode: '0755'
+
+    - name: Create application config file
+      copy:
+        content: |
+          # {{ app_name }} Configuration
+          version: {{ app_version }}
+          environment: development
+          debug: true
+        dest: /tmp/rustible-demo/config.yml
+        mode: '0644'
+
+    - name: Check if config file exists
+      stat:
+        path: /tmp/rustible-demo/config.yml
+      register: config_stat
+
+    - name: Report config status
+      debug:
+        msg: "Config file exists: {{ config_stat.stat.exists }}"
+      when: config_stat is defined
+
+# Play 2: Web server configuration (example for remote hosts)
+- name: Configure web servers
+  hosts: webservers
+  become: true
+  gather_facts: true
+
+  vars:
+    http_port: 8080
+    server_name: "{{ ansible_hostname }}"
+    document_root: /var/www/html
+
+  pre_tasks:
+    - name: Update package cache
+      package:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags:
+        - packages
+
+  tasks:
+    - name: Install nginx
+      package:
+        name: nginx
+        state: present
+      tags:
+        - packages
+        - nginx
+
+    - name: Create document root
+      file:
+        path: "{{ document_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+      tags:
+        - nginx
+        - config
+
+    - name: Deploy index page
+      template:
+        src: templates/index.html.j2
+        dest: "{{ document_root }}/index.html"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+      notify: Reload nginx
+      tags:
+        - nginx
+        - deploy
+
+    - name: Ensure nginx is running
+      service:
+        name: nginx
+        state: started
+        enabled: true
+      tags:
+        - nginx
+        - service
+
+  handlers:
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
+# Play 3: Database server configuration
+- name: Configure database servers
+  hosts: dbservers
+  become: true
+  gather_facts: true
+
+  vars:
+    db_port: 5432
+    db_name: "appdb"
+    db_user: "appuser"
+
+  tasks:
+    - name: Install PostgreSQL
+      package:
+        name:
+          - postgresql
+          - postgresql-contrib
+        state: present
+      tags:
+        - packages
+        - database
+
+    - name: Ensure PostgreSQL is running
+      service:
+        name: postgresql
+        state: started
+        enabled: true
+      tags:
+        - database
+        - service
+
+    - name: Create application database
+      command: "createdb {{ db_name }}"
+      args:
+        creates: "/var/lib/postgresql/data/{{ db_name }}"
+      become_user: postgres
+      ignore_errors: true
+      tags:
+        - database
+
+# Play 4: Common tasks for all hosts
+- name: Apply common configuration
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    ntp_servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+
+  tasks:
+    - name: Set timezone
+      timezone:
+        name: UTC
+      tags:
+        - common
+        - time
+
+    - name: Configure NTP
+      template:
+        src: templates/ntp.conf.j2
+        dest: /etc/ntp.conf
+        mode: '0644'
+      when: ansible_os_family is defined
+      tags:
+        - common
+        - time
+
+    - name: Create monitoring directory
+      file:
+        path: /opt/monitoring
+        state: directory
+        mode: '0755'
+      tags:
+        - common
+        - monitoring

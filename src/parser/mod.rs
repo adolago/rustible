@@ -1,0 +1,949 @@
+//! YAML parsing and templating for Rustible.
+//!
+//! This module provides:
+//! - Playbook YAML parsing
+//! - Variable file parsing
+//! - Jinja2-style templating using minijinja
+
+pub mod playbook;
+
+pub use playbook::{
+    Handler, IncludeType, LoopControl, LoopSpec, ModuleCall, Play, Playbook,
+    PlayOrder, RoleInclusion, RoleSpec, SerialSpec, Task, TaskBuilder, VarsPrompt,
+};
+
+use indexmap::IndexMap;
+use minijinja::{Environment, Value};
+use std::path::Path;
+use thiserror::Error;
+
+/// Errors that can occur during parsing
+#[derive(Debug, Error)]
+pub enum ParseError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("YAML parsing error: {0}")]
+    Yaml(#[from] serde_yaml::Error),
+
+    #[error("JSON parsing error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("template error: {0}")]
+    Template(#[from] minijinja::Error),
+
+    #[error("invalid playbook structure: {0}")]
+    InvalidStructure(String),
+
+    #[error("missing required field: {0}")]
+    MissingField(String),
+
+    #[error("include error: {0}")]
+    IncludeError(String),
+}
+
+/// Result type for parsing operations
+pub type ParseResult<T> = Result<T, ParseError>;
+
+/// The main parser for Rustible
+#[derive(Debug)]
+pub struct Parser {
+    /// Jinja2-style template environment
+    template_env: Environment<'static>,
+
+    /// Base directory for relative includes
+    base_dir: Option<std::path::PathBuf>,
+
+    /// Strict mode (fail on undefined variables)
+    strict: bool,
+}
+
+impl Default for Parser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Parser {
+    /// Create a new parser
+    pub fn new() -> Self {
+        let mut template_env = Environment::new();
+
+        // Configure for Ansible compatibility
+        template_env.set_trim_blocks(true);
+        template_env.set_lstrip_blocks(true);
+
+        // Add built-in filters
+        Self::add_builtin_filters(&mut template_env);
+
+        // Add built-in functions
+        Self::add_builtin_functions(&mut template_env);
+
+        Self {
+            template_env,
+            base_dir: None,
+            strict: false,
+        }
+    }
+
+    /// Create a parser with a base directory
+    pub fn with_base_dir<P: AsRef<Path>>(mut self, base_dir: P) -> Self {
+        self.base_dir = Some(base_dir.as_ref().to_path_buf());
+        self
+    }
+
+    /// Enable strict mode
+    pub fn strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
+    }
+
+    /// Add Ansible-compatible built-in filters
+    fn add_builtin_filters(env: &mut Environment<'static>) {
+        // String filters
+        env.add_filter("lower", |s: String| s.to_lowercase());
+        env.add_filter("upper", |s: String| s.to_uppercase());
+        env.add_filter("capitalize", |s: String| {
+            let mut chars = s.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().chain(chars).collect(),
+            }
+        });
+        env.add_filter("title", |s: String| {
+            s.split_whitespace()
+                .map(|word| {
+                    let mut chars = word.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(c) => {
+                            c.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect()
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+        env.add_filter("trim", |s: String| s.trim().to_string());
+        env.add_filter("strip", |s: String| s.trim().to_string());
+
+        // Replace filter
+        env.add_filter("replace", |s: String, from: String, to: String| {
+            s.replace(&from, &to)
+        });
+
+        // Split/join filters
+        env.add_filter("split", |s: String, sep: Option<String>| -> Vec<String> {
+            let sep = sep.unwrap_or_else(|| " ".to_string());
+            s.split(&sep).map(|s| s.to_string()).collect()
+        });
+
+        // Default filter
+        env.add_filter("default", |value: Value, default: Value| -> Value {
+            if value.is_undefined() || value.is_none() {
+                default
+            } else {
+                value
+            }
+        });
+        env.add_filter("d", |value: Value, default: Value| -> Value {
+            if value.is_undefined() || value.is_none() {
+                default
+            } else {
+                value
+            }
+        });
+
+        // Boolean filter
+        env.add_filter("bool", |value: Value| -> bool {
+            match value.as_str() {
+                Some("true") | Some("yes") | Some("on") | Some("1") => true,
+                Some("false") | Some("no") | Some("off") | Some("0") | Some("") => false,
+                None => {
+                    if let Ok(b) = value.clone().try_into() {
+                        b
+                    } else if let Ok(n) = TryInto::<i64>::try_into(value) {
+                        n != 0
+                    } else {
+                        false
+                    }
+                }
+                _ => true,
+            }
+        });
+
+        // Int filter
+        env.add_filter("int", |value: Value| -> i64 {
+            if let Some(s) = value.as_str() {
+                s.parse().unwrap_or(0)
+            } else if let Ok(n) = value.clone().try_into() {
+                n
+            } else if let Ok(f) = TryInto::<f64>::try_into(value) {
+                f as i64
+            } else {
+                0
+            }
+        });
+
+        // Float filter
+        env.add_filter("float", |value: Value| -> f64 {
+            if let Some(s) = value.as_str() {
+                s.parse().unwrap_or(0.0)
+            } else if let Ok(n) = TryInto::<i64>::try_into(value.clone()) {
+                n as f64
+            } else if let Ok(f) = value.try_into() {
+                f
+            } else {
+                0.0
+            }
+        });
+
+        // String filter
+        env.add_filter("string", |value: Value| -> String {
+            value.to_string()
+        });
+
+        // Length filter
+        env.add_filter("length", |value: Value| -> usize {
+            if let Some(s) = value.as_str() {
+                s.len()
+            } else if let Some(seq) = value.as_seq() {
+                seq.len()
+            } else if let Some(obj) = value.as_object() {
+                obj.len()
+            } else {
+                0
+            }
+        });
+
+        // First/last filters
+        env.add_filter("first", |value: Value| -> Value {
+            if let Some(seq) = value.as_seq() {
+                seq.get_item(&Value::from(0)).unwrap_or(Value::UNDEFINED)
+            } else if let Some(s) = value.as_str() {
+                s.chars().next().map(|c| Value::from(c.to_string())).unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            }
+        });
+
+        env.add_filter("last", |value: Value| -> Value {
+            if let Some(seq) = value.as_seq() {
+                let len = seq.len();
+                if len > 0 {
+                    seq.get_item(&Value::from(len - 1)).unwrap_or(Value::UNDEFINED)
+                } else {
+                    Value::UNDEFINED
+                }
+            } else if let Some(s) = value.as_str() {
+                s.chars().last().map(|c| Value::from(c.to_string())).unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            }
+        });
+
+        // Unique filter
+        env.add_filter("unique", |value: Value| -> Vec<Value> {
+            if let Some(seq) = value.as_seq() {
+                let mut seen = std::collections::HashSet::new();
+                let mut result = Vec::new();
+                for item in seq.iter() {
+                    let key = item.to_string();
+                    if seen.insert(key) {
+                        result.push(item);
+                    }
+                }
+                result
+            } else {
+                Vec::new()
+            }
+        });
+
+        // Sort filter
+        env.add_filter("sort", |value: Value| -> Vec<Value> {
+            if let Some(seq) = value.as_seq() {
+                let mut items: Vec<Value> = seq.iter().collect();
+                items.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+                items
+            } else {
+                Vec::new()
+            }
+        });
+
+        // Reverse filter
+        env.add_filter("reverse", |value: Value| -> Value {
+            if let Some(seq) = value.as_seq() {
+                let items: Vec<Value> = seq.iter().rev().collect();
+                Value::from(items)
+            } else if let Some(s) = value.as_str() {
+                Value::from(s.chars().rev().collect::<String>())
+            } else {
+                value
+            }
+        });
+
+        // Flatten filter
+        env.add_filter("flatten", |value: Value| -> Vec<Value> {
+            fn flatten_recursive(value: &Value, result: &mut Vec<Value>) {
+                if let Some(seq) = value.as_seq() {
+                    for item in seq.iter() {
+                        flatten_recursive(&item, result);
+                    }
+                } else {
+                    result.push(value.clone());
+                }
+            }
+
+            let mut result = Vec::new();
+            flatten_recursive(&value, &mut result);
+            result
+        });
+
+        // Map filter (select attribute)
+        env.add_filter("map", |value: Value, attr: Option<String>| -> Vec<Value> {
+            if let Some(seq) = value.as_seq() {
+                if let Some(attr) = attr {
+                    seq.iter()
+                        .filter_map(|item| {
+                            if let Some(obj) = item.as_object() {
+                                obj.get(&Value::from(attr.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    seq.iter().collect()
+                }
+            } else {
+                Vec::new()
+            }
+        });
+
+        // Select filter
+        env.add_filter("select", |value: Value, attr: Option<String>| -> Vec<Value> {
+            if let Some(seq) = value.as_seq() {
+                seq.iter()
+                    .filter(|item| {
+                        if let Some(ref attr) = attr {
+                            if let Some(obj) = item.as_object() {
+                                obj.get(&Value::from(attr.clone()))
+                                    .map(|v| v.is_true())
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        } else {
+                            item.is_true()
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        });
+
+        // Reject filter
+        env.add_filter("reject", |value: Value, attr: Option<String>| -> Vec<Value> {
+            if let Some(seq) = value.as_seq() {
+                seq.iter()
+                    .filter(|item| {
+                        if let Some(ref attr) = attr {
+                            if let Some(obj) = item.as_object() {
+                                !obj.get(&Value::from(attr.clone()))
+                                    .map(|v| v.is_true())
+                                    .unwrap_or(false)
+                            } else {
+                                true
+                            }
+                        } else {
+                            !item.is_true()
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        });
+
+        // JSON filters
+        env.add_filter("to_json", |value: Value| -> String {
+            serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string())
+        });
+
+        env.add_filter("to_nice_json", |value: Value| -> String {
+            serde_json::to_string_pretty(&value).unwrap_or_else(|_| "null".to_string())
+        });
+
+        env.add_filter("from_json", |s: String| -> Value {
+            serde_json::from_str(&s).unwrap_or(Value::UNDEFINED)
+        });
+
+        // YAML filters
+        env.add_filter("to_yaml", |value: Value| -> String {
+            serde_yaml::to_string(&value).unwrap_or_else(|_| "null".to_string())
+        });
+
+        env.add_filter("from_yaml", |s: String| -> Value {
+            serde_yaml::from_str(&s).unwrap_or(Value::UNDEFINED)
+        });
+
+        // Base64 filters
+        env.add_filter("b64encode", |s: String| -> String {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode(s.as_bytes())
+        });
+
+        env.add_filter("b64decode", |s: String| -> String {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD
+                .decode(&s)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .unwrap_or_default()
+        });
+
+        // Regex filters
+        env.add_filter("regex_search", |s: String, pattern: String| -> bool {
+            regex::Regex::new(&pattern)
+                .map(|re| re.is_match(&s))
+                .unwrap_or(false)
+        });
+
+        env.add_filter("regex_replace", |s: String, pattern: String, replacement: String| -> String {
+            regex::Regex::new(&pattern)
+                .map(|re| re.replace_all(&s, replacement.as_str()).to_string())
+                .unwrap_or(s)
+        });
+
+        // Path filters
+        env.add_filter("basename", |s: String| -> String {
+            Path::new(&s)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string()
+        });
+
+        env.add_filter("dirname", |s: String| -> String {
+            Path::new(&s)
+                .parent()
+                .and_then(|p| p.to_str())
+                .unwrap_or("")
+                .to_string()
+        });
+
+        env.add_filter("expanduser", |s: String| -> String {
+            shellexpand::tilde(&s).to_string()
+        });
+
+        env.add_filter("realpath", |s: String| -> String {
+            std::fs::canonicalize(&s)
+                .ok()
+                .and_then(|p| p.to_str().map(|s| s.to_string()))
+                .unwrap_or(s)
+        });
+
+        // Hash filters
+        env.add_filter("hash", |s: String, algorithm: Option<String>| -> String {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+
+            let algo = algorithm.unwrap_or_else(|| "sha256".to_string());
+            match algo.as_str() {
+                // For simplicity, use a basic hash for non-crypto purposes
+                // In production, you'd use proper crypto hash functions
+                _ => {
+                    let mut hasher = DefaultHasher::new();
+                    s.hash(&mut hasher);
+                    format!("{:x}", hasher.finish())
+                }
+            }
+        });
+
+        // Quote filter for shell
+        env.add_filter("quote", |s: String| -> String {
+            format!("'{}'", s.replace('\'', "'\"'\"'"))
+        });
+
+        // Comment filter
+        env.add_filter("comment", |s: String, prefix: Option<String>| -> String {
+            let prefix = prefix.unwrap_or_else(|| "# ".to_string());
+            s.lines()
+                .map(|line| format!("{}{}", prefix, line))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+
+        // Ternary filter
+        env.add_filter("ternary", |condition: bool, true_val: Value, false_val: Value| -> Value {
+            if condition { true_val } else { false_val }
+        });
+
+        // Combine filter for dicts
+        env.add_filter("combine", |base: Value, other: Value| -> Value {
+            if let (Some(base_obj), Some(other_obj)) = (base.as_object(), other.as_object()) {
+                let mut result = std::collections::BTreeMap::new();
+                for key in base_obj.keys() {
+                    if let Some(val) = base_obj.get(&key) {
+                        result.insert(key.to_string(), val);
+                    }
+                }
+                for key in other_obj.keys() {
+                    if let Some(val) = other_obj.get(&key) {
+                        result.insert(key.to_string(), val);
+                    }
+                }
+                Value::from_iter(result)
+            } else {
+                base
+            }
+        });
+
+        // Dict2items / items2dict
+        env.add_filter("dict2items", |value: Value| -> Vec<Value> {
+            if let Some(obj) = value.as_object() {
+                obj.iter()
+                    .map(|(k, v)| {
+                        Value::from_iter([
+                            ("key".to_string(), k),
+                            ("value".to_string(), v),
+                        ])
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        });
+
+        // Type testing filters
+        env.add_filter("type_debug", |value: Value| -> String {
+            if value.is_undefined() {
+                "undefined".to_string()
+            } else if value.is_none() {
+                "null".to_string()
+            } else if value.as_str().is_some() {
+                "string".to_string()
+            } else if value.as_seq().is_some() {
+                "list".to_string()
+            } else if value.as_object().is_some() {
+                "dict".to_string()
+            } else if TryInto::<bool>::try_into(value.clone()).is_ok() {
+                "bool".to_string()
+            } else if TryInto::<i64>::try_into(value.clone()).is_ok() {
+                "int".to_string()
+            } else if TryInto::<f64>::try_into(value).is_ok() {
+                "float".to_string()
+            } else {
+                "unknown".to_string()
+            }
+        });
+    }
+
+    /// Add Ansible-compatible built-in functions
+    fn add_builtin_functions(env: &mut Environment<'static>) {
+        // Range function
+        env.add_function("range", |start: i64, end: Option<i64>, step: Option<i64>| -> Vec<i64> {
+            let (actual_start, actual_end) = match end {
+                Some(e) => (start, e),
+                None => (0, start),
+            };
+            let step = step.unwrap_or(1);
+
+            if step == 0 {
+                return Vec::new();
+            }
+
+            let mut result = Vec::new();
+            let mut current = actual_start;
+
+            if step > 0 {
+                while current < actual_end {
+                    result.push(current);
+                    current += step;
+                }
+            } else {
+                while current > actual_end {
+                    result.push(current);
+                    current += step;
+                }
+            }
+
+            result
+        });
+
+        // Now function
+        env.add_function("now", || -> String {
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+        });
+
+        // Query/lookup function (simplified)
+        env.add_function("query", |plugin: String, _args: Option<Value>| -> Vec<Value> {
+            // This would need full implementation for each lookup plugin
+            match plugin.as_str() {
+                _ => Vec::new(),
+            }
+        });
+
+        // Lookup function
+        env.add_function("lookup", |plugin: String, args: Option<Value>| -> Value {
+            // Simplified lookup - would need full plugin system
+            match plugin.as_str() {
+                "env" => {
+                    if let Some(Value::String(var)) = args.as_ref().and_then(|a| {
+                        if let Some(seq) = a.as_seq() {
+                            seq.get_item(&Value::from(0)).ok()
+                        } else {
+                            Some(a.clone())
+                        }
+                    }) {
+                        std::env::var(&var)
+                            .map(Value::from)
+                            .unwrap_or(Value::UNDEFINED)
+                    } else {
+                        Value::UNDEFINED
+                    }
+                }
+                _ => Value::UNDEFINED,
+            }
+        });
+
+        // Password lookup (returns placeholder)
+        env.add_function("password", |_path: String| -> String {
+            // In real implementation, this would generate/retrieve passwords
+            "placeholder_password".to_string()
+        });
+
+        // Omit function (for omitting parameters)
+        env.add_function("omit", || -> Value {
+            Value::from("__omit_place_holder__")
+        });
+
+        // Undef function
+        env.add_function("undef", || -> Value {
+            Value::UNDEFINED
+        });
+    }
+
+    /// Parse a playbook from a file
+    pub fn parse_playbook<P: AsRef<Path>>(&self, path: P) -> ParseResult<Playbook> {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)?;
+
+        let mut playbook = self.parse_playbook_str(&content)?;
+        playbook.source_path = Some(path.to_path_buf());
+
+        Ok(playbook)
+    }
+
+    /// Parse a playbook from a string
+    pub fn parse_playbook_str(&self, content: &str) -> ParseResult<Playbook> {
+        let docs: Vec<serde_yaml::Value> = serde_yaml::from_str(content)?;
+
+        let mut playbook = Playbook::new();
+
+        for doc in docs {
+            if let serde_yaml::Value::Sequence(plays) = doc {
+                for play_value in plays {
+                    let play = self.parse_play(&play_value)?;
+                    playbook.add_play(play);
+                }
+            } else if let serde_yaml::Value::Mapping(_) = doc {
+                // Single play
+                let play = self.parse_play(&doc)?;
+                playbook.add_play(play);
+            }
+        }
+
+        Ok(playbook)
+    }
+
+    /// Parse a single play from YAML value
+    fn parse_play(&self, value: &serde_yaml::Value) -> ParseResult<Play> {
+        let play: Play = serde_yaml::from_value(value.clone())?;
+        Ok(play)
+    }
+
+    /// Parse a tasks file
+    pub fn parse_tasks<P: AsRef<Path>>(&self, path: P) -> ParseResult<Vec<Task>> {
+        let content = std::fs::read_to_string(path)?;
+        self.parse_tasks_str(&content)
+    }
+
+    /// Parse tasks from a string
+    pub fn parse_tasks_str(&self, content: &str) -> ParseResult<Vec<Task>> {
+        let tasks: Vec<Task> = serde_yaml::from_str(content)?;
+        Ok(tasks)
+    }
+
+    /// Parse a handlers file
+    pub fn parse_handlers<P: AsRef<Path>>(&self, path: P) -> ParseResult<Vec<Handler>> {
+        let content = std::fs::read_to_string(path)?;
+        self.parse_handlers_str(&content)
+    }
+
+    /// Parse handlers from a string
+    pub fn parse_handlers_str(&self, content: &str) -> ParseResult<Vec<Handler>> {
+        let handlers: Vec<Handler> = serde_yaml::from_str(content)?;
+        Ok(handlers)
+    }
+
+    /// Parse a variables file
+    pub fn parse_vars<P: AsRef<Path>>(&self, path: P) -> ParseResult<IndexMap<String, serde_yaml::Value>> {
+        let content = std::fs::read_to_string(path)?;
+        self.parse_vars_str(&content)
+    }
+
+    /// Parse variables from a string
+    pub fn parse_vars_str(&self, content: &str) -> ParseResult<IndexMap<String, serde_yaml::Value>> {
+        let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(content)?;
+        Ok(vars)
+    }
+
+    /// Render a template string with variables
+    pub fn render_template(&self, template: &str, vars: &IndexMap<String, serde_yaml::Value>) -> ParseResult<String> {
+        // Convert vars to minijinja values
+        let context = yaml_to_minijinja_value(&serde_yaml::Value::Mapping(
+            vars.iter()
+                .map(|(k, v)| (serde_yaml::Value::String(k.clone()), v.clone()))
+                .collect(),
+        ));
+
+        let result = self.template_env.render_str(template, context)?;
+        Ok(result)
+    }
+
+    /// Check if a string contains template expressions
+    pub fn has_template(&self, s: &str) -> bool {
+        s.contains("{{") || s.contains("{%") || s.contains("{#")
+    }
+
+    /// Render all template expressions in a YAML value
+    pub fn render_value(
+        &self,
+        value: &serde_yaml::Value,
+        vars: &IndexMap<String, serde_yaml::Value>,
+    ) -> ParseResult<serde_yaml::Value> {
+        match value {
+            serde_yaml::Value::String(s) => {
+                if self.has_template(s) {
+                    let rendered = self.render_template(s, vars)?;
+                    // Try to parse as YAML to get proper type
+                    if let Ok(parsed) = serde_yaml::from_str(&rendered) {
+                        Ok(parsed)
+                    } else {
+                        Ok(serde_yaml::Value::String(rendered))
+                    }
+                } else {
+                    Ok(value.clone())
+                }
+            }
+            serde_yaml::Value::Sequence(seq) => {
+                let rendered: Result<Vec<_>, _> = seq
+                    .iter()
+                    .map(|v| self.render_value(v, vars))
+                    .collect();
+                Ok(serde_yaml::Value::Sequence(rendered?))
+            }
+            serde_yaml::Value::Mapping(map) => {
+                let mut rendered = serde_yaml::Mapping::new();
+                for (k, v) in map {
+                    let rendered_key = self.render_value(k, vars)?;
+                    let rendered_val = self.render_value(v, vars)?;
+                    rendered.insert(rendered_key, rendered_val);
+                }
+                Ok(serde_yaml::Value::Mapping(rendered))
+            }
+            _ => Ok(value.clone()),
+        }
+    }
+
+    /// Get the template environment for advanced usage
+    pub fn template_env(&self) -> &Environment<'static> {
+        &self.template_env
+    }
+
+    /// Get a mutable reference to the template environment
+    pub fn template_env_mut(&mut self) -> &mut Environment<'static> {
+        &mut self.template_env
+    }
+}
+
+/// Convert YAML value to minijinja Value
+fn yaml_to_minijinja_value(yaml: &serde_yaml::Value) -> Value {
+    match yaml {
+        serde_yaml::Value::Null => Value::from(()),
+        serde_yaml::Value::Bool(b) => Value::from(*b),
+        serde_yaml::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::from(i)
+            } else if let Some(f) = n.as_f64() {
+                Value::from(f)
+            } else {
+                Value::from(0)
+            }
+        }
+        serde_yaml::Value::String(s) => Value::from(s.as_str()),
+        serde_yaml::Value::Sequence(seq) => {
+            Value::from(seq.iter().map(yaml_to_minijinja_value).collect::<Vec<_>>())
+        }
+        serde_yaml::Value::Mapping(map) => {
+            let items: Vec<(String, Value)> = map
+                .iter()
+                .filter_map(|(k, v)| {
+                    if let serde_yaml::Value::String(key) = k {
+                        Some((key.clone(), yaml_to_minijinja_value(v)))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Value::from_iter(items)
+        }
+        serde_yaml::Value::Tagged(tagged) => yaml_to_minijinja_value(&tagged.value),
+    }
+}
+
+/// Evaluate a condition expression
+pub fn evaluate_condition(
+    condition: &str,
+    vars: &IndexMap<String, serde_yaml::Value>,
+) -> ParseResult<bool> {
+    let parser = Parser::new();
+
+    // Wrap in {{ }} if not already a template
+    let template = if condition.contains("{{") {
+        condition.to_string()
+    } else {
+        format!("{{{{ {} }}}}", condition)
+    };
+
+    let result = parser.render_template(&template, vars)?;
+
+    // Parse the result as a boolean
+    Ok(matches!(
+        result.trim().to_lowercase().as_str(),
+        "true" | "yes" | "1"
+    ))
+}
+
+/// Extract variable references from a template string
+pub fn extract_variables(template: &str) -> Vec<String> {
+    let var_pattern = regex::Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\}\}").unwrap();
+
+    var_pattern
+        .captures_iter(template)
+        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parser_new() {
+        let parser = Parser::new();
+        assert!(!parser.strict);
+    }
+
+    #[test]
+    fn test_render_template() {
+        let parser = Parser::new();
+        let mut vars = IndexMap::new();
+        vars.insert(
+            "name".to_string(),
+            serde_yaml::Value::String("world".to_string()),
+        );
+
+        let result = parser.render_template("Hello, {{ name }}!", &vars).unwrap();
+        assert_eq!(result, "Hello, world!");
+    }
+
+    #[test]
+    fn test_has_template() {
+        let parser = Parser::new();
+        assert!(parser.has_template("{{ var }}"));
+        assert!(parser.has_template("{% if condition %}"));
+        assert!(parser.has_template("{# comment #}"));
+        assert!(!parser.has_template("plain string"));
+    }
+
+    #[test]
+    fn test_parse_playbook_str() {
+        let parser = Parser::new();
+        let content = r#"
+- name: Test Play
+  hosts: all
+  tasks:
+    - name: Test Task
+      debug:
+        msg: "Hello"
+"#;
+
+        let playbook = parser.parse_playbook_str(content).unwrap();
+        assert_eq!(playbook.play_count(), 1);
+        assert_eq!(playbook.plays[0].name, "Test Play");
+        assert_eq!(playbook.plays[0].tasks.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_vars_str() {
+        let parser = Parser::new();
+        let content = r#"
+http_port: 80
+app_name: myapp
+debug: true
+"#;
+
+        let vars = parser.parse_vars_str(content).unwrap();
+        assert_eq!(vars.len(), 3);
+        assert_eq!(
+            vars.get("http_port"),
+            Some(&serde_yaml::Value::Number(80.into()))
+        );
+    }
+
+    #[test]
+    fn test_evaluate_condition() {
+        let mut vars = IndexMap::new();
+        vars.insert(
+            "enabled".to_string(),
+            serde_yaml::Value::Bool(true),
+        );
+
+        assert!(evaluate_condition("enabled", &vars).unwrap());
+        assert!(evaluate_condition("enabled == true", &vars).unwrap());
+    }
+
+    #[test]
+    fn test_extract_variables() {
+        let template = "Hello {{ name }}, welcome to {{ place }}!";
+        let vars = extract_variables(template);
+        assert_eq!(vars, vec!["name", "place"]);
+    }
+
+    #[test]
+    fn test_filters() {
+        let parser = Parser::new();
+        let vars = IndexMap::new();
+
+        // Test lower filter
+        let result = parser
+            .render_template("{{ 'HELLO' | lower }}", &vars)
+            .unwrap();
+        assert_eq!(result, "hello");
+
+        // Test upper filter
+        let result = parser
+            .render_template("{{ 'hello' | upper }}", &vars)
+            .unwrap();
+        assert_eq!(result, "HELLO");
+
+        // Test default filter
+        let result = parser
+            .render_template("{{ undefined_var | default('default_value') }}", &vars)
+            .unwrap();
+        assert_eq!(result, "default_value");
+    }
+}

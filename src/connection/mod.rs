@@ -1,0 +1,690 @@
+//! Connection module for Rustible
+//!
+//! This module provides a unified interface for executing commands and transferring
+//! files across different transport mechanisms (SSH, local, Docker).
+
+pub mod config;
+pub mod docker;
+pub mod local;
+pub mod ssh;
+
+use async_trait::async_trait;
+use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+use thiserror::Error;
+
+// Re-export config types at module level for convenience
+pub use config::{ConnectionConfig, HostConfig};
+
+/// Errors that can occur during connection operations
+#[derive(Error, Debug)]
+pub enum ConnectionError {
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+
+    #[error("Authentication failed: {0}")]
+    AuthenticationFailed(String),
+
+    #[error("Command execution failed: {0}")]
+    ExecutionFailed(String),
+
+    #[error("File transfer failed: {0}")]
+    TransferFailed(String),
+
+    #[error("Connection timeout after {0} seconds")]
+    Timeout(u64),
+
+    #[error("Host not found: {0}")]
+    HostNotFound(String),
+
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
+
+    #[error("SSH error: {0}")]
+    SshError(String),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Connection pool exhausted")]
+    PoolExhausted,
+
+    #[error("Connection closed")]
+    ConnectionClosed,
+
+    #[error("Docker error: {0}")]
+    DockerError(String),
+
+    #[error("Unsupported operation: {0}")]
+    UnsupportedOperation(String),
+}
+
+/// Result type for connection operations
+pub type ConnectionResult<T> = Result<T, ConnectionError>;
+
+/// Result of executing a command
+#[derive(Debug, Clone)]
+pub struct CommandResult {
+    /// Exit code of the command
+    pub exit_code: i32,
+    /// Standard output
+    pub stdout: String,
+    /// Standard error
+    pub stderr: String,
+    /// Whether the command was successful (exit code 0)
+    pub success: bool,
+}
+
+impl CommandResult {
+    /// Create a new successful command result
+    pub fn success(stdout: String, stderr: String) -> Self {
+        Self {
+            exit_code: 0,
+            stdout,
+            stderr,
+            success: true,
+        }
+    }
+
+    /// Create a new failed command result
+    pub fn failure(exit_code: i32, stdout: String, stderr: String) -> Self {
+        Self {
+            exit_code,
+            stdout,
+            stderr,
+            success: false,
+        }
+    }
+
+    /// Get the combined output (stdout + stderr)
+    pub fn combined_output(&self) -> String {
+        if self.stderr.is_empty() {
+            self.stdout.clone()
+        } else if self.stdout.is_empty() {
+            self.stderr.clone()
+        } else {
+            format!("{}\n{}", self.stdout, self.stderr)
+        }
+    }
+}
+
+/// Options for command execution
+#[derive(Debug, Clone, Default)]
+pub struct ExecuteOptions {
+    /// Working directory for the command
+    pub cwd: Option<String>,
+    /// Environment variables to set
+    pub env: HashMap<String, String>,
+    /// Timeout in seconds (None for no timeout)
+    pub timeout: Option<u64>,
+    /// Run command with privilege escalation (sudo/su)
+    pub escalate: bool,
+    /// User to escalate to (default: root)
+    pub escalate_user: Option<String>,
+    /// Method for privilege escalation (sudo, su, etc.)
+    pub escalate_method: Option<String>,
+    /// Password for privilege escalation operations
+    pub escalate_password: Option<String>,
+}
+
+impl ExecuteOptions {
+    /// Create new execute options
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the working directory
+    pub fn with_cwd(mut self, cwd: impl Into<String>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
+    }
+
+    /// Add an environment variable
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set the timeout
+    pub fn with_timeout(mut self, timeout: u64) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Enable privilege escalation
+    pub fn with_escalation(mut self, user: Option<String>) -> Self {
+        self.escalate = true;
+        self.escalate_user = user;
+        self
+    }
+}
+
+/// Options for file transfer
+#[derive(Debug, Clone, Default)]
+pub struct TransferOptions {
+    /// File mode (permissions) to set
+    pub mode: Option<u32>,
+    /// Owner to set
+    pub owner: Option<String>,
+    /// Group to set
+    pub group: Option<String>,
+    /// Create parent directories if they don't exist
+    pub create_dirs: bool,
+    /// Backup existing file before overwriting
+    pub backup: bool,
+}
+
+impl TransferOptions {
+    /// Create new transfer options
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set file mode
+    pub fn with_mode(mut self, mode: u32) -> Self {
+        self.mode = Some(mode);
+        self
+    }
+
+    /// Set owner
+    pub fn with_owner(mut self, owner: impl Into<String>) -> Self {
+        self.owner = Some(owner.into());
+        self
+    }
+
+    /// Set group
+    pub fn with_group(mut self, group: impl Into<String>) -> Self {
+        self.group = Some(group.into());
+        self
+    }
+
+    /// Enable directory creation
+    pub fn with_create_dirs(mut self) -> Self {
+        self.create_dirs = true;
+        self
+    }
+}
+
+/// The main connection trait that all transport implementations must implement
+#[async_trait]
+pub trait Connection: Send + Sync {
+    /// Get the connection identifier (hostname or container name)
+    fn identifier(&self) -> &str;
+
+    /// Check if the connection is still alive
+    async fn is_alive(&self) -> bool;
+
+    /// Execute a command on the remote host
+    async fn execute(
+        &self,
+        command: &str,
+        options: Option<ExecuteOptions>,
+    ) -> ConnectionResult<CommandResult>;
+
+    /// Upload a file to the remote host
+    async fn upload(
+        &self,
+        local_path: &Path,
+        remote_path: &Path,
+        options: Option<TransferOptions>,
+    ) -> ConnectionResult<()>;
+
+    /// Upload content directly to a remote file
+    async fn upload_content(
+        &self,
+        content: &[u8],
+        remote_path: &Path,
+        options: Option<TransferOptions>,
+    ) -> ConnectionResult<()>;
+
+    /// Download a file from the remote host
+    async fn download(&self, remote_path: &Path, local_path: &Path) -> ConnectionResult<()>;
+
+    /// Download a file content from the remote host
+    async fn download_content(&self, remote_path: &Path) -> ConnectionResult<Vec<u8>>;
+
+    /// Check if a path exists on the remote host
+    async fn path_exists(&self, path: &Path) -> ConnectionResult<bool>;
+
+    /// Check if a path is a directory on the remote host
+    async fn is_directory(&self, path: &Path) -> ConnectionResult<bool>;
+
+    /// Get file stats (size, mode, owner, etc.)
+    async fn stat(&self, path: &Path) -> ConnectionResult<FileStat>;
+
+    /// Close the connection
+    async fn close(&self) -> ConnectionResult<()>;
+}
+
+/// File statistics
+#[derive(Debug, Clone)]
+pub struct FileStat {
+    /// File size in bytes
+    pub size: u64,
+    /// File mode (permissions)
+    pub mode: u32,
+    /// Owner UID
+    pub uid: u32,
+    /// Group GID
+    pub gid: u32,
+    /// Last access time (Unix timestamp)
+    pub atime: i64,
+    /// Last modification time (Unix timestamp)
+    pub mtime: i64,
+    /// Is this a directory?
+    pub is_dir: bool,
+    /// Is this a regular file?
+    pub is_file: bool,
+    /// Is this a symbolic link?
+    pub is_symlink: bool,
+}
+
+/// Connection type enum for factory pattern
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ConnectionType {
+    /// Local connection (no network)
+    Local,
+    /// SSH connection to remote host
+    Ssh {
+        host: String,
+        port: u16,
+        user: String,
+    },
+    /// Docker container connection
+    Docker { container: String },
+}
+
+impl ConnectionType {
+    /// Get a unique key for this connection type (for pooling)
+    pub fn pool_key(&self) -> String {
+        match self {
+            ConnectionType::Local => "local".to_string(),
+            ConnectionType::Ssh { host, port, user } => format!("ssh://{}@{}:{}", user, host, port),
+            ConnectionType::Docker { container } => format!("docker://{}", container),
+        }
+    }
+}
+
+/// Factory for creating connections
+pub struct ConnectionFactory {
+    /// Global configuration
+    config: Arc<ConnectionConfig>,
+    /// Connection pool
+    pool: Arc<RwLock<ConnectionPool>>,
+}
+
+impl ConnectionFactory {
+    /// Create a new connection factory
+    pub fn new(config: ConnectionConfig) -> Self {
+        Self {
+            config: Arc::new(config),
+            pool: Arc::new(RwLock::new(ConnectionPool::new(10))), // Default pool size of 10
+        }
+    }
+
+    /// Create a new connection factory with custom pool size
+    pub fn with_pool_size(config: ConnectionConfig, pool_size: usize) -> Self {
+        Self {
+            config: Arc::new(config),
+            pool: Arc::new(RwLock::new(ConnectionPool::new(pool_size))),
+        }
+    }
+
+    /// Get a connection for a host
+    pub async fn get_connection(
+        &self,
+        host: &str,
+    ) -> ConnectionResult<Arc<dyn Connection + Send + Sync>> {
+        let conn_type = self.resolve_connection_type(host)?;
+        let pool_key = conn_type.pool_key();
+
+        // Try to get from pool first
+        if let Some(conn) = self.pool.write().get(&pool_key) {
+            if conn.is_alive().await {
+                return Ok(conn);
+            }
+        }
+
+        // Create new connection
+        let conn = self.create_connection(&conn_type).await?;
+
+        // Add to pool
+        self.pool.write().put(pool_key, conn.clone());
+
+        Ok(conn)
+    }
+
+    /// Resolve a host name to a connection type
+    fn resolve_connection_type(&self, host: &str) -> ConnectionResult<ConnectionType> {
+        // Check for special connection types
+        if host == "localhost" || host == "127.0.0.1" || host == "local" {
+            // Check if we should use local connection
+            if let Some(host_config) = self.config.get_host(host) {
+                if host_config.connection == Some("local".to_string()) {
+                    return Ok(ConnectionType::Local);
+                }
+            }
+            // Default to local for localhost
+            return Ok(ConnectionType::Local);
+        }
+
+        // Check for docker connection
+        if host.starts_with("docker://") {
+            let container = host.strip_prefix("docker://").unwrap().to_string();
+            return Ok(ConnectionType::Docker { container });
+        }
+
+        // Default to SSH
+        let host_config = self.config.get_host(host);
+        let (actual_host, port, user) = if let Some(hc) = host_config {
+            (
+                hc.hostname.clone().unwrap_or_else(|| host.to_string()),
+                hc.port.unwrap_or(22),
+                hc.user
+                    .clone()
+                    .unwrap_or_else(|| self.config.defaults.user.clone()),
+            )
+        } else {
+            (
+                host.to_string(),
+                22,
+                self.config.defaults.user.clone(),
+            )
+        };
+
+        Ok(ConnectionType::Ssh {
+            host: actual_host,
+            port,
+            user,
+        })
+    }
+
+    /// Create a new connection based on type
+    async fn create_connection(
+        &self,
+        conn_type: &ConnectionType,
+    ) -> ConnectionResult<Arc<dyn Connection + Send + Sync>> {
+        match conn_type {
+            ConnectionType::Local => {
+                let conn = local::LocalConnection::new();
+                Ok(Arc::new(conn))
+            }
+            ConnectionType::Ssh { host, port, user } => {
+                let host_config = self.config.get_host(host).cloned();
+                let conn =
+                    ssh::SshConnection::connect(host, *port, user, host_config, &self.config)
+                        .await?;
+                Ok(Arc::new(conn))
+            }
+            ConnectionType::Docker { container } => {
+                let conn = docker::DockerConnection::new(container.clone());
+                Ok(Arc::new(conn))
+            }
+        }
+    }
+
+    /// Close all connections in the pool
+    pub async fn close_all(&self) -> ConnectionResult<()> {
+        let connections: Vec<_> = {
+            let mut pool = self.pool.write();
+            pool.drain()
+        };
+
+        for conn in connections {
+            let _ = conn.close().await;
+        }
+
+        Ok(())
+    }
+
+    /// Get pool statistics
+    pub fn pool_stats(&self) -> PoolStats {
+        self.pool.read().stats()
+    }
+}
+
+/// Connection pool for reusing connections
+pub struct ConnectionPool {
+    /// Maximum number of connections per host
+    max_connections: usize,
+    /// Active connections by pool key
+    connections: HashMap<String, Arc<dyn Connection + Send + Sync>>,
+}
+
+impl ConnectionPool {
+    /// Create a new connection pool
+    pub fn new(max_connections: usize) -> Self {
+        Self {
+            max_connections,
+            connections: HashMap::new(),
+        }
+    }
+
+    /// Get a connection from the pool
+    pub fn get(&mut self, key: &str) -> Option<Arc<dyn Connection + Send + Sync>> {
+        self.connections.get(key).cloned()
+    }
+
+    /// Put a connection into the pool
+    pub fn put(&mut self, key: String, conn: Arc<dyn Connection + Send + Sync>) {
+        // Evict old connections if pool is full
+        if self.connections.len() >= self.max_connections {
+            // Remove oldest connection (simple FIFO for now)
+            if let Some(oldest_key) = self.connections.keys().next().cloned() {
+                self.connections.remove(&oldest_key);
+            }
+        }
+        self.connections.insert(key, conn);
+    }
+
+    /// Remove a connection from the pool
+    pub fn remove(&mut self, key: &str) -> Option<Arc<dyn Connection + Send + Sync>> {
+        self.connections.remove(key)
+    }
+
+    /// Drain all connections from the pool
+    pub fn drain(&mut self) -> Vec<Arc<dyn Connection + Send + Sync>> {
+        self.connections.drain().map(|(_, v)| v).collect()
+    }
+
+    /// Get pool statistics
+    pub fn stats(&self) -> PoolStats {
+        PoolStats {
+            active_connections: self.connections.len(),
+            max_connections: self.max_connections,
+        }
+    }
+}
+
+/// Pool statistics
+#[derive(Debug, Clone)]
+pub struct PoolStats {
+    /// Number of active connections
+    pub active_connections: usize,
+    /// Maximum number of connections allowed
+    pub max_connections: usize,
+}
+
+/// Builder for creating connections with custom options
+pub struct ConnectionBuilder {
+    host: String,
+    port: Option<u16>,
+    user: Option<String>,
+    password: Option<String>,
+    private_key: Option<String>,
+    timeout: Option<u64>,
+    connection_type: Option<String>,
+}
+
+impl ConnectionBuilder {
+    /// Create a new connection builder
+    pub fn new(host: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            port: None,
+            user: None,
+            password: None,
+            private_key: None,
+            timeout: None,
+            connection_type: None,
+        }
+    }
+
+    /// Set the port
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
+    }
+
+    /// Set the user
+    pub fn user(mut self, user: impl Into<String>) -> Self {
+        self.user = Some(user.into());
+        self
+    }
+
+    /// Set the password
+    pub fn password(mut self, password: impl Into<String>) -> Self {
+        self.password = Some(password.into());
+        self
+    }
+
+    /// Set the private key path
+    pub fn private_key(mut self, key_path: impl Into<String>) -> Self {
+        self.private_key = Some(key_path.into());
+        self
+    }
+
+    /// Set the connection timeout
+    pub fn timeout(mut self, timeout: u64) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Set the connection type explicitly
+    pub fn connection_type(mut self, conn_type: impl Into<String>) -> Self {
+        self.connection_type = Some(conn_type.into());
+        self
+    }
+
+    /// Build and connect
+    pub async fn connect(self) -> ConnectionResult<Arc<dyn Connection + Send + Sync>> {
+        // Determine connection type
+        let conn_type = if let Some(ct) = &self.connection_type {
+            match ct.as_str() {
+                "local" => ConnectionType::Local,
+                "docker" => ConnectionType::Docker {
+                    container: self.host.clone(),
+                },
+                "ssh" | _ => ConnectionType::Ssh {
+                    host: self.host.clone(),
+                    port: self.port.unwrap_or(22),
+                    user: self.user.clone().unwrap_or_else(whoami),
+                },
+            }
+        } else if self.host == "localhost" || self.host == "127.0.0.1" || self.host == "local" {
+            ConnectionType::Local
+        } else if self.host.starts_with("docker://") {
+            ConnectionType::Docker {
+                container: self.host.strip_prefix("docker://").unwrap().to_string(),
+            }
+        } else {
+            ConnectionType::Ssh {
+                host: self.host.clone(),
+                port: self.port.unwrap_or(22),
+                user: self.user.clone().unwrap_or_else(whoami),
+            }
+        };
+
+        // Create connection based on type
+        match conn_type {
+            ConnectionType::Local => Ok(Arc::new(local::LocalConnection::new())),
+            ConnectionType::Ssh { host, port, user } => {
+                // Build host config from builder options
+                let host_config = HostConfig {
+                    hostname: Some(host.clone()),
+                    port: Some(port),
+                    user: Some(user.clone()),
+                    identity_file: self.private_key.clone(),
+                    password: self.password.clone(),
+                    connect_timeout: self.timeout,
+                    ..Default::default()
+                };
+
+                let config = ConnectionConfig::default();
+                let conn =
+                    ssh::SshConnection::connect(&host, port, &user, Some(host_config), &config)
+                        .await?;
+                Ok(Arc::new(conn))
+            }
+            ConnectionType::Docker { container } => {
+                Ok(Arc::new(docker::DockerConnection::new(container)))
+            }
+        }
+    }
+}
+
+/// Get the current username
+fn whoami() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "root".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_command_result_success() {
+        let result = CommandResult::success("output".to_string(), "".to_string());
+        assert!(result.success);
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "output");
+    }
+
+    #[test]
+    fn test_command_result_failure() {
+        let result = CommandResult::failure(1, "".to_string(), "error".to_string());
+        assert!(!result.success);
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stderr, "error");
+    }
+
+    #[test]
+    fn test_connection_type_pool_key() {
+        assert_eq!(ConnectionType::Local.pool_key(), "local");
+        assert_eq!(
+            ConnectionType::Ssh {
+                host: "example.com".to_string(),
+                port: 22,
+                user: "user".to_string()
+            }
+            .pool_key(),
+            "ssh://user@example.com:22"
+        );
+        assert_eq!(
+            ConnectionType::Docker {
+                container: "mycontainer".to_string()
+            }
+            .pool_key(),
+            "docker://mycontainer"
+        );
+    }
+
+    #[test]
+    fn test_execute_options_builder() {
+        let options = ExecuteOptions::new()
+            .with_cwd("/tmp")
+            .with_env("FOO", "bar")
+            .with_timeout(30)
+            .with_escalation(Some("root".to_string()));
+
+        assert_eq!(options.cwd, Some("/tmp".to_string()));
+        assert_eq!(options.env.get("FOO"), Some(&"bar".to_string()));
+        assert_eq!(options.timeout, Some(30));
+        assert!(options.escalate);
+        assert_eq!(options.escalate_user, Some("root".to_string()));
+    }
+}
