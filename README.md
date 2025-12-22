@@ -399,85 +399,60 @@ Benchmarks comparing Rustible vs Ansible on common operations:
 
 *Benchmarks performed on Ubuntu 22.04, 8-core CPU, 16GB RAM, SSH over LAN*
 
-### Why Speed Matters: The GPU Infrastructure Use Case
+### Performance on GPU/HPC Infrastructure
 
-When you're renting high-performance GPU infrastructure by the hour, **every second of provisioning time is money burning**.
+Provisioning time matters when renting expensive infrastructure by the hour.
 
-Consider the economics:
-- **NVIDIA DGX H100**: ~$37/hour per node
-- **GB300 NVL72 rack**: ~$400+/hour
-- **Cloud GPU instances**: $2-32/hour depending on configuration
+**Cost calculation based on benchmark data (8-node cluster bootstrap):**
 
-A typical Ansible playbook provisioning a GPU node takes 3-5 minutes. For an 8-node cluster, that's potentially **25-40 minutes** of sequential provisioning with Ansible. At $37/hour per node, you're paying ~$50 just waiting for configuration to complete.
+| Tool | Time | Cluster Cost (@$296/hr) |
+|------|------|-------------------------|
+| Ansible | 4m 12s | $20.72 |
+| Rustible | 47s | $3.87 |
+| **Difference** | 3m 25s | **$16.85** |
 
-Rustible changes this equation:
+*Assumes 8× DGX H100 nodes at ~$37/hour each. Actual rates vary by provider.*
 
-```
-Ansible (8-node DGX cluster):
-  - Sequential execution: 40 minutes
-  - Cost during provisioning: $49.33
-
-Rustible (8-node DGX cluster):
-  - Parallel async execution: 7 minutes
-  - Cost during provisioning: $8.62
-
-  Savings per deployment: $40.71
-```
+For teams deploying clusters multiple times per day (development, testing, scaling), these savings accumulate.
 
 #### Why Rustible is Faster
 
-1. **Compiled Rust vs Interpreted Python**: No interpreter startup overhead. The Rustible binary is ready to execute immediately.
+Both tools support parallel execution across hosts. The performance difference comes from:
 
-2. **True Async I/O**: Built on Tokio, Rustible performs SSH operations, file transfers, and command execution concurrently across all hosts. While Ansible's "forks" create separate Python processes, Rustible uses lightweight async tasks.
+1. **No interpreter overhead**: Rustible runs as a compiled binary. Ansible requires Python startup on both control node and targets.
 
-3. **Native Module Execution**: Core modules run as compiled Rust code, not Python scripts that need to be transferred and interpreted on each host.
+2. **Lightweight concurrency**: Rustible uses async tasks on a thread pool. Ansible spawns separate Python processes per fork.
 
-4. **Connection Pooling**: SSH connections are reused efficiently across tasks, eliminating repeated handshake overhead.
+3. **Native modules**: Built-in modules execute as Rust code. Ansible transfers and interprets Python scripts on each host.
 
-5. **Zero-Copy Where Possible**: Rust's ownership model enables efficient memory handling without the garbage collection pauses of Python.
+4. **Connection reuse**: SSH connections are pooled across tasks, reducing handshake overhead.
 
-#### GPU/HPC Provisioning Example
+#### Example: GPU Node Bootstrap
 
 ```yaml
-# This playbook provisions GPU nodes from bare metal to production-ready
-# Rustible executes this across 8 nodes in ~47 seconds
 - name: Bootstrap GPU compute nodes
   hosts: gpu_cluster
   become: true
-  gather_facts: true
 
   tasks:
-    - name: Install NVIDIA drivers and CUDA toolkit
+    - name: Install NVIDIA drivers and CUDA
       ansible.builtin.package:
         name:
           - nvidia-driver-550
           - cuda-toolkit-12-4
         state: present
 
-    - name: Configure nvidia-persistenced
+    - name: Enable nvidia-persistenced
       ansible.builtin.service:
         name: nvidia-persistenced
         state: started
         enabled: true
 
-    - name: Set GPU compute mode to EXCLUSIVE_PROCESS
-      ansible.builtin.command:
-        cmd: nvidia-smi -c EXCLUSIVE_PROCESS
-      changed_when: true
-
-    - name: Deploy container runtime configuration
+    - name: Configure Docker for GPU support
       ansible.builtin.template:
         src: daemon.json.j2
         dest: /etc/docker/daemon.json
       notify: Restart Docker
-
-    - name: Pull ML framework containers
-      community.docker.docker_image:
-        name: "{{ item }}"
-        source: pull
-      loop:
-        - nvcr.io/nvidia/pytorch:24.04-py3
-        - nvcr.io/nvidia/tensorflow:24.04-tf2-py3
 
   handlers:
     - name: Restart Docker
@@ -486,16 +461,8 @@ Rustible (8-node DGX cluster):
         state: restarted
 ```
 
-#### Make Your Infrastructure Roar
-
-For organizations running GPU workloads at scale, Rustible isn't just a technical improvement—it's a cost optimization. Every minute saved on provisioning is a minute your expensive hardware is doing actual compute work instead of waiting for configuration management.
-
 ```bash
-# Bootstrap your entire GPU cluster in seconds, not minutes
-rustible gpu-cluster-init.yml -i inventory.yml -f 50
-
-# Same Ansible playbooks, 5x faster execution
-# Your GB300s are ready to train while others are still provisioning
+rustible gpu-bootstrap.yml -i inventory.yml -f 50
 ```
 
 ## Project Structure
