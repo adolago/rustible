@@ -155,10 +155,7 @@ fn test_runtime_context_variable_precedence() {
 
     // Set variables at different levels
     ctx.set_global_var("var".to_string(), serde_json::json!("global"));
-    assert_eq!(
-        ctx.get_var("var", None),
-        Some(serde_json::json!("global"))
-    );
+    assert_eq!(ctx.get_var("var", None), Some(serde_json::json!("global")));
 
     // Play vars override global
     ctx.set_play_var("var".to_string(), serde_json::json!("play"));
@@ -240,7 +237,11 @@ fn test_runtime_context_merged_vars() {
 
     ctx.set_global_var("global_var".to_string(), serde_json::json!("global_value"));
     ctx.set_play_var("play_var".to_string(), serde_json::json!("play_value"));
-    ctx.set_host_var("server1", "host_var".to_string(), serde_json::json!("host_value"));
+    ctx.set_host_var(
+        "server1",
+        "host_var".to_string(),
+        serde_json::json!("host_value"),
+    );
 
     let merged = ctx.get_merged_vars("server1");
 
@@ -278,18 +279,9 @@ fn test_task_builder() {
 
     assert_eq!(task.name, "Install nginx");
     assert_eq!(task.module, "package");
-    assert_eq!(
-        task.args.get("name"),
-        Some(&serde_json::json!("nginx"))
-    );
-    assert_eq!(
-        task.args.get("state"),
-        Some(&serde_json::json!("present"))
-    );
-    assert_eq!(
-        task.when,
-        Some("ansible_os_family == 'Debian'".to_string())
-    );
+    assert_eq!(task.args.get("name"), Some(&serde_json::json!("nginx")));
+    assert_eq!(task.args.get("state"), Some(&serde_json::json!("present")));
+    assert_eq!(task.when, Some("ansible_os_family == 'Debian'".to_string()));
     assert!(task.notify.contains(&"restart nginx".to_string()));
     assert_eq!(task.register, Some("install_result".to_string()));
     assert!(task.ignore_errors);
@@ -345,10 +337,7 @@ fn test_task_result_with_data() {
 
     assert!(result.changed);
     assert_eq!(result.msg, Some("Package installed".to_string()));
-    assert_eq!(
-        result.result,
-        Some(serde_json::json!({"version": "1.0.0"}))
-    );
+    assert_eq!(result.result, Some(serde_json::json!({"version": "1.0.0"})));
 }
 
 // ============================================================================
@@ -522,7 +511,7 @@ fn test_parse_playbook_with_become() {
 
     let playbook = Playbook::parse(yaml, None).unwrap();
 
-    assert!(playbook.plays[0].become);
+    assert!(playbook.plays[0].r#become);
     assert_eq!(playbook.plays[0].become_user, Some("root".to_string()));
 }
 

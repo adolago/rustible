@@ -16,8 +16,11 @@ use crate::connection::{CommandResult, Connection, ExecuteOptions};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
+use walkdir::WalkDir;
+use zip::write::FileOptions;
 
 /// Result from Ansible module execution (JSON format)
 #[derive(Debug, Deserialize, Serialize)]
@@ -102,11 +105,14 @@ impl PythonModuleExecutor {
 
     /// Find an Ansible module by name
     ///
+    /// Supports both short names (e.g., "apt") and FQCNs (e.g., "ansible.builtin.apt")
+    ///
     /// Searches in order:
     /// 1. Module cache
-    /// 2. User collections (~/.ansible/collections)
-    /// 3. User modules (~/.ansible/plugins/modules)
-    /// 4. System modules (/usr/share/ansible/...)
+    /// 2. FQCN resolution in collections (if name contains dots)
+    /// 3. User collections (~/.ansible/collections)
+    /// 4. User modules (~/.ansible/plugins/modules)
+    /// 5. System modules (/usr/share/ansible/...)
     pub fn find_module(&mut self, name: &str) -> Option<PathBuf> {
         // Check cache first
         if let Some(path) = self.module_cache.get(name) {
@@ -116,13 +122,19 @@ impl PythonModuleExecutor {
         }
 
         // Handle fully-qualified collection names (e.g., "ansible.builtin.apt")
+        if let Some(path) = self.find_fqcn_module(name) {
+            self.module_cache.insert(name.to_string(), path.clone());
+            return Some(path);
+        }
+
+        // Extract simple module name for non-FQCN search
         let module_name = if name.contains('.') {
             name.rsplit('.').next().unwrap_or(name)
         } else {
             name
         };
 
-        // Search all paths
+        // Search all paths for the module
         for base_path in &self.module_paths {
             if !base_path.exists() {
                 continue;
@@ -157,89 +169,254 @@ impl PythonModuleExecutor {
         None
     }
 
-    /// Bundle a module with its arguments into an AnsiballZ-style payload
+    /// Find a module using Fully Qualified Collection Name
     ///
-    /// Returns a Python script that can be executed on the remote host
+    /// FQCN format: namespace.collection.module (e.g., "ansible.builtin.apt")
+    /// Resolves to: {collection_path}/ansible_collections/{namespace}/{collection}/plugins/modules/{module}.py
+    fn find_fqcn_module(&self, name: &str) -> Option<PathBuf> {
+        let parts: Vec<&str> = name.split('.').collect();
+
+        // Need at least 3 parts: namespace.collection.module
+        if parts.len() < 3 {
+            return None;
+        }
+
+        let namespace = parts[0];
+        let collection = parts[1];
+        let module_name = parts[parts.len() - 1];
+
+        // Handle nested module paths (e.g., ansible.builtin.packaging.apt -> packaging/apt.py)
+        let module_subpath = if parts.len() > 3 {
+            parts[2..parts.len()].join("/") + ".py"
+        } else {
+            format!("{}.py", module_name)
+        };
+
+        debug!(
+            "Resolving FQCN {} -> namespace:{}, collection:{}, module:{}",
+            name, namespace, collection, module_name
+        );
+
+        // Get collection root paths
+        let collection_roots = self.get_collection_roots();
+
+        for root in collection_roots {
+            // Standard collection path: {root}/ansible_collections/{namespace}/{collection}/plugins/modules/
+            let collection_module_dir = root
+                .join("ansible_collections")
+                .join(namespace)
+                .join(collection)
+                .join("plugins")
+                .join("modules");
+
+            if collection_module_dir.exists() {
+                let module_path = collection_module_dir.join(&module_subpath);
+                if module_path.exists() {
+                    debug!("Found FQCN module {} at {}", name, module_path.display());
+                    return Some(module_path);
+                }
+
+                // Also try without subdirectory nesting
+                let simple_path = collection_module_dir.join(format!("{}.py", module_name));
+                if simple_path.exists() {
+                    debug!("Found FQCN module {} at {}", name, simple_path.display());
+                    return Some(simple_path);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Get all collection root directories
+    fn get_collection_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+
+        // User collections
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = PathBuf::from(home);
+            roots.push(home.join(".ansible/collections"));
+        }
+
+        // ANSIBLE_COLLECTIONS_PATH environment variable
+        if let Some(collections_path) = std::env::var_os("ANSIBLE_COLLECTIONS_PATH") {
+            for path in std::env::split_paths(&collections_path) {
+                roots.push(path);
+            }
+        }
+
+        // System-wide collections
+        roots.push(PathBuf::from("/usr/share/ansible/collections"));
+        roots.push(PathBuf::from("/etc/ansible/collections"));
+
+        roots
+    }
+
+    /// Find the local Ansible library path
+    fn find_ansible_library(&self) -> Option<PathBuf> {
+        // Try to find it via python3
+        let output = std::process::Command::new("python3")
+            .args(&["-c", "import ansible; print(ansible.__path__[0])"])
+            .output()
+            .ok()?;
+
+        if output.status.success() {
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let path = PathBuf::from(path_str);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    /// Bundle a module with its arguments and dependencies into a Zip file (AnsiballZ style)
     pub fn bundle(&self, module_path: &Path, args: &ModuleParams) -> ModuleResult<String> {
-        // Read the module source
-        let module_source = std::fs::read_to_string(module_path).map_err(|e| {
-            ModuleError::ExecutionFailed(format!(
-                "Failed to read module {}: {}",
-                module_path.display(),
-                e
-            ))
-        })?;
+        let ansible_lib = self.find_ansible_library()
+            .ok_or_else(|| ModuleError::ExecutionFailed("Could not find Ansible library locally to bundle. Please ensure 'ansible' is installed on the controller machine.".to_string()))?;
 
-        // Serialize arguments to JSON
-        let args_json = serde_json::to_string(args).map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to serialize module arguments: {}", e))
-        })?;
+        // Prepare in-memory zip
+        let mut buffer = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut buffer));
+            let options = FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .unix_permissions(0o755);
 
-        // Base64 encode the module source
-        let module_b64 = BASE64.encode(module_source.as_bytes());
-        let args_b64 = BASE64.encode(args_json.as_bytes());
+            // 1. Prepare module Injector as __main__.py
+            let args_json = serde_json::to_string(args).map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to serialize module arguments: {}", e))
+            })?;
 
-        // Create the wrapper script
-        let wrapper = format!(
-            r#"#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# Rustible AnsiballZ-compatible module wrapper
-import sys
+            let module_source = std::fs::read_to_string(module_path).map_err(|e| {
+                ModuleError::ExecutionFailed(format!(
+                    "Failed to read module {}: {}",
+                    module_path.display(),
+                    e
+                ))
+            })?;
+
+            // Prepend args injection to module source
+            // We use Base64 for args to avoid escaping issues
+            let injection_header = format!(
+                r#"
 import os
 import json
 import base64
-import tempfile
+import sys
 
-MODULE_B64 = '{module_b64}'
-ARGS_B64 = '{args_b64}'
+# Inject arguments
+APP_ARGS_B64 = '{}'
+os.environ['ANSIBLE_MODULE_ARGS'] = base64.b64decode(APP_ARGS_B64).decode('utf-8')
+
+# Current directory (root of zip) is automatically in sys.path[0] when running as zipapp
+# but we explicitly ensure it for safety
+if sys.path[0] != os.path.dirname(__file__):
+    sys.path.insert(0, os.path.dirname(__file__))
+
+"#,
+                BASE64.encode(args_json.as_bytes())
+            );
+
+            let final_main = format!("{}\n{}", injection_header, module_source);
+
+            zip.start_file("__main__.py", options)
+                .map_err(|e| ModuleError::ExecutionFailed(format!("Zip error: {}", e)))?;
+            zip.write_all(final_main.as_bytes())?;
+
+            // 2. Add ansible/module_utils
+            // We walk the module_utils directory and add everything
+            // This ensures common utils like basic.py are available
+            let module_utils_path = ansible_lib.join("module_utils");
+            if module_utils_path.exists() {
+                // Determine the root for relative paths (the parent of 'ansible' dir)
+                // path: /usr/lib/python3/dist-packages/ansible
+                // parent: /usr/lib/python3/dist-packages
+                let lib_root = ansible_lib.parent().unwrap_or(&ansible_lib);
+
+                for entry in WalkDir::new(&module_utils_path) {
+                    let entry = entry.map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to walk module_utils: {}", e))
+                    })?;
+                    let path = entry.path();
+
+                    if path.is_file() {
+                        // We want 'ansible/module_utils/...' in the zip
+                        // If path is /usr/lib/.../ansible/module_utils/basic.py
+                        // and lib_root is /usr/lib/...
+                        // rel_path is ansible/module_utils/basic.py
+                        if let Ok(rel_path) = path.strip_prefix(lib_root) {
+                            let name = rel_path.to_string_lossy().into_owned();
+                            zip.start_file(name, options).map_err(|e| {
+                                ModuleError::ExecutionFailed(format!("Zip error: {}", e))
+                            })?;
+                            let content = std::fs::read(path).map_err(|e| {
+                                ModuleError::ExecutionFailed(format!(
+                                    "Failed to read {}: {}",
+                                    path.display(),
+                                    e
+                                ))
+                            })?;
+                            zip.write_all(&content)?;
+                        }
+                    }
+                }
+
+                // Ensure ansible/__init__.py exists
+                zip.start_file("ansible/__init__.py", options)
+                    .map_err(|e| ModuleError::ExecutionFailed(format!("Zip error: {}", e)))?;
+                zip.write_all(b"")?;
+            } else {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "ansible/module_utils not found at {}",
+                    module_utils_path.display()
+                )));
+            }
+
+            zip.finish().map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to finish zip: {}", e))
+            })?;
+        }
+
+        // Base64 encode the zip payload
+        let zip_b64 = BASE64.encode(&buffer);
+
+        // Create the wrapper script that executes the zip
+        let wrapper = format!(
+            r#"#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# Rustible AnsiballZ-compatible runner
+import sys
+import os
+import base64
+import tempfile
+import runpy
+
+# The Zipapp payload (Ansible module + modules_utils)
+PAYLOAD = '{zip_b64}'
 
 def main():
-    # Decode module and args
-    module_code = base64.b64decode(MODULE_B64).decode('utf-8')
-    args_json = base64.b64decode(ARGS_B64).decode('utf-8')
-    args = json.loads(args_json)
+    # Create temp file for the zipapp
+    fd, path = tempfile.mkstemp(suffix='.zip', prefix='rustible_')
+    os.close(fd)
     
-    # Create temp file for module
-    fd, module_path = tempfile.mkstemp(suffix='.py', prefix='rustible_')
     try:
-        with os.fdopen(fd, 'w') as f:
-            f.write(module_code)
+        # Write payload to disk
+        with open(path, 'wb') as f:
+            f.write(base64.b64decode(PAYLOAD))
+            
+        # Execute the zipapp in-process
+        # This is equivalent to 'python path/to.zip'
+        sys.path.insert(0, path)
+        runpy.run_path(path, run_name='__main__')
         
-        # Set up module arguments in environment (Ansible style)
-        os.environ['ANSIBLE_MODULE_ARGS'] = args_json
-        
-        # Import and execute the module
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("ansible_module", module_path)
-        module = importlib.util.module_from_spec(spec)
-        
-        # Capture result
-        result = {{'changed': False, 'failed': False}}
-        
-        try:
-            # Many Ansible modules have a main() that returns or prints JSON
-            if hasattr(module, 'main'):
-                spec.loader.exec_module(module)
-                # Check if module.main exists after loading
-                if callable(getattr(module, 'main', None)):
-                    ret = module.main()
-                    if isinstance(ret, dict):
-                        result.update(ret)
-            else:
-                # Execute module directly
-                spec.loader.exec_module(module)
-        except SystemExit as e:
-            # Ansible modules often call exit_json/fail_json which raises SystemExit
-            pass
-        except Exception as e:
-            result['failed'] = True
-            result['msg'] = str(e)
-        
-        print(json.dumps(result))
-        
+    except Exception as e:
+        import json
+        print(json.dumps({{'failed': True, 'msg': str(e)}}))
     finally:
         try:
-            os.unlink(module_path)
+            if os.path.exists(path):
+                os.remove(path)
         except:
             pass
 
@@ -377,14 +554,21 @@ mod tests {
     fn test_bundle_generation() {
         let executor = PythonModuleExecutor::new();
         let temp_module = std::env::temp_dir().join("test_module.py");
-        std::fs::write(&temp_module, "def main(): return {'changed': True}").unwrap();
+        std::fs::write(
+            &temp_module,
+            "def main(): import json; print(json.dumps({'changed': True}))",
+        )
+        .unwrap();
 
         let mut args = HashMap::new();
         args.insert("name".to_string(), serde_json::json!("test"));
 
-        let bundle = executor.bundle(&temp_module, &args).unwrap();
-        assert!(bundle.contains("MODULE_B64"));
-        assert!(bundle.contains("ARGS_B64"));
+        // Only run this test if ansible is available
+        if executor.find_ansible_library().is_some() {
+            let bundle = executor.bundle(&temp_module, &args).unwrap();
+            assert!(bundle.contains("PAYLOAD"));
+            assert!(bundle.contains("runpy.run_path"));
+        }
 
         std::fs::remove_file(&temp_module).ok();
     }
@@ -416,5 +600,34 @@ mod tests {
 
         let err = executor.parse_result(&result, "apt").unwrap_err();
         assert!(matches!(err, ModuleError::ExecutionFailed(_)));
+    }
+
+    #[test]
+    fn test_fqcn_parsing() {
+        let executor = PythonModuleExecutor::new();
+
+        // Test that FQCN with less than 3 parts returns None
+        assert!(executor.find_fqcn_module("apt").is_none());
+        assert!(executor.find_fqcn_module("builtin.apt").is_none());
+
+        // Full FQCN format is parsed (module won't exist but path resolution works)
+        // This tests the parsing logic, not actual file existence
+    }
+
+    #[test]
+    fn test_collection_roots() {
+        let executor = PythonModuleExecutor::new();
+        let roots = executor.get_collection_roots();
+
+        // Should have at least user and system collection paths
+        assert!(!roots.is_empty());
+
+        // Should include standard system paths
+        let has_system_path = roots.iter().any(|p| {
+            p.to_string_lossy()
+                .contains("/usr/share/ansible/collections")
+                || p.to_string_lossy().contains("/etc/ansible/collections")
+        });
+        assert!(has_system_path);
     }
 }

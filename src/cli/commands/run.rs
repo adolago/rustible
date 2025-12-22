@@ -86,7 +86,10 @@ impl RunArgs {
         // Display banner
         ctx.output.banner(&format!(
             "PLAYBOOK: {}",
-            self.playbook.file_name().unwrap_or_default().to_string_lossy()
+            self.playbook
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
         ));
 
         // Load playbook
@@ -100,7 +103,8 @@ impl RunArgs {
         // Get inventory
         let inventory_path = ctx.inventory().cloned();
         if inventory_path.is_none() {
-            ctx.output.warning("No inventory specified, using localhost");
+            ctx.output
+                .warning("No inventory specified, using localhost");
         }
 
         // Parse extra vars
@@ -109,7 +113,8 @@ impl RunArgs {
 
         // Check mode notice
         if ctx.check_mode {
-            ctx.output.warning("Running in CHECK MODE - no changes will be made");
+            ctx.output
+                .warning("Running in CHECK MODE - no changes will be made");
         }
 
         // Initialize stats
@@ -170,10 +175,8 @@ impl RunArgs {
         let hosts = self.resolve_hosts(ctx, hosts_pattern)?;
 
         if hosts.is_empty() {
-            ctx.output.warning(&format!(
-                "No hosts matched pattern: {}",
-                hosts_pattern
-            ));
+            ctx.output
+                .warning(&format!("No hosts matched pattern: {}", hosts_pattern));
             return Ok(());
         }
 
@@ -271,7 +274,11 @@ impl RunArgs {
             if let Some(when) = when_condition {
                 let condition = when.as_str().unwrap_or("true");
                 if condition == "false" {
-                    ctx.output.task_result(host, TaskStatus::Skipped, Some("conditional check failed"));
+                    ctx.output.task_result(
+                        host,
+                        TaskStatus::Skipped,
+                        Some("conditional check failed"),
+                    );
                     stats.record(host, TaskStatus::Skipped);
                     continue;
                 }
@@ -319,11 +326,8 @@ impl RunArgs {
                         );
                         stats.record(host, TaskStatus::Ignored);
                     } else {
-                        ctx.output.task_result(
-                            host,
-                            TaskStatus::Failed,
-                            Some(&e.to_string()),
-                        );
+                        ctx.output
+                            .task_result(host, TaskStatus::Failed, Some(&e.to_string()));
                         stats.record(host, TaskStatus::Failed);
                     }
                 }
@@ -378,7 +382,10 @@ impl RunArgs {
     }
 
     /// Detect which module a task is using
-    fn detect_module<'a>(&self, task: &'a serde_yaml::Value) -> (&'static str, Option<&'a serde_yaml::Value>) {
+    fn detect_module<'a>(
+        &self,
+        task: &'a serde_yaml::Value,
+    ) -> (&'static str, Option<&'a serde_yaml::Value>) {
         // Common modules to check for
         let modules = [
             "command",
@@ -421,10 +428,8 @@ impl RunArgs {
     ) -> Result<bool> {
         let (module, args) = self.detect_module(task);
 
-        ctx.output.debug(&format!(
-            "Executing module '{}' on host '{}'",
-            module, host
-        ));
+        ctx.output
+            .debug(&format!("Executing module '{}' on host '{}'", module, host));
 
         // Handle debug module locally
         if module == "debug" {
@@ -452,10 +457,8 @@ impl RunArgs {
             Ok(true)
         } else {
             // Remote execution would go here
-            ctx.output.debug(&format!(
-                "Would execute {} on remote host {}",
-                module, host
-            ));
+            ctx.output
+                .debug(&format!("Would execute {} on remote host {}", module, host));
             Ok(true)
         }
     }
@@ -494,15 +497,10 @@ mod tests {
 
     #[test]
     fn test_run_args_become() {
-        let args = RunArgs::try_parse_from([
-            "run",
-            "playbook.yml",
-            "--become",
-            "--become-user",
-            "admin",
-        ])
-        .unwrap();
-        assert!(args.become);
+        let args =
+            RunArgs::try_parse_from(["run", "playbook.yml", "--become", "--become-user", "admin"])
+                .unwrap();
+        assert!(args.r#become);
         assert_eq!(args.become_user, "admin");
     }
 }

@@ -8,8 +8,8 @@
 pub mod playbook;
 
 pub use playbook::{
-    Handler, IncludeType, LoopControl, LoopSpec, ModuleCall, Play, Playbook,
-    PlayOrder, RoleInclusion, RoleSpec, SerialSpec, Task, TaskBuilder, VarsPrompt,
+    Handler, IncludeType, LoopControl, LoopSpec, ModuleCall, Play, PlayOrder, Playbook,
+    RoleInclusion, RoleSpec, SerialSpec, Task, TaskBuilder, VarsPrompt,
 };
 
 use indexmap::IndexMap;
@@ -116,9 +116,10 @@ impl Parser {
                     let mut chars = word.chars();
                     match chars.next() {
                         None => String::new(),
-                        Some(c) => {
-                            c.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect()
-                        }
+                        Some(c) => c
+                            .to_uppercase()
+                            .chain(chars.flat_map(|c| c.to_lowercase()))
+                            .collect(),
                     }
                 })
                 .collect::<Vec<_>>()
@@ -199,9 +200,7 @@ impl Parser {
         });
 
         // String filter
-        env.add_filter("string", |value: Value| -> String {
-            value.to_string()
-        });
+        env.add_filter("string", |value: Value| -> String { value.to_string() });
 
         // Length filter
         env.add_filter("length", |value: Value| -> usize {
@@ -221,7 +220,10 @@ impl Parser {
             if let Some(seq) = value.as_seq() {
                 seq.get_item(&Value::from(0)).unwrap_or(Value::UNDEFINED)
             } else if let Some(s) = value.as_str() {
-                s.chars().next().map(|c| Value::from(c.to_string())).unwrap_or(Value::UNDEFINED)
+                s.chars()
+                    .next()
+                    .map(|c| Value::from(c.to_string()))
+                    .unwrap_or(Value::UNDEFINED)
             } else {
                 Value::UNDEFINED
             }
@@ -231,12 +233,16 @@ impl Parser {
             if let Some(seq) = value.as_seq() {
                 let len = seq.len();
                 if len > 0 {
-                    seq.get_item(&Value::from(len - 1)).unwrap_or(Value::UNDEFINED)
+                    seq.get_item(&Value::from(len - 1))
+                        .unwrap_or(Value::UNDEFINED)
                 } else {
                     Value::UNDEFINED
                 }
             } else if let Some(s) = value.as_str() {
-                s.chars().last().map(|c| Value::from(c.to_string())).unwrap_or(Value::UNDEFINED)
+                s.chars()
+                    .last()
+                    .map(|c| Value::from(c.to_string()))
+                    .unwrap_or(Value::UNDEFINED)
             } else {
                 Value::UNDEFINED
             }
@@ -321,50 +327,56 @@ impl Parser {
         });
 
         // Select filter
-        env.add_filter("select", |value: Value, attr: Option<String>| -> Vec<Value> {
-            if let Some(seq) = value.as_seq() {
-                seq.iter()
-                    .filter(|item| {
-                        if let Some(ref attr) = attr {
-                            if let Some(obj) = item.as_object() {
-                                obj.get(&Value::from(attr.clone()))
-                                    .map(|v| v.is_true())
-                                    .unwrap_or(false)
+        env.add_filter(
+            "select",
+            |value: Value, attr: Option<String>| -> Vec<Value> {
+                if let Some(seq) = value.as_seq() {
+                    seq.iter()
+                        .filter(|item| {
+                            if let Some(ref attr) = attr {
+                                if let Some(obj) = item.as_object() {
+                                    obj.get(&Value::from(attr.clone()))
+                                        .map(|v| v.is_true())
+                                        .unwrap_or(false)
+                                } else {
+                                    false
+                                }
                             } else {
-                                false
+                                item.is_true()
                             }
-                        } else {
-                            item.is_true()
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            }
-        });
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            },
+        );
 
         // Reject filter
-        env.add_filter("reject", |value: Value, attr: Option<String>| -> Vec<Value> {
-            if let Some(seq) = value.as_seq() {
-                seq.iter()
-                    .filter(|item| {
-                        if let Some(ref attr) = attr {
-                            if let Some(obj) = item.as_object() {
-                                !obj.get(&Value::from(attr.clone()))
-                                    .map(|v| v.is_true())
-                                    .unwrap_or(false)
+        env.add_filter(
+            "reject",
+            |value: Value, attr: Option<String>| -> Vec<Value> {
+                if let Some(seq) = value.as_seq() {
+                    seq.iter()
+                        .filter(|item| {
+                            if let Some(ref attr) = attr {
+                                if let Some(obj) = item.as_object() {
+                                    !obj.get(&Value::from(attr.clone()))
+                                        .map(|v| v.is_true())
+                                        .unwrap_or(false)
+                                } else {
+                                    true
+                                }
                             } else {
-                                true
+                                !item.is_true()
                             }
-                        } else {
-                            !item.is_true()
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            }
-        });
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            },
+        );
 
         // JSON filters
         env.add_filter("to_json", |value: Value| -> String {
@@ -410,11 +422,14 @@ impl Parser {
                 .unwrap_or(false)
         });
 
-        env.add_filter("regex_replace", |s: String, pattern: String, replacement: String| -> String {
-            regex::Regex::new(&pattern)
-                .map(|re| re.replace_all(&s, replacement.as_str()).to_string())
-                .unwrap_or(s)
-        });
+        env.add_filter(
+            "regex_replace",
+            |s: String, pattern: String, replacement: String| -> String {
+                regex::Regex::new(&pattern)
+                    .map(|re| re.replace_all(&s, replacement.as_str()).to_string())
+                    .unwrap_or(s)
+            },
+        );
 
         // Path filters
         env.add_filter("basename", |s: String| -> String {
@@ -476,9 +491,16 @@ impl Parser {
         });
 
         // Ternary filter
-        env.add_filter("ternary", |condition: bool, true_val: Value, false_val: Value| -> Value {
-            if condition { true_val } else { false_val }
-        });
+        env.add_filter(
+            "ternary",
+            |condition: bool, true_val: Value, false_val: Value| -> Value {
+                if condition {
+                    true_val
+                } else {
+                    false_val
+                }
+            },
+        );
 
         // Combine filter for dicts
         env.add_filter("combine", |base: Value, other: Value| -> Value {
@@ -505,10 +527,7 @@ impl Parser {
             if let Some(obj) = value.as_object() {
                 obj.iter()
                     .map(|(k, v)| {
-                        Value::from_iter([
-                            ("key".to_string(), k),
-                            ("value".to_string(), v),
-                        ])
+                        Value::from_iter([("key".to_string(), k), ("value".to_string(), v)])
                     })
                     .collect()
             } else {
@@ -538,39 +557,361 @@ impl Parser {
                 "unknown".to_string()
             }
         });
+
+        // Mandatory filter - fail if undefined
+        env.add_filter(
+            "mandatory",
+            |value: Value, msg: Option<String>| -> Result<Value, minijinja::Error> {
+                if value.is_undefined() || value.is_none() {
+                    let message =
+                        msg.unwrap_or_else(|| "Mandatory variable is undefined".to_string());
+                    Err(minijinja::Error::new(
+                        minijinja::ErrorKind::UndefinedError,
+                        message,
+                    ))
+                } else {
+                    Ok(value)
+                }
+            },
+        );
+
+        // Random filter - select random element or generate random number
+        env.add_filter("random", |value: Value| -> Value {
+            use rand::Rng;
+            if let Some(seq) = value.as_seq() {
+                let len = seq.len();
+                if len > 0 {
+                    let idx = rand::thread_rng().gen_range(0..len);
+                    seq.get_item(&Value::from(idx)).unwrap_or(Value::UNDEFINED)
+                } else {
+                    Value::UNDEFINED
+                }
+            } else if let Ok(max) = TryInto::<i64>::try_into(value) {
+                let n = rand::thread_rng().gen_range(0..max);
+                Value::from(n)
+            } else {
+                Value::UNDEFINED
+            }
+        });
+
+        // Shuffle filter
+        env.add_filter("shuffle", |value: Value| -> Vec<Value> {
+            use rand::seq::SliceRandom;
+            if let Some(seq) = value.as_seq() {
+                let mut items: Vec<Value> = seq.iter().collect();
+                items.shuffle(&mut rand::thread_rng());
+                items
+            } else {
+                Vec::new()
+            }
+        });
+
+        // Regex findall filter
+        env.add_filter(
+            "regex_findall",
+            |s: String, pattern: String| -> Vec<String> {
+                regex::Regex::new(&pattern)
+                    .map(|re| re.find_iter(&s).map(|m| m.as_str().to_string()).collect())
+                    .unwrap_or_default()
+            },
+        );
+
+        // Selectattr filter - filter items by attribute value
+        env.add_filter(
+            "selectattr",
+            |value: Value,
+             attr: String,
+             test: Option<String>,
+             test_val: Option<Value>|
+             -> Vec<Value> {
+                if let Some(seq) = value.as_seq() {
+                    seq.iter()
+                        .filter(|item| {
+                            if let Some(obj) = item.as_object() {
+                                if let Some(attr_val) = obj.get(&Value::from(attr.clone())) {
+                                    match test.as_deref() {
+                                        Some("equalto") | Some("==") | Some("eq") => {
+                                            if let Some(ref tv) = test_val {
+                                                attr_val.to_string() == tv.to_string()
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                        Some("defined") => !attr_val.is_undefined(),
+                                        Some("undefined") => attr_val.is_undefined(),
+                                        Some("none") => attr_val.is_none(),
+                                        Some("true") | Some("truthy") => attr_val.is_true(),
+                                        Some("false") | Some("falsy") => !attr_val.is_true(),
+                                        None | Some(_) => attr_val.is_true(),
+                                    }
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            },
+        );
+
+        // Rejectattr filter - reject items by attribute value
+        env.add_filter(
+            "rejectattr",
+            |value: Value,
+             attr: String,
+             test: Option<String>,
+             test_val: Option<Value>|
+             -> Vec<Value> {
+                if let Some(seq) = value.as_seq() {
+                    seq.iter()
+                        .filter(|item| {
+                            if let Some(obj) = item.as_object() {
+                                if let Some(attr_val) = obj.get(&Value::from(attr.clone())) {
+                                    match test.as_deref() {
+                                        Some("equalto") | Some("==") | Some("eq") => {
+                                            if let Some(ref tv) = test_val {
+                                                attr_val.to_string() != tv.to_string()
+                                            } else {
+                                                true
+                                            }
+                                        }
+                                        Some("defined") => attr_val.is_undefined(),
+                                        Some("undefined") => !attr_val.is_undefined(),
+                                        Some("none") => !attr_val.is_none(),
+                                        Some("true") | Some("truthy") => !attr_val.is_true(),
+                                        Some("false") | Some("falsy") => attr_val.is_true(),
+                                        None | Some(_) => !attr_val.is_true(),
+                                    }
+                                } else {
+                                    true // No attribute = include in reject
+                                }
+                            } else {
+                                true
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            },
+        );
+
+        // Strftime filter - date formatting
+        env.add_filter(
+            "strftime",
+            |format: String, timestamp: Option<i64>| -> String {
+                use chrono::{TimeZone, Utc};
+                let dt = if let Some(ts) = timestamp {
+                    Utc.timestamp_opt(ts, 0).single()
+                } else {
+                    Some(Utc::now())
+                };
+                dt.map(|d| d.format(&format).to_string())
+                    .unwrap_or_default()
+            },
+        );
+
+        // Join filter with custom separator
+        env.add_filter("join", |value: Value, sep: Option<String>| -> String {
+            let separator = sep.unwrap_or_else(|| "".to_string());
+            if let Some(seq) = value.as_seq() {
+                seq.iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(&separator)
+            } else {
+                value.to_string()
+            }
+        });
+
+        // Set operations
+        env.add_filter("difference", |value: Value, other: Value| -> Vec<Value> {
+            if let (Some(seq1), Some(seq2)) = (value.as_seq(), other.as_seq()) {
+                let set2: std::collections::HashSet<String> =
+                    seq2.iter().map(|v| v.to_string()).collect();
+                seq1.iter()
+                    .filter(|v| !set2.contains(&v.to_string()))
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        });
+
+        env.add_filter("intersect", |value: Value, other: Value| -> Vec<Value> {
+            if let (Some(seq1), Some(seq2)) = (value.as_seq(), other.as_seq()) {
+                let set2: std::collections::HashSet<String> =
+                    seq2.iter().map(|v| v.to_string()).collect();
+                seq1.iter()
+                    .filter(|v| set2.contains(&v.to_string()))
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        });
+
+        env.add_filter("union", |value: Value, other: Value| -> Vec<Value> {
+            if let (Some(seq1), Some(seq2)) = (value.as_seq(), other.as_seq()) {
+                let mut seen = std::collections::HashSet::new();
+                let mut result = Vec::new();
+                for item in seq1.iter().chain(seq2.iter()) {
+                    let key = item.to_string();
+                    if seen.insert(key) {
+                        result.push(item);
+                    }
+                }
+                result
+            } else {
+                Vec::new()
+            }
+        });
+
+        env.add_filter(
+            "symmetric_difference",
+            |value: Value, other: Value| -> Vec<Value> {
+                if let (Some(seq1), Some(seq2)) = (value.as_seq(), other.as_seq()) {
+                    let set1: std::collections::HashSet<String> =
+                        seq1.iter().map(|v| v.to_string()).collect();
+                    let set2: std::collections::HashSet<String> =
+                        seq2.iter().map(|v| v.to_string()).collect();
+                    let mut result = Vec::new();
+                    for item in seq1.iter() {
+                        if !set2.contains(&item.to_string()) {
+                            result.push(item);
+                        }
+                    }
+                    for item in seq2.iter() {
+                        if !set1.contains(&item.to_string()) {
+                            result.push(item);
+                        }
+                    }
+                    result
+                } else {
+                    Vec::new()
+                }
+            },
+        );
+
+        // Zip filter - combine lists
+        env.add_filter("zip", |value: Value, other: Value| -> Vec<Value> {
+            if let (Some(seq1), Some(seq2)) = (value.as_seq(), other.as_seq()) {
+                seq1.iter()
+                    .zip(seq2.iter())
+                    .map(|(a, b)| Value::from(vec![a, b]))
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        });
+
+        // Min/Max filters
+        env.add_filter("min", |value: Value| -> Value {
+            if let Some(seq) = value.as_seq() {
+                seq.iter()
+                    .min_by(|a, b| a.to_string().cmp(&b.to_string()))
+                    .unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            }
+        });
+
+        env.add_filter("max", |value: Value| -> Value {
+            if let Some(seq) = value.as_seq() {
+                seq.iter()
+                    .max_by(|a, b| a.to_string().cmp(&b.to_string()))
+                    .unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            }
+        });
+
+        // Subelements filter
+        env.add_filter("subelements", |value: Value, key: String| -> Vec<Value> {
+            if let Some(seq) = value.as_seq() {
+                let mut result = Vec::new();
+                for item in seq.iter() {
+                    if let Some(obj) = item.as_object() {
+                        if let Some(sub) = obj.get(&Value::from(key.clone())) {
+                            if let Some(sub_seq) = sub.as_seq() {
+                                for sub_item in sub_seq.iter() {
+                                    result.push(Value::from(vec![item.clone(), sub_item]));
+                                }
+                            }
+                        }
+                    }
+                }
+                result
+            } else {
+                Vec::new()
+            }
+        });
+
+        // Groupby filter
+        env.add_filter("groupby", |value: Value, attr: String| -> Vec<Value> {
+            if let Some(seq) = value.as_seq() {
+                let mut groups: indexmap::IndexMap<String, Vec<Value>> = indexmap::IndexMap::new();
+                for item in seq.iter() {
+                    let key = if let Some(obj) = item.as_object() {
+                        obj.get(&Value::from(attr.clone()))
+                            .map(|v| v.to_string())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    groups.entry(key).or_default().push(item);
+                }
+                groups
+                    .into_iter()
+                    .map(|(k, v)| {
+                        Value::from_iter([
+                            ("grouper".to_string(), Value::from(k)),
+                            ("list".to_string(), Value::from(v)),
+                        ])
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        });
     }
 
     /// Add Ansible-compatible built-in functions
     fn add_builtin_functions(env: &mut Environment<'static>) {
         // Range function
-        env.add_function("range", |start: i64, end: Option<i64>, step: Option<i64>| -> Vec<i64> {
-            let (actual_start, actual_end) = match end {
-                Some(e) => (start, e),
-                None => (0, start),
-            };
-            let step = step.unwrap_or(1);
+        env.add_function(
+            "range",
+            |start: i64, end: Option<i64>, step: Option<i64>| -> Vec<i64> {
+                let (actual_start, actual_end) = match end {
+                    Some(e) => (start, e),
+                    None => (0, start),
+                };
+                let step = step.unwrap_or(1);
 
-            if step == 0 {
-                return Vec::new();
-            }
-
-            let mut result = Vec::new();
-            let mut current = actual_start;
-
-            if step > 0 {
-                while current < actual_end {
-                    result.push(current);
-                    current += step;
+                if step == 0 {
+                    return Vec::new();
                 }
-            } else {
-                while current > actual_end {
-                    result.push(current);
-                    current += step;
-                }
-            }
 
-            result
-        });
+                let mut result = Vec::new();
+                let mut current = actual_start;
+
+                if step > 0 {
+                    while current < actual_end {
+                        result.push(current);
+                        current += step;
+                    }
+                } else {
+                    while current > actual_end {
+                        result.push(current);
+                        current += step;
+                    }
+                }
+
+                result
+            },
+        );
 
         // Now function
         env.add_function("now", || -> String {
@@ -578,12 +919,15 @@ impl Parser {
         });
 
         // Query/lookup function (simplified)
-        env.add_function("query", |plugin: String, _args: Option<Value>| -> Vec<Value> {
-            // This would need full implementation for each lookup plugin
-            match plugin.as_str() {
-                _ => Vec::new(),
-            }
-        });
+        env.add_function(
+            "query",
+            |plugin: String, _args: Option<Value>| -> Vec<Value> {
+                // This would need full implementation for each lookup plugin
+                match plugin.as_str() {
+                    _ => Vec::new(),
+                }
+            },
+        );
 
         // Lookup function
         env.add_function("lookup", |plugin: String, args: Option<Value>| -> Value {
@@ -615,14 +959,10 @@ impl Parser {
         });
 
         // Omit function (for omitting parameters)
-        env.add_function("omit", || -> Value {
-            Value::from("__omit_place_holder__")
-        });
+        env.add_function("omit", || -> Value { Value::from("__omit_place_holder__") });
 
         // Undef function
-        env.add_function("undef", || -> Value {
-            Value::UNDEFINED
-        });
+        env.add_function("undef", || -> Value { Value::UNDEFINED });
     }
 
     /// Parse a playbook from a file
@@ -689,19 +1029,29 @@ impl Parser {
     }
 
     /// Parse a variables file
-    pub fn parse_vars<P: AsRef<Path>>(&self, path: P) -> ParseResult<IndexMap<String, serde_yaml::Value>> {
+    pub fn parse_vars<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> ParseResult<IndexMap<String, serde_yaml::Value>> {
         let content = std::fs::read_to_string(path)?;
         self.parse_vars_str(&content)
     }
 
     /// Parse variables from a string
-    pub fn parse_vars_str(&self, content: &str) -> ParseResult<IndexMap<String, serde_yaml::Value>> {
+    pub fn parse_vars_str(
+        &self,
+        content: &str,
+    ) -> ParseResult<IndexMap<String, serde_yaml::Value>> {
         let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(content)?;
         Ok(vars)
     }
 
     /// Render a template string with variables
-    pub fn render_template(&self, template: &str, vars: &IndexMap<String, serde_yaml::Value>) -> ParseResult<String> {
+    pub fn render_template(
+        &self,
+        template: &str,
+        vars: &IndexMap<String, serde_yaml::Value>,
+    ) -> ParseResult<String> {
         // Convert vars to minijinja values
         let context = yaml_to_minijinja_value(&serde_yaml::Value::Mapping(
             vars.iter()
@@ -739,10 +1089,8 @@ impl Parser {
                 }
             }
             serde_yaml::Value::Sequence(seq) => {
-                let rendered: Result<Vec<_>, _> = seq
-                    .iter()
-                    .map(|v| self.render_value(v, vars))
-                    .collect();
+                let rendered: Result<Vec<_>, _> =
+                    seq.iter().map(|v| self.render_value(v, vars)).collect();
                 Ok(serde_yaml::Value::Sequence(rendered?))
             }
             serde_yaml::Value::Mapping(map) => {
@@ -829,7 +1177,9 @@ pub fn evaluate_condition(
 
 /// Extract variable references from a template string
 pub fn extract_variables(template: &str) -> Vec<String> {
-    let var_pattern = regex::Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\}\}").unwrap();
+    let var_pattern =
+        regex::Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\}\}")
+            .unwrap();
 
     var_pattern
         .captures_iter(template)
@@ -907,10 +1257,7 @@ debug: true
     #[test]
     fn test_evaluate_condition() {
         let mut vars = IndexMap::new();
-        vars.insert(
-            "enabled".to_string(),
-            serde_yaml::Value::Bool(true),
-        );
+        vars.insert("enabled".to_string(), serde_yaml::Value::Bool(true));
 
         assert!(evaluate_condition("enabled", &vars).unwrap());
         assert!(evaluate_condition("enabled == true", &vars).unwrap());
