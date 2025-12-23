@@ -33,7 +33,9 @@ impl Vault {
         let key = self.derive_key(&salt)?;
 
         let cipher = Aes256Gcm::new(&key);
-        let nonce_bytes: [u8; 12] = rand::random();
+        use rand::RngCore;
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = GenericArray::from_slice(&nonce_bytes);
 
         let ciphertext = cipher
@@ -97,5 +99,35 @@ impl Vault {
             .hash_password_into(self.password.as_bytes(), salt.as_str().as_bytes(), &mut key)
             .map_err(|e| Error::Vault(format!("Key derivation failed: {}", e)))?;
         Ok(GenericArray::clone_from_slice(&key))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vault_encryption_decryption() {
+        let vault = Vault::new("secret_password");
+        let content = "sensitive data";
+
+        let encrypted = vault.encrypt(content).unwrap();
+        assert!(Vault::is_encrypted(&encrypted));
+        assert_ne!(content, encrypted);
+
+        let decrypted = vault.decrypt(&encrypted).unwrap();
+        assert_eq!(content, decrypted);
+    }
+
+    #[test]
+    fn test_vault_wrong_password() {
+        let vault1 = Vault::new("password_one");
+        let vault2 = Vault::new("password_two");
+        let content = "sensitive data";
+
+        let encrypted = vault1.encrypt(content).unwrap();
+        let result = vault2.decrypt(&encrypted);
+
+        assert!(result.is_err());
     }
 }
