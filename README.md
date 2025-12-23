@@ -593,7 +593,5 @@ Rustible is licensed under:
 
 ## Links
 
-- [Documentation](https://docs.rs/rustible)
-- [Crates.io](https://crates.io/crates/rustible)
 - [GitHub Repository](https://github.com/rustible/rustible)
 - [Issue Tracker](https://github.com/rustible/rustible/issues)
