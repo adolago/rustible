@@ -1305,6 +1305,7 @@ mod integration_tests {
 
     /// Test downloading a file via SFTP from a real SSH server
     #[tokio::test]
+    #[cfg(feature = "russh")]
     #[ignore = "Requires real SSH infrastructure - set RUSTIBLE_SSH_TEST_HOST env var"]
     async fn test_russh_download() {
         if !has_ssh_infrastructure() {
@@ -1313,33 +1314,33 @@ mod integration_tests {
         }
 
         let (host, port, user) = get_ssh_test_config().expect("SSH test config required");
-        let _temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
-        // TODO: Replace with actual RusshConnection when russh feature is enabled
-        // let conn = RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
-        //     .await
-        //     .expect("Failed to connect");
-        //
-        // // Create a remote file to download
-        // conn.execute("echo 'Download test content' > /tmp/rustible_download_test.txt", None)
-        //     .await
-        //     .unwrap();
-        //
-        // let remote_path = PathBuf::from("/tmp/rustible_download_test.txt");
-        // let local_path = temp_dir.path().join("downloaded.txt");
-        //
-        // conn.download(&remote_path, &local_path).await.unwrap();
-        //
-        // assert!(local_path.exists());
-        // let content = std::fs::read_to_string(&local_path).unwrap();
-        // assert!(content.contains("Download test content"));
-        //
-        // // Clean up
-        // conn.execute("rm /tmp/rustible_download_test.txt", None).await.unwrap();
-        // conn.close().await.unwrap();
+        // Replace with actual RusshConnection when russh feature is enabled
+        let conn = RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
+            .await
+            .expect("Failed to connect");
+
+        // Create a remote file to download
+        conn.execute("echo 'Download test content' > /tmp/rustible_download_test.txt", None)
+            .await
+            .unwrap();
+
+        let remote_path = PathBuf::from("/tmp/rustible_download_test.txt");
+        let local_path = temp_dir.path().join("downloaded.txt");
+
+        conn.download(&remote_path, &local_path).await.unwrap();
+
+        assert!(local_path.exists());
+        let content = std::fs::read_to_string(&local_path).unwrap();
+        assert!(content.contains("Download test content"));
+
+        // Clean up
+        conn.execute("rm /tmp/rustible_download_test.txt", None).await.unwrap();
+        conn.close().await.unwrap();
 
         eprintln!(
-            "Would download file from {}@{}:{}",
+            "Downloaded file from {}@{}:{}",
             user, host, port
         );
     }
