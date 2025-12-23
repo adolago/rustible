@@ -1,6 +1,12 @@
 # Rustible
 
-A modern, async-first configuration management and automation tool written in Rust. Rustible is designed as a high-performance alternative to Ansible, offering better speed, type safety, and parallel execution by default.
+A async-first configuration management and automation tool. Rustible is designed optimizing for safety and performance, offering speed, type safety, and parallel execution by default and backwards compatibily.
+
+## Acknowledgments
+
+- The Ansible project for pioneering declarative configuration management
+- The Rust community for excellent libraries and tooling
+- Contributors and early adopters who help shape Rustible
 
 ## Why Rustible?
 
@@ -514,15 +520,9 @@ See `tests/infrastructure/README.md` for detailed setup instructions.
 
 ## License
 
-Rustible is dual-licensed under:
+Rustible is licensed under:
 
 - MIT License ([LICENSE-MIT](LICENSE-MIT))
-
-## Acknowledgments
-
-- The Ansible project for pioneering declarative configuration management
-- The Rust community for excellent libraries and tooling
-- Contributors and early adopters who help shape Rustible
 
 ## Links
 
