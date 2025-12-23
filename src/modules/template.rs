@@ -8,6 +8,7 @@ use super::{
     ModuleResult, ParamExt,
 };
 use crate::connection::TransferOptions;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
@@ -15,6 +16,80 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use tera::{Context as TeraContext, Tera};
 use tokio::runtime::Handle;
+
+/// Global Tera instance with pre-registered filters
+static BASE_TERA: Lazy<Tera> = Lazy::new(|| {
+    let mut tera = Tera::default();
+
+    // Add custom filters similar to Ansible/Jinja2
+    tera.register_filter(
+        "default",
+        |value: &tera::Value, args: &HashMap<String, tera::Value>| {
+            if value.is_null() || (value.is_string() && value.as_str().unwrap().is_empty()) {
+                if let Some(default) = args.get("value") {
+                    return Ok(default.clone());
+                }
+            }
+            Ok(value.clone())
+        },
+    );
+
+    tera.register_filter(
+        "upper",
+        |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
+            tera::Value::String(s) => Ok(tera::Value::String(s.to_uppercase())),
+            _ => Ok(value.clone()),
+        },
+    );
+
+    tera.register_filter(
+        "lower",
+        |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
+            tera::Value::String(s) => Ok(tera::Value::String(s.to_lowercase())),
+            _ => Ok(value.clone()),
+        },
+    );
+
+    tera.register_filter(
+        "trim",
+        |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
+            tera::Value::String(s) => Ok(tera::Value::String(s.trim().to_string())),
+            _ => Ok(value.clone()),
+        },
+    );
+
+    tera.register_filter(
+        "replace",
+        |value: &tera::Value, args: &HashMap<String, tera::Value>| match value {
+            tera::Value::String(s) => {
+                let from = args.get("from").and_then(|v| v.as_str()).unwrap_or("");
+                let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("");
+                Ok(tera::Value::String(s.replace(from, to)))
+            }
+            _ => Ok(value.clone()),
+        },
+    );
+
+    tera.register_filter(
+        "join",
+        |value: &tera::Value, args: &HashMap<String, tera::Value>| match value {
+            tera::Value::Array(arr) => {
+                let sep = args.get("sep").and_then(|v| v.as_str()).unwrap_or(",");
+                let joined: Vec<String> = arr
+                    .iter()
+                    .map(|v| match v {
+                        tera::Value::String(s) => s.clone(),
+                        _ => v.to_string(),
+                    })
+                    .collect();
+                Ok(tera::Value::String(joined.join(sep)))
+            }
+            _ => Ok(value.clone()),
+        },
+    );
+
+    tera
+});
 
 /// Module for rendering templates
 pub struct TemplateModule;
@@ -48,74 +123,9 @@ impl TemplateModule {
     }
 
     fn render_template(template_content: &str, tera_ctx: &TeraContext) -> ModuleResult<String> {
-        let mut tera = Tera::default();
-
-        // Add custom filters similar to Ansible/Jinja2
-        tera.register_filter(
-            "default",
-            |value: &tera::Value, args: &HashMap<String, tera::Value>| {
-                if value.is_null() || (value.is_string() && value.as_str().unwrap().is_empty()) {
-                    if let Some(default) = args.get("value") {
-                        return Ok(default.clone());
-                    }
-                }
-                Ok(value.clone())
-            },
-        );
-
-        tera.register_filter(
-            "upper",
-            |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
-                tera::Value::String(s) => Ok(tera::Value::String(s.to_uppercase())),
-                _ => Ok(value.clone()),
-            },
-        );
-
-        tera.register_filter(
-            "lower",
-            |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
-                tera::Value::String(s) => Ok(tera::Value::String(s.to_lowercase())),
-                _ => Ok(value.clone()),
-            },
-        );
-
-        tera.register_filter(
-            "trim",
-            |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
-                tera::Value::String(s) => Ok(tera::Value::String(s.trim().to_string())),
-                _ => Ok(value.clone()),
-            },
-        );
-
-        tera.register_filter(
-            "replace",
-            |value: &tera::Value, args: &HashMap<String, tera::Value>| match value {
-                tera::Value::String(s) => {
-                    let from = args.get("from").and_then(|v| v.as_str()).unwrap_or("");
-                    let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("");
-                    Ok(tera::Value::String(s.replace(from, to)))
-                }
-                _ => Ok(value.clone()),
-            },
-        );
-
-        tera.register_filter(
-            "join",
-            |value: &tera::Value, args: &HashMap<String, tera::Value>| match value {
-                tera::Value::Array(arr) => {
-                    let sep = args.get("sep").and_then(|v| v.as_str()).unwrap_or(",");
-                    let joined: Vec<String> = arr
-                        .iter()
-                        .map(|v| match v {
-                            tera::Value::String(s) => s.clone(),
-                            _ => v.to_string(),
-                        })
-                        .collect();
-                    Ok(tera::Value::String(joined.join(sep)))
-                }
-                _ => Ok(value.clone()),
-            },
-        );
+        // Clone the base Tera instance to reuse registered filters
+        // This is significantly faster than creating a new instance and registering filters each time
+        let mut tera = BASE_TERA.clone();
 
         tera.add_raw_template("template", template_content)
             .map_err(|e| ModuleError::TemplateError(format!("Failed to parse template: {}", e)))?;
