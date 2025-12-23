@@ -1,0 +1,5 @@
+---
+# Variables for production group
+environment: production
+monitoring_enabled: true
+alert_email: ops@example.com

@@ -1,0 +1,27 @@
+# Test playbook for variable context during delegation
+---
+- name: Variable context test
+  hosts: webservers
+  gather_facts: false
+  vars:
+    play_var: "play_level"
+  tasks:
+    - name: Access inventory_hostname during delegation
+      debug:
+        msg: "inventory_hostname: {{ inventory_hostname }}, ansible_host: {{ ansible_host | default('not_set') }}"
+      delegate_to: db1
+
+    - name: Access hostvars during delegation
+      debug:
+        msg: "Hostvars for {{ inventory_hostname }}: {{ hostvars[inventory_hostname] | default({}) }}"
+      delegate_to: localhost
+
+    - name: Access delegate host variables
+      debug:
+        msg: "Delegate vars: {{ hostvars['db1'] | default({}) }}"
+      delegate_to: db1
+
+    - name: Mixed variable access
+      debug:
+        msg: "Play var: {{ play_var }}, Host: {{ inventory_hostname }}"
+      delegate_to: localhost

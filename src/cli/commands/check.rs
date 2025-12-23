@@ -90,7 +90,8 @@ impl CheckArgs {
         };
 
         ctx.output.banner("CHECK MODE - DRY RUN");
-        ctx.output.warning("No changes will be made to the target systems");
+        ctx.output
+            .warning("No changes will be made to the target systems");
 
         run_args.execute(ctx).await
     }

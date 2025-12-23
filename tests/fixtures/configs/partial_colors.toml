@@ -1,0 +1,5 @@
+# Partial config - only colors section
+[colors]
+enabled = false
+ok = "bright_blue"
+error = "bright_magenta"

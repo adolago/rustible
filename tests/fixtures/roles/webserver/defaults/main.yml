@@ -1,0 +1,30 @@
+# Default variables for webserver role
+---
+# Package configuration
+webserver_packages:
+  - nginx
+  - certbot
+
+# User/group settings
+webserver_user: www-data
+webserver_group: www-data
+
+# Paths
+document_root: /var/www/html
+log_dir: /var/log/nginx
+
+# Server configuration
+server_name: localhost
+http_port: 80
+https_port: 443
+worker_processes: auto
+worker_connections: 1024
+
+# Security settings
+ssl_enabled: false
+ssl_certificate: ""
+ssl_certificate_key: ""
+
+# Performance settings
+client_max_body_size: 10m
+keepalive_timeout: 65

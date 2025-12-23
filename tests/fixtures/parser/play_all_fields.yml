@@ -1,0 +1,73 @@
+---
+# Play with all available fields
+- name: Comprehensive play
+  hosts: webservers
+  gather_facts: true
+  gather_subset:
+    - "!all"
+    - network
+    - virtual
+  gather_timeout: 60
+  remote_user: ansible
+  become: true
+  become_method: sudo
+  become_user: root
+  connection: ssh
+  strategy: linear
+  serial: 3
+  max_fail_percentage: 25
+  throttle: 5
+  order: sorted
+  force_handlers: true
+  ignore_errors: false
+  ignore_unreachable: false
+  any_errors_fatal: true
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+    PYTHONPATH: "/opt/python"
+  module_defaults:
+    apt:
+      update_cache: yes
+      cache_valid_time: 3600
+    service:
+      enabled: yes
+  vars:
+    app_name: myapp
+    app_version: "1.0.0"
+    config:
+      port: 8080
+      debug: true
+  vars_files:
+    - vars/common.yml
+    - vars/secrets.yml
+  vars_prompt:
+    - name: deploy_password
+      prompt: "Enter deployment password"
+      private: true
+      confirm: true
+  pre_tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+  roles:
+    - common
+    - role: nginx
+      vars:
+        nginx_port: 80
+  tasks:
+    - name: Main deployment task
+      debug:
+        msg: "Deploying {{ app_name }}"
+  post_tasks:
+    - name: Cleanup temporary files
+      file:
+        path: /tmp/deploy
+        state: absent
+  handlers:
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+  tags:
+    - deployment
+    - production

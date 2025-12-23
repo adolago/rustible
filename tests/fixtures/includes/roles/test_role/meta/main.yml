@@ -1,0 +1,9 @@
+---
+# Role metadata
+galaxy_info:
+  author: Test Author
+  description: Test role for include testing
+  license: MIT
+  min_ansible_version: "2.9"
+
+dependencies: []

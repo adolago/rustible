@@ -1,0 +1,27 @@
+---
+# Block with rescue section
+- name: Block with rescue test
+  hosts: localhost
+  gather_facts: false
+  vars:
+    force_failure: true
+  tasks:
+    - name: Block with rescue
+      block:
+        - name: Initial task
+          debug:
+            msg: "Starting block"
+        - name: Failing task
+          fail:
+            msg: "Intentional failure"
+          when: force_failure
+        - name: Task after failure
+          debug:
+            msg: "This should not run"
+      rescue:
+        - name: Rescue task 1
+          debug:
+            msg: "Handling failure in rescue"
+        - name: Rescue task 2
+          debug:
+            msg: "Rescue completed"

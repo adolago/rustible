@@ -1,0 +1,13 @@
+---
+# Nested playbook for testing nested imports
+- name: Nested playbook
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Nested playbook task
+      debug:
+        msg: "Running nested playbook"
+
+    - name: Set nested fact
+      set_fact:
+        nested_playbook_run: true

@@ -50,7 +50,9 @@ impl Playbook {
         // Playbooks are a list of plays at the top level
         let plays: Vec<Play> = serde_yaml::from_str(yaml).map_err(|e| {
             Error::playbook_parse(
-                source_path.as_ref().map_or("<string>".into(), |p| p.clone()),
+                source_path
+                    .as_ref()
+                    .map_or("<string>".into(), |p| p.clone()),
                 e.to_string(),
                 None,
             )
@@ -416,7 +418,11 @@ pub struct Task {
 
 impl Task {
     /// Creates a new task.
-    pub fn new(name: impl Into<String>, module: impl Into<String>, args: serde_json::Value) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        module: impl Into<String>,
+        args: serde_json::Value,
+    ) -> Self {
         Self {
             name: name.into(),
             module: TaskModule {

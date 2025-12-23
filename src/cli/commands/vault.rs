@@ -7,10 +7,10 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
-use anyhow::{Context, Result, bail};
-use argon2::{Argon2, PasswordHasher};
+use anyhow::{bail, Context, Result};
 use argon2::password_hash::SaltString;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use argon2::{Argon2, PasswordHasher};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use clap::{Parser, Subcommand};
 use rand::RngCore;
 use std::fs;
@@ -328,7 +328,10 @@ fn get_password(password_file: Option<&PathBuf>, ctx: &CommandContext) -> Result
 }
 
 /// Get password with confirmation
-fn get_password_with_confirm(password_file: Option<&PathBuf>, ctx: &CommandContext) -> Result<String> {
+fn get_password_with_confirm(
+    password_file: Option<&PathBuf>,
+    ctx: &CommandContext,
+) -> Result<String> {
     if password_file.is_some() {
         return get_password(password_file, ctx);
     }
@@ -365,10 +368,8 @@ impl VaultArgs {
                 fs::write(output_path, &encrypted)
                     .with_context(|| format!("Failed to write file: {}", output_path.display()))?;
 
-                ctx.output.info(&format!(
-                    "Encryption successful: {}",
-                    output_path.display()
-                ));
+                ctx.output
+                    .info(&format!("Encryption successful: {}", output_path.display()));
                 Ok(0)
             }
 
@@ -390,10 +391,8 @@ impl VaultArgs {
                 fs::write(output_path, &decrypted)
                     .with_context(|| format!("Failed to write file: {}", output_path.display()))?;
 
-                ctx.output.info(&format!(
-                    "Decryption successful: {}",
-                    output_path.display()
-                ));
+                ctx.output
+                    .info(&format!("Decryption successful: {}", output_path.display()));
                 Ok(0)
             }
 
@@ -431,10 +430,7 @@ impl VaultArgs {
 
                 // Create temporary file
                 let temp_dir = std::env::temp_dir();
-                let temp_file = temp_dir.join(format!(
-                    ".rustible_vault_{}",
-                    std::process::id()
-                ));
+                let temp_file = temp_dir.join(format!(".rustible_vault_{}", std::process::id()));
 
                 fs::write(&temp_file, &plaintext)?;
 
@@ -475,10 +471,7 @@ impl VaultArgs {
 
                 // Create temporary file
                 let temp_dir = std::env::temp_dir();
-                let temp_file = temp_dir.join(format!(
-                    ".rustible_vault_{}",
-                    std::process::id()
-                ));
+                let temp_file = temp_dir.join(format!(".rustible_vault_{}", std::process::id()));
 
                 fs::write(&temp_file, "")?;
 
@@ -506,16 +499,15 @@ impl VaultArgs {
                 let encrypted = engine.encrypt(&content)?;
                 fs::write(&args.file, &encrypted)?;
 
-                ctx.output.info(&format!(
-                    "Created encrypted file: {}",
-                    args.file.display()
-                ));
+                ctx.output
+                    .info(&format!("Created encrypted file: {}", args.file.display()));
                 Ok(0)
             }
 
             VaultAction::Rekey(args) => {
                 let old_password = get_password(args.vault_password_file.as_ref(), ctx)?;
-                let new_password = get_password_with_confirm(args.new_vault_password_file.as_ref(), ctx)?;
+                let new_password =
+                    get_password_with_confirm(args.new_vault_password_file.as_ref(), ctx)?;
 
                 let old_engine = VaultEngine::new(old_password);
                 let new_engine = VaultEngine::new(new_password);
@@ -525,10 +517,8 @@ impl VaultArgs {
                         .with_context(|| format!("Failed to read file: {}", file.display()))?;
 
                     if !VaultEngine::is_encrypted(&content) {
-                        ctx.output.warning(&format!(
-                            "Skipping unencrypted file: {}",
-                            file.display()
-                        ));
+                        ctx.output
+                            .warning(&format!("Skipping unencrypted file: {}", file.display()));
                         continue;
                     }
 
@@ -621,7 +611,9 @@ mod tests {
 
     #[test]
     fn test_is_encrypted() {
-        assert!(VaultEngine::is_encrypted("$RUSTIBLE_VAULT;1.0;AES256-GCM\ndata"));
+        assert!(VaultEngine::is_encrypted(
+            "$RUSTIBLE_VAULT;1.0;AES256-GCM\ndata"
+        ));
         assert!(!VaultEngine::is_encrypted("plain text content"));
     }
 }

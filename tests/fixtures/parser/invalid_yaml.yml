@@ -1,0 +1,8 @@
+---
+# This file contains intentionally invalid YAML for error testing
+- name: Invalid playbook
+  hosts: all
+  tasks:
+    - name: Task with unclosed quote
+      debug:
+        msg: "This quote is never closed

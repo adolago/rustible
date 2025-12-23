@@ -1,0 +1,10 @@
+---
+# Common role defaults
+common_setting: "enabled"
+common_log_level: "info"
+common_timezone: "UTC"
+common_packages:
+  - curl
+  - wget
+  - vim
+  - git

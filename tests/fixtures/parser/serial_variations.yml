@@ -1,0 +1,25 @@
+---
+# Different serial specification formats
+
+- name: Serial as integer
+  hosts: all
+  serial: 3
+  tasks:
+    - ping:
+
+- name: Serial as percentage
+  hosts: all
+  serial: "25%"
+  tasks:
+    - ping:
+
+- name: Serial as batch list (mixed)
+  hosts: all
+  serial:
+    - 1
+    - 5
+    - "10%"
+    - "25%"
+    - 50
+  tasks:
+    - ping:

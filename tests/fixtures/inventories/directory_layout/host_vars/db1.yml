@@ -1,0 +1,5 @@
+---
+# Variables specific to db1
+ansible_host: 10.0.1.1
+db_role: primary
+replication_enabled: true

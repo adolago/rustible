@@ -140,7 +140,11 @@ impl OutputFormatter {
         let stars = "*".repeat(80_usize.saturating_sub(header.len()));
 
         if self.use_color {
-            println!("\n{} {}", header.bright_white().bold(), stars.bright_black());
+            println!(
+                "\n{} {}",
+                header.bright_white().bold(),
+                stars.bright_black()
+            );
         } else {
             println!("\n{} {}", header, stars);
         }
@@ -156,7 +160,11 @@ impl OutputFormatter {
         let stars = "*".repeat(80_usize.saturating_sub(header.len()));
 
         if self.use_color {
-            println!("\n{} {}", header.bright_white().bold(), stars.bright_black());
+            println!(
+                "\n{} {}",
+                header.bright_white().bold(),
+                stars.bright_black()
+            );
         } else {
             println!("\n{} {}", header, stars);
         }
@@ -187,7 +195,11 @@ impl OutputFormatter {
         };
 
         match status {
-            TaskStatus::Ok | TaskStatus::Changed | TaskStatus::Skipped | TaskStatus::Rescued | TaskStatus::Ignored => {
+            TaskStatus::Ok
+            | TaskStatus::Changed
+            | TaskStatus::Skipped
+            | TaskStatus::Rescued
+            | TaskStatus::Ignored => {
                 print!("{}: [{}]", status_str, host_str);
             }
             TaskStatus::Failed | TaskStatus::Unreachable => {
@@ -203,7 +215,12 @@ impl OutputFormatter {
     }
 
     /// Print task result with detailed output
-    pub fn task_result_verbose(&self, host: &str, status: TaskStatus, details: &HashMap<String, String>) {
+    pub fn task_result_verbose(
+        &self,
+        host: &str,
+        status: TaskStatus,
+        details: &HashMap<String, String>,
+    ) {
         if self.verbosity < 1 {
             return;
         }
@@ -240,7 +257,11 @@ impl OutputFormatter {
         let stars = "*".repeat(80 - header.len());
 
         if self.use_color {
-            println!("\n{} {}", header.bright_white().bold(), stars.bright_black());
+            println!(
+                "\n{} {}",
+                header.bright_white().bold(),
+                stars.bright_black()
+            );
         } else {
             println!("\n{} {}", header, stars);
         }
@@ -417,7 +438,9 @@ impl OutputFormatter {
 
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
                 .unwrap()
                 .progress_chars("#>-"),
         );
@@ -605,7 +628,9 @@ impl RecapStats {
     pub fn total_tasks(&self) -> u32 {
         self.hosts
             .values()
-            .map(|h| h.ok + h.changed + h.failed + h.unreachable + h.skipped + h.rescued + h.ignored)
+            .map(|h| {
+                h.ok + h.changed + h.failed + h.unreachable + h.skipped + h.rescued + h.ignored
+            })
             .sum()
     }
 }

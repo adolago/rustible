@@ -1,0 +1,5 @@
+---
+# A role with only defaults
+setting_one: value1
+setting_two: value2
+setting_number: 42

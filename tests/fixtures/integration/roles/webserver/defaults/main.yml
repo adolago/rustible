@@ -1,0 +1,10 @@
+---
+# Webserver role defaults
+webserver_package: nginx
+webserver_document_root: /var/www/html
+webserver_config_path: /etc/nginx
+webserver_user: www-data
+webserver_group: www-data
+webserver_listen_port: 80
+webserver_worker_processes: auto
+webserver_worker_connections: 1024

@@ -1,0 +1,3 @@
+---
+# Defaults for another_role
+another_role_var: "another_default"

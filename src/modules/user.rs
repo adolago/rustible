@@ -6,9 +6,10 @@ use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
+use crate::connection::{Connection, ExecuteOptions};
 use std::collections::HashMap;
-use std::fs;
-use std::process::Command;
+use std::sync::Arc;
+use tokio::runtime::Handle;
 
 /// Desired state for a user
 #[derive(Debug, Clone, PartialEq)]
@@ -46,56 +47,102 @@ pub struct UserInfo {
 pub struct UserModule;
 
 impl UserModule {
-    fn user_exists(name: &str) -> ModuleResult<bool> {
-        let output = Command::new("id")
-            .arg(name)
-            .output()
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to check user: {}", e)))?;
-
-        Ok(output.status.success())
-    }
-
-    fn get_user_info(name: &str) -> ModuleResult<Option<UserInfo>> {
-        // Read /etc/passwd to get user info
-        let passwd = fs::read_to_string("/etc/passwd").map_err(|e| ModuleError::Io(e))?;
-
-        for line in passwd.lines() {
-            let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() >= 7 && parts[0] == name {
-                let uid = parts[2].parse().unwrap_or(0);
-                let gid = parts[3].parse().unwrap_or(0);
-
-                // Get groups
-                let groups_output = Command::new("groups").arg(name).output().ok();
-
-                let groups = groups_output
-                    .map(|o| {
-                        String::from_utf8_lossy(&o.stdout)
-                            .split(':')
-                            .last()
-                            .unwrap_or("")
-                            .split_whitespace()
-                            .map(|s| s.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                return Ok(Some(UserInfo {
-                    name: parts[0].to_string(),
-                    uid,
-                    gid,
-                    comment: parts[4].to_string(),
-                    home: parts[5].to_string(),
-                    shell: parts[6].to_string(),
-                    groups,
-                }));
+    /// Get execution options with become support if needed
+    fn get_exec_options(context: &ModuleContext) -> ExecuteOptions {
+        let mut options = ExecuteOptions::new();
+        if context.r#become {
+            options = options.with_escalation(context.become_user.clone());
+            if let Some(ref method) = context.become_method {
+                options.escalate_method = Some(method.clone());
             }
         }
-
-        Ok(None)
+        options
     }
 
-    fn create_user(
+    /// Execute a command via connection or locally
+    fn execute_command(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        command: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<(bool, String, String)> {
+        let options = Self::get_exec_options(context);
+
+        // Use tokio runtime to execute async command
+        let result = Handle::current().block_on(async {
+            connection.execute(command, Some(options)).await
+        }).map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
+
+        Ok((result.success, result.stdout, result.stderr))
+    }
+
+    /// Check if a user exists via connection
+    fn user_exists_via_connection(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        name: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<bool> {
+        let command = format!("id {}", shell_escape(name));
+        let (success, _, _) = Self::execute_command(connection, &command, context)?;
+        Ok(success)
+    }
+
+    /// Get user info via connection by parsing /etc/passwd and groups
+    fn get_user_info_via_connection(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        name: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<Option<UserInfo>> {
+        // Use getent to get passwd info
+        let command = format!("getent passwd {}", shell_escape(name));
+        let (success, stdout, _) = Self::execute_command(connection, &command, context)?;
+
+        if !success || stdout.trim().is_empty() {
+            return Ok(None);
+        }
+
+        // Parse passwd line: name:x:uid:gid:comment:home:shell
+        let parts: Vec<&str> = stdout.trim().split(':').collect();
+        if parts.len() < 7 {
+            return Err(ModuleError::ExecutionFailed(format!(
+                "Invalid passwd entry for user '{}'",
+                name
+            )));
+        }
+
+        let uid = parts[2].parse().unwrap_or(0);
+        let gid = parts[3].parse().unwrap_or(0);
+
+        // Get user's groups
+        let groups_cmd = format!("groups {}", shell_escape(name));
+        let (groups_success, groups_stdout, _) =
+            Self::execute_command(connection, &groups_cmd, context)?;
+
+        let groups = if groups_success {
+            groups_stdout
+                .split(':')
+                .last()
+                .unwrap_or("")
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Ok(Some(UserInfo {
+            name: parts[0].to_string(),
+            uid,
+            gid,
+            comment: parts[4].to_string(),
+            home: parts[5].to_string(),
+            shell: parts[6].to_string(),
+            groups,
+        }))
+    }
+
+    /// Create a user via connection
+    fn create_user_via_connection(
+        connection: &Arc<dyn Connection + Send + Sync>,
         name: &str,
         uid: Option<u32>,
         group: Option<&str>,
@@ -105,61 +152,67 @@ impl UserModule {
         comment: Option<&str>,
         create_home: bool,
         system: bool,
+        context: &ModuleContext,
     ) -> ModuleResult<()> {
-        let mut cmd = Command::new("useradd");
+        let mut cmd_parts = vec!["useradd".to_string()];
 
         if let Some(uid) = uid {
-            cmd.args(["-u", &uid.to_string()]);
+            cmd_parts.push("-u".to_string());
+            cmd_parts.push(uid.to_string());
         }
 
         if let Some(group) = group {
-            cmd.args(["-g", group]);
+            cmd_parts.push("-g".to_string());
+            cmd_parts.push(shell_escape(group));
         }
 
         if let Some(groups) = groups {
             if !groups.is_empty() {
-                cmd.args(["-G", &groups.join(",")]);
+                cmd_parts.push("-G".to_string());
+                cmd_parts.push(groups.join(","));
             }
         }
 
         if let Some(home) = home {
-            cmd.args(["-d", home]);
+            cmd_parts.push("-d".to_string());
+            cmd_parts.push(shell_escape(home));
         }
 
         if let Some(shell) = shell {
-            cmd.args(["-s", shell]);
+            cmd_parts.push("-s".to_string());
+            cmd_parts.push(shell_escape(shell));
         }
 
         if let Some(comment) = comment {
-            cmd.args(["-c", comment]);
+            cmd_parts.push("-c".to_string());
+            cmd_parts.push(format!("'{}'", comment.replace('\'', "'\\''")));
         }
 
         if create_home {
-            cmd.arg("-m");
+            cmd_parts.push("-m".to_string());
         } else {
-            cmd.arg("-M");
+            cmd_parts.push("-M".to_string());
         }
 
         if system {
-            cmd.arg("-r");
+            cmd_parts.push("-r".to_string());
         }
 
-        cmd.arg(name);
+        cmd_parts.push(shell_escape(name));
 
-        let output = cmd
-            .output()
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to create user: {}", e)))?;
+        let command = cmd_parts.join(" ");
+        let (success, _, stderr) = Self::execute_command(connection, &command, context)?;
 
-        if output.status.success() {
+        if success {
             Ok(())
         } else {
-            Err(ModuleError::ExecutionFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ))
+            Err(ModuleError::ExecutionFailed(stderr))
         }
     }
 
-    fn modify_user(
+    /// Modify a user via connection
+    fn modify_user_via_connection(
+        connection: &Arc<dyn Connection + Send + Sync>,
         name: &str,
         uid: Option<u32>,
         group: Option<&str>,
@@ -169,23 +222,25 @@ impl UserModule {
         shell: Option<&str>,
         comment: Option<&str>,
         move_home: bool,
+        context: &ModuleContext,
     ) -> ModuleResult<bool> {
-        let current = Self::get_user_info(name)?
+        let current = Self::get_user_info_via_connection(connection, name, context)?
             .ok_or_else(|| ModuleError::ExecutionFailed(format!("User '{}' not found", name)))?;
 
         let mut needs_change = false;
-        let mut cmd = Command::new("usermod");
+        let mut cmd_parts = vec!["usermod".to_string()];
 
         if let Some(uid) = uid {
             if current.uid != uid {
-                cmd.args(["-u", &uid.to_string()]);
+                cmd_parts.push("-u".to_string());
+                cmd_parts.push(uid.to_string());
                 needs_change = true;
             }
         }
 
         if let Some(group) = group {
-            // Would need to look up group name to compare
-            cmd.args(["-g", group]);
+            cmd_parts.push("-g".to_string());
+            cmd_parts.push(shell_escape(group));
             needs_change = true;
         }
 
@@ -193,9 +248,12 @@ impl UserModule {
             if !groups.is_empty() {
                 let groups_str = groups.join(",");
                 if append_groups {
-                    cmd.args(["-a", "-G", &groups_str]);
+                    cmd_parts.push("-a".to_string());
+                    cmd_parts.push("-G".to_string());
+                    cmd_parts.push(groups_str);
                 } else {
-                    cmd.args(["-G", &groups_str]);
+                    cmd_parts.push("-G".to_string());
+                    cmd_parts.push(groups_str);
                 }
                 needs_change = true;
             }
@@ -203,9 +261,10 @@ impl UserModule {
 
         if let Some(home) = home {
             if current.home != home {
-                cmd.args(["-d", home]);
+                cmd_parts.push("-d".to_string());
+                cmd_parts.push(shell_escape(home));
                 if move_home {
-                    cmd.arg("-m");
+                    cmd_parts.push("-m".to_string());
                 }
                 needs_change = true;
             }
@@ -213,14 +272,16 @@ impl UserModule {
 
         if let Some(shell) = shell {
             if current.shell != shell {
-                cmd.args(["-s", shell]);
+                cmd_parts.push("-s".to_string());
+                cmd_parts.push(shell_escape(shell));
                 needs_change = true;
             }
         }
 
         if let Some(comment) = comment {
             if current.comment != comment {
-                cmd.args(["-c", comment]);
+                cmd_parts.push("-c".to_string());
+                cmd_parts.push(format!("'{}'", comment.replace('\'', "'\\''")));
                 needs_change = true;
             }
         }
@@ -229,118 +290,90 @@ impl UserModule {
             return Ok(false);
         }
 
-        cmd.arg(name);
+        cmd_parts.push(shell_escape(name));
 
-        let output = cmd
-            .output()
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to modify user: {}", e)))?;
+        let command = cmd_parts.join(" ");
+        let (success, _, stderr) = Self::execute_command(connection, &command, context)?;
 
-        if output.status.success() {
+        if success {
             Ok(true)
         } else {
-            Err(ModuleError::ExecutionFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ))
+            Err(ModuleError::ExecutionFailed(stderr))
         }
     }
 
-    fn delete_user(name: &str, remove_home: bool, force: bool) -> ModuleResult<()> {
-        let mut cmd = Command::new("userdel");
+    /// Delete a user via connection
+    fn delete_user_via_connection(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        name: &str,
+        remove_home: bool,
+        force: bool,
+        context: &ModuleContext,
+    ) -> ModuleResult<()> {
+        let mut cmd_parts = vec!["userdel".to_string()];
 
         if remove_home {
-            cmd.arg("-r");
+            cmd_parts.push("-r".to_string());
         }
 
         if force {
-            cmd.arg("-f");
+            cmd_parts.push("-f".to_string());
         }
 
-        cmd.arg(name);
+        cmd_parts.push(shell_escape(name));
 
-        let output = cmd
-            .output()
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to delete user: {}", e)))?;
+        let command = cmd_parts.join(" ");
+        let (success, _, stderr) = Self::execute_command(connection, &command, context)?;
 
-        if output.status.success() {
+        if success {
             Ok(())
         } else {
-            Err(ModuleError::ExecutionFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ))
+            Err(ModuleError::ExecutionFailed(stderr))
         }
     }
 
-    fn set_password(name: &str, password: &str, encrypted: bool) -> ModuleResult<()> {
-        use std::io::Write;
-        use std::process::Stdio;
+    /// Set password via connection
+    fn set_password_via_connection(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        name: &str,
+        password: &str,
+        encrypted: bool,
+        context: &ModuleContext,
+    ) -> ModuleResult<()> {
+        // Use chpasswd with echo pipe
+        let flag = if encrypted { "-e" } else { "" };
+        let command = format!(
+            "echo '{}:{}' | chpasswd {}",
+            shell_escape(name),
+            password.replace('\'', "'\\''"),
+            flag
+        );
 
-        if encrypted {
-            // Use chpasswd with encrypted password
-            let mut cmd = Command::new("chpasswd")
-                .arg("-e")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| {
-                    ModuleError::ExecutionFailed(format!("Failed to set password: {}", e))
-                })?;
+        let (success, _, stderr) = Self::execute_command(connection, &command, context)?;
 
-            if let Some(ref mut stdin) = cmd.stdin {
-                writeln!(stdin, "{}:{}", name, password).map_err(|e| {
-                    ModuleError::ExecutionFailed(format!("Failed to write password: {}", e))
-                })?;
-            }
-
-            let output = cmd.wait_with_output().map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to set password: {}", e))
-            })?;
-
-            if !output.status.success() {
-                return Err(ModuleError::ExecutionFailed(
-                    String::from_utf8_lossy(&output.stderr).to_string(),
-                ));
-            }
+        if success {
+            Ok(())
         } else {
-            // Use chpasswd with plain password
-            let mut cmd = Command::new("chpasswd")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| {
-                    ModuleError::ExecutionFailed(format!("Failed to set password: {}", e))
-                })?;
-
-            if let Some(ref mut stdin) = cmd.stdin {
-                writeln!(stdin, "{}:{}", name, password).map_err(|e| {
-                    ModuleError::ExecutionFailed(format!("Failed to write password: {}", e))
-                })?;
-            }
-
-            let output = cmd.wait_with_output().map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to set password: {}", e))
-            })?;
-
-            if !output.status.success() {
-                return Err(ModuleError::ExecutionFailed(
-                    String::from_utf8_lossy(&output.stderr).to_string(),
-                ));
-            }
+            Err(ModuleError::ExecutionFailed(format!(
+                "Failed to set password: {}",
+                stderr
+            )))
         }
-
-        Ok(())
     }
 
-    fn generate_ssh_key(
+    /// Generate SSH key via connection
+    fn generate_ssh_key_via_connection(
+        connection: &Arc<dyn Connection + Send + Sync>,
         name: &str,
         ssh_key_type: &str,
         ssh_key_bits: u32,
         ssh_key_file: Option<&str>,
         ssh_key_comment: Option<&str>,
         ssh_key_passphrase: Option<&str>,
+        context: &ModuleContext,
     ) -> ModuleResult<bool> {
-        let user_info = Self::get_user_info(name)?
+        // Get user info to find home directory
+        let user_info = Self::get_user_info_via_connection(connection, name, context)?
             .ok_or_else(|| ModuleError::ExecutionFailed(format!("User '{}' not found", name)))?;
 
         let key_file = ssh_key_file
@@ -348,61 +381,58 @@ impl UserModule {
             .unwrap_or_else(|| format!("{}/.ssh/id_{}", user_info.home, ssh_key_type));
 
         // Check if key already exists
-        if std::path::Path::new(&key_file).exists() {
+        let check_cmd = format!("test -f {}", shell_escape(&key_file));
+        let (exists, _, _) = Self::execute_command(connection, &check_cmd, context)?;
+        if exists {
             return Ok(false);
         }
 
         // Create .ssh directory if needed
         let ssh_dir = format!("{}/.ssh", user_info.home);
-        if !std::path::Path::new(&ssh_dir).exists() {
-            fs::create_dir_all(&ssh_dir)?;
-            // Set ownership to user
-            Command::new("chown")
-                .args([&format!("{}:{}", user_info.uid, user_info.gid), &ssh_dir])
-                .output()?;
-            // Set permissions
-            Command::new("chmod").args(["700", &ssh_dir]).output()?;
+        let mkdir_cmd = format!(
+            "mkdir -p {} && chown {}:{} {} && chmod 700 {}",
+            shell_escape(&ssh_dir),
+            user_info.uid,
+            user_info.gid,
+            shell_escape(&ssh_dir),
+            shell_escape(&ssh_dir)
+        );
+        Self::execute_command(connection, &mkdir_cmd, context)?;
+
+        // Generate SSH key
+        let passphrase = ssh_key_passphrase.unwrap_or("");
+        let comment_arg = ssh_key_comment
+            .map(|c| format!("-C '{}'", c.replace('\'', "'\\''")))
+            .unwrap_or_default();
+
+        let keygen_cmd = format!(
+            "ssh-keygen -t {} -b {} -f {} {} -N '{}'",
+            ssh_key_type,
+            ssh_key_bits,
+            shell_escape(&key_file),
+            comment_arg,
+            passphrase.replace('\'', "'\\''")
+        );
+
+        let (success, _, stderr) = Self::execute_command(connection, &keygen_cmd, context)?;
+        if !success {
+            return Err(ModuleError::ExecutionFailed(format!(
+                "Failed to generate SSH key: {}",
+                stderr
+            )));
         }
 
-        let mut cmd = Command::new("ssh-keygen");
-        cmd.args(["-t", ssh_key_type]);
-        cmd.args(["-b", &ssh_key_bits.to_string()]);
-        cmd.args(["-f", &key_file]);
-
-        if let Some(comment) = ssh_key_comment {
-            cmd.args(["-C", comment]);
-        }
-
-        if let Some(passphrase) = ssh_key_passphrase {
-            cmd.args(["-N", passphrase]);
-        } else {
-            cmd.args(["-N", ""]);
-        }
-
-        let output = cmd.output().map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to generate SSH key: {}", e))
-        })?;
-
-        if !output.status.success() {
-            return Err(ModuleError::ExecutionFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        // Set ownership
-        Command::new("chown")
-            .args([
-                &format!("{}:{}", user_info.uid, user_info.gid),
-                &key_file,
-                &format!("{}.pub", key_file),
-            ])
-            .output()?;
-
-        // Set permissions
-        Command::new("chmod").args(["600", &key_file]).output()?;
-        Command::new("chmod")
-            .args(["644", &format!("{}.pub", key_file)])
-            .output()?;
+        // Set ownership and permissions
+        let perms_cmd = format!(
+            "chown {}:{} {} {}.pub && chmod 600 {} && chmod 644 {}.pub",
+            user_info.uid,
+            user_info.gid,
+            shell_escape(&key_file),
+            shell_escape(&key_file),
+            shell_escape(&key_file),
+            shell_escape(&key_file)
+        );
+        Self::execute_command(connection, &perms_cmd, context)?;
 
         Ok(true)
     }
@@ -430,6 +460,12 @@ impl Module for UserModule {
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
+        let connection = context.connection.as_ref().ok_or_else(|| {
+            ModuleError::ExecutionFailed(
+                "User module requires a connection for remote execution".to_string(),
+            )
+        })?;
+
         let name = params.get_string_required("name")?;
         let state_str = params
             .get_string("state")?
@@ -459,7 +495,7 @@ impl Module for UserModule {
         let ssh_key_comment = params.get_string("ssh_key_comment")?;
         let ssh_key_passphrase = params.get_string("ssh_key_passphrase")?;
 
-        let user_exists = Self::user_exists(&name)?;
+        let user_exists = Self::user_exists_via_connection(connection, &name, context)?;
 
         match state {
             UserState::Absent => {
@@ -474,7 +510,7 @@ impl Module for UserModule {
                     )));
                 }
 
-                Self::delete_user(&name, remove_home, force)?;
+                Self::delete_user_via_connection(connection, &name, remove_home, force, context)?;
                 Ok(ModuleOutput::changed(format!("Removed user '{}'", name)))
             }
 
@@ -490,7 +526,8 @@ impl Module for UserModule {
                         )));
                     }
 
-                    Self::create_user(
+                    Self::create_user_via_connection(
+                        connection,
                         &name,
                         uid,
                         group.as_deref(),
@@ -500,6 +537,7 @@ impl Module for UserModule {
                         comment.as_deref(),
                         create_home,
                         system,
+                        context,
                     )?;
 
                     changed = true;
@@ -507,14 +545,14 @@ impl Module for UserModule {
                 } else {
                     // Modify existing user
                     if context.check_mode {
-                        // Just check if modification would be needed
                         return Ok(ModuleOutput::changed(format!(
                             "Would modify user '{}'",
                             name
                         )));
                     }
 
-                    let modified = Self::modify_user(
+                    let modified = Self::modify_user_via_connection(
+                        connection,
                         &name,
                         uid,
                         group.as_deref(),
@@ -524,6 +562,7 @@ impl Module for UserModule {
                         shell.as_deref(),
                         comment.as_deref(),
                         move_home,
+                        context,
                     )?;
 
                     if modified {
@@ -538,7 +577,13 @@ impl Module for UserModule {
                         messages.push("Would set password".to_string());
                         changed = true;
                     } else {
-                        Self::set_password(&name, pwd, password_encrypted)?;
+                        Self::set_password_via_connection(
+                            connection,
+                            &name,
+                            pwd,
+                            password_encrypted,
+                            context,
+                        )?;
                         messages.push("Set password".to_string());
                         changed = true;
                     }
@@ -550,13 +595,15 @@ impl Module for UserModule {
                         messages.push("Would generate SSH key".to_string());
                         changed = true;
                     } else {
-                        let key_generated = Self::generate_ssh_key(
+                        let key_generated = Self::generate_ssh_key_via_connection(
+                            connection,
                             &name,
                             &ssh_key_type,
                             ssh_key_bits,
                             ssh_key_file.as_deref(),
                             ssh_key_comment.as_deref(),
                             ssh_key_passphrase.as_deref(),
+                            context,
                         )?;
 
                         if key_generated {
@@ -567,7 +614,7 @@ impl Module for UserModule {
                 }
 
                 // Get final user info
-                let user_info = Self::get_user_info(&name)?;
+                let user_info = Self::get_user_info_via_connection(connection, &name, context)?;
                 let mut data = HashMap::new();
 
                 if let Some(info) = user_info {
@@ -607,14 +654,19 @@ impl Module for UserModule {
         self.execute(params, &check_context)
     }
 
-    fn diff(&self, params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<Option<Diff>> {
+    fn diff(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<Option<Diff>> {
+        let connection = match context.connection.as_ref() {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
         let name = params.get_string_required("name")?;
         let state_str = params
             .get_string("state")?
             .unwrap_or_else(|| "present".to_string());
         let state = UserState::from_str(&state_str)?;
 
-        let user_info = Self::get_user_info(&name)?;
+        let user_info = Self::get_user_info_via_connection(connection, &name, context)?;
 
         let before = if let Some(info) = &user_info {
             format!(
@@ -634,7 +686,6 @@ impl Module for UserModule {
             UserState::Absent => "user: (absent)".to_string(),
             UserState::Present => {
                 if user_info.is_some() {
-                    // Would need to compute differences based on params
                     before.clone()
                 } else {
                     format!("user: {} (will be created)", name)
@@ -650,6 +701,16 @@ impl Module for UserModule {
     }
 }
 
+/// Escape a string for safe use in shell commands
+fn shell_escape(s: &str) -> String {
+    // Simple escape: wrap in single quotes and escape any single quotes
+    if s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/') {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -662,21 +723,28 @@ mod tests {
     }
 
     #[test]
-    fn test_user_exists() {
-        // root should always exist
-        assert!(UserModule::user_exists("root").unwrap());
-        // Random user should not exist
-        assert!(!UserModule::user_exists("nonexistent_user_12345").unwrap());
+    fn test_shell_escape() {
+        assert_eq!(shell_escape("simple"), "simple");
+        assert_eq!(shell_escape("with space"), "'with space'");
+        assert_eq!(shell_escape("with'quote"), "'with'\\''quote'");
+        assert_eq!(shell_escape("/usr/bin/bash"), "/usr/bin/bash");
     }
 
     #[test]
-    fn test_get_user_info() {
-        let info = UserModule::get_user_info("root").unwrap();
-        assert!(info.is_some());
-        let info = info.unwrap();
-        assert_eq!(info.name, "root");
-        assert_eq!(info.uid, 0);
+    fn test_user_module_name() {
+        let module = UserModule;
+        assert_eq!(module.name(), "user");
     }
 
-    // Integration tests would require root access
+    #[test]
+    fn test_user_module_classification() {
+        let module = UserModule;
+        assert_eq!(module.classification(), ModuleClassification::RemoteCommand);
+    }
+
+    #[test]
+    fn test_user_module_required_params() {
+        let module = UserModule;
+        assert_eq!(module.required_params(), &["name"]);
+    }
 }

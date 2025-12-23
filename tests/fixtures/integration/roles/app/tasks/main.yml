@@ -1,0 +1,26 @@
+---
+# App role tasks
+- name: Create application directory
+  file:
+    path: "{{ app_directory }}"
+    state: directory
+    mode: "0755"
+
+- name: Deploy application files
+  debug:
+    msg: "Deploying {{ app_name }} version {{ app_version }}"
+
+- name: Configure application
+  template:
+    src: app.conf.j2
+    dest: "{{ app_directory }}/config/app.conf"
+  notify: restart app
+
+- name: Start application service
+  debug:
+    msg: "Starting application {{ app_name }}"
+
+- name: Verify application health
+  debug:
+    msg: "Health check passed for {{ app_name }}"
+  register: app_health_check

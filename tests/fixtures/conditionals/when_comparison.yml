@@ -1,0 +1,72 @@
+# Test playbook for when conditions with comparison operators
+---
+- name: Test comparison operators in when
+  hosts: all
+  gather_facts: false
+  vars:
+    os_family: "Debian"
+    environment: "production"
+    version: 3
+    port: 8080
+    count: 10
+
+  tasks:
+    - name: Should run - string equality with single quotes
+      debug:
+        msg: "OS is Debian"
+      when: os_family == 'Debian'
+
+    - name: Should skip - string equality fails
+      debug:
+        msg: "OS is RedHat"
+      when: os_family == 'RedHat'
+
+    - name: Should run - string equality with double quotes
+      debug:
+        msg: "Environment is production"
+      when: environment == "production"
+
+    - name: Should run - string inequality
+      debug:
+        msg: "Environment is not staging"
+      when: environment != "staging"
+
+    - name: Should skip - string inequality fails
+      debug:
+        msg: "Environment is not production"
+      when: environment != "production"
+
+    - name: Should run - number equality
+      debug:
+        msg: "Version is 3"
+      when: version == 3
+
+    - name: Should skip - number equality fails
+      debug:
+        msg: "Version is 2"
+      when: version == 2
+
+    - name: Should run - number inequality
+      debug:
+        msg: "Version is not 2"
+      when: version != 2
+
+    - name: Should run - greater than
+      debug:
+        msg: "Port is greater than 80"
+      when: port > 80
+
+    - name: Should run - less than
+      debug:
+        msg: "Version is less than 5"
+      when: version < 5
+
+    - name: Should run - greater than or equal
+      debug:
+        msg: "Count is at least 10"
+      when: count >= 10
+
+    - name: Should run - less than or equal
+      debug:
+        msg: "Version is at most 3"
+      when: version <= 3

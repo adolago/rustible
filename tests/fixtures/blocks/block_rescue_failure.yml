@@ -1,0 +1,22 @@
+---
+# Test rescue failure handling
+- name: Block rescue failure test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Block where rescue also fails
+      block:
+        - name: Original failure
+          fail:
+            msg: "Original failure"
+      rescue:
+        - name: Rescue attempt
+          debug:
+            msg: "Trying to recover"
+        - name: Rescue fails too
+          fail:
+            msg: "Rescue also failed"
+      always:
+        - name: Always still runs
+          debug:
+            msg: "Always runs even when rescue fails"

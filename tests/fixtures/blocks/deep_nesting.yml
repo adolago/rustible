@@ -1,0 +1,46 @@
+---
+# Deep nesting test
+- name: Deep nesting test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Level 1 block
+      block:
+        - name: Level 1 task
+          debug:
+            msg: "Level 1"
+        - name: Level 2 block
+          block:
+            - name: Level 2 task
+              debug:
+                msg: "Level 2"
+            - name: Level 3 block
+              block:
+                - name: Level 3 task
+                  debug:
+                    msg: "Level 3"
+                - name: Level 4 block
+                  block:
+                    - name: Level 4 task
+                      debug:
+                        msg: "Level 4"
+                  always:
+                    - name: Level 4 always
+                      debug:
+                        msg: "Level 4 always"
+              rescue:
+                - name: Level 3 rescue
+                  debug:
+                    msg: "Level 3 rescue"
+          always:
+            - name: Level 2 always
+              debug:
+                msg: "Level 2 always"
+      rescue:
+        - name: Level 1 rescue
+          debug:
+            msg: "Level 1 rescue"
+      always:
+        - name: Level 1 always
+          debug:
+            msg: "Level 1 always"

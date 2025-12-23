@@ -1,0 +1,28 @@
+---
+# Test handler failure handling
+- name: Test handler failure
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Update configuration
+      copy:
+        src: config.conf
+        dest: /etc/app/config.conf
+      notify:
+        - handler 1
+        - failing handler
+        - handler 3
+
+  handlers:
+    - name: handler 1
+      debug:
+        msg: "Handler 1 executed"
+
+    - name: failing handler
+      fail:
+        msg: "This handler intentionally fails"
+
+    - name: handler 3
+      debug:
+        msg: "Handler 3 should not execute after failure"

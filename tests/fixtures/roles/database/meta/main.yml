@@ -1,0 +1,4 @@
+---
+# Database role depends on common
+dependencies:
+  - common

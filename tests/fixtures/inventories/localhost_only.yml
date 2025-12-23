@@ -1,0 +1,10 @@
+# Localhost Only Inventory - For local testing
+#
+# This inventory is useful for testing on the local machine without
+# requiring SSH connections or remote hosts.
+---
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: auto

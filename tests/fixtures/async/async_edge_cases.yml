@@ -1,0 +1,54 @@
+---
+# Edge cases for async execution
+- name: Async edge cases
+  hosts: all
+  gather_facts: false
+  tasks:
+    # Async on localhost
+    - name: Async task on localhost
+      command: echo "local async"
+      async: 10
+      poll: 2
+      delegate_to: localhost
+
+    # Async with zero timeout (should behave as fire-and-forget)
+    - name: Async with zero value
+      command: echo "instant"
+      async: 0
+      poll: 0
+      ignore_errors: yes
+
+    # Async task that fails
+    - name: Async task that will fail
+      command: /nonexistent/command
+      async: 10
+      poll: 2
+      register: failed_async
+      ignore_errors: yes
+
+    - name: Verify failure was captured
+      debug:
+        msg: "Failed task result: {{ failed_async }}"
+
+    # Async with until condition
+    - name: Async with until loop
+      command: /usr/bin/check-status
+      async: 60
+      poll: 0
+      register: status_job
+
+    - name: Wait until specific condition
+      async_status:
+        jid: "{{ status_job.ansible_job_id }}"
+      register: status_result
+      until: status_result.finished and status_result.stdout is search('READY')
+      retries: 30
+      delay: 2
+      ignore_errors: yes
+
+    # Handling connection loss scenario (simulated)
+    - name: Task simulating connection issues
+      command: echo "resilient task"
+      async: 30
+      poll: 5
+      register: resilient_result

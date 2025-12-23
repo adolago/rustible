@@ -1,0 +1,6 @@
+---
+# Staging environment variables
+environment: staging
+debug_mode: true
+log_level: debug
+database_host: staging-db.example.com

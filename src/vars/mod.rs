@@ -262,7 +262,12 @@ impl VarStore {
     }
 
     /// Set a variable at a specific precedence level
-    pub fn set(&mut self, key: impl Into<String>, value: serde_yaml::Value, precedence: VarPrecedence) {
+    pub fn set(
+        &mut self,
+        key: impl Into<String>,
+        value: serde_yaml::Value,
+        precedence: VarPrecedence,
+    ) {
         self.merged_cache = None; // Invalidate cache
 
         let layer = self.layers.entry(precedence).or_default();
@@ -278,7 +283,11 @@ impl VarStore {
     }
 
     /// Set multiple variables at a precedence level
-    pub fn set_many(&mut self, vars: IndexMap<String, serde_yaml::Value>, precedence: VarPrecedence) {
+    pub fn set_many(
+        &mut self,
+        vars: IndexMap<String, serde_yaml::Value>,
+        precedence: VarPrecedence,
+    ) {
         self.merged_cache = None;
 
         let layer = self.layers.entry(precedence).or_default();
@@ -404,7 +413,11 @@ impl VarStore {
     }
 
     /// Load variables from a YAML file
-    pub fn load_file<P: AsRef<Path>>(&mut self, path: P, precedence: VarPrecedence) -> VarsResult<()> {
+    pub fn load_file<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        precedence: VarPrecedence,
+    ) -> VarsResult<()> {
         let content = std::fs::read_to_string(&path)?;
 
         // Check if it's vault encrypted
@@ -543,9 +556,9 @@ impl Vault {
             .hash_password(password.as_bytes(), &salt)
             .map_err(|e| VarsError::EncryptionError(e.to_string()))?;
 
-        let key_bytes = password_hash.hash.ok_or_else(|| {
-            VarsError::EncryptionError("Failed to generate key".to_string())
-        })?;
+        let key_bytes = password_hash
+            .hash
+            .ok_or_else(|| VarsError::EncryptionError("Failed to generate key".to_string()))?;
 
         // Use first 32 bytes as AES-256 key
         let key_slice = &key_bytes.as_bytes()[..32];
@@ -594,8 +607,7 @@ impl Vault {
 
         // Parse components
         let salt_str = lines[1];
-        let salt = SaltString::from_b64(salt_str)
-            .map_err(|_| VarsError::InvalidVaultFormat)?;
+        let salt = SaltString::from_b64(salt_str).map_err(|_| VarsError::InvalidVaultFormat)?;
 
         use base64::Engine;
         let nonce_bytes = base64::engine::general_purpose::STANDARD
@@ -612,9 +624,9 @@ impl Vault {
             .hash_password(password.as_bytes(), &salt)
             .map_err(|e| VarsError::DecryptionError(e.to_string()))?;
 
-        let key_bytes = password_hash.hash.ok_or_else(|| {
-            VarsError::DecryptionError("Failed to derive key".to_string())
-        })?;
+        let key_bytes = password_hash
+            .hash
+            .ok_or_else(|| VarsError::DecryptionError("Failed to derive key".to_string()))?;
 
         // Decrypt
         let key_slice = &key_bytes.as_bytes()[..32];
@@ -627,8 +639,7 @@ impl Vault {
             .decrypt(nonce, ciphertext.as_ref())
             .map_err(|e| VarsError::DecryptionError(e.to_string()))?;
 
-        String::from_utf8(plaintext)
-            .map_err(|e| VarsError::DecryptionError(e.to_string()))
+        String::from_utf8(plaintext).map_err(|e| VarsError::DecryptionError(e.to_string()))
     }
 
     /// Check if content is vault encrypted
@@ -641,7 +652,9 @@ impl Vault {
         let content = std::fs::read_to_string(&path)?;
 
         if Self::is_encrypted(&content) {
-            return Err(VarsError::VaultError("File is already encrypted".to_string()));
+            return Err(VarsError::VaultError(
+                "File is already encrypted".to_string(),
+            ));
         }
 
         let encrypted = Self::encrypt(&content, password)?;
@@ -763,7 +776,10 @@ pub mod resolve {
             if let serde_yaml::Value::Mapping(map) = current {
                 let key = serde_yaml::Value::String(part.to_string());
                 if !map.contains_key(&key) {
-                    map.insert(key.clone(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+                    map.insert(
+                        key.clone(),
+                        serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+                    );
                 }
                 current = map.get_mut(&key).unwrap();
             } else {
@@ -822,9 +838,10 @@ pub mod resolve {
     pub fn to_list(value: &serde_yaml::Value) -> Vec<serde_yaml::Value> {
         match value {
             serde_yaml::Value::Sequence(seq) => seq.clone(),
-            serde_yaml::Value::String(s) => {
-                s.split(',').map(|s| serde_yaml::Value::String(s.trim().to_string())).collect()
-            }
+            serde_yaml::Value::String(s) => s
+                .split(',')
+                .map(|s| serde_yaml::Value::String(s.trim().to_string()))
+                .collect(),
             _ => vec![value.clone()],
         }
     }
@@ -894,7 +911,11 @@ mod tests {
     fn test_var_store_basic() {
         let mut store = VarStore::new();
 
-        store.set("test", serde_yaml::Value::String("value".to_string()), VarPrecedence::PlayVars);
+        store.set(
+            "test",
+            serde_yaml::Value::String("value".to_string()),
+            VarPrecedence::PlayVars,
+        );
 
         assert!(store.contains("test"));
         assert_eq!(
@@ -998,7 +1019,11 @@ mod tests {
     #[test]
     fn test_var_scope() {
         let mut store = VarStore::new();
-        store.set("a", serde_yaml::Value::Number(1.into()), VarPrecedence::PlayVars);
+        store.set(
+            "a",
+            serde_yaml::Value::Number(1.into()),
+            VarPrecedence::PlayVars,
+        );
 
         let mut scope = store.scope();
         scope.set("b", serde_yaml::Value::Number(2.into()));

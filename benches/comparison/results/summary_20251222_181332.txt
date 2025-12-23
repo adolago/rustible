@@ -1,0 +1,18 @@
+Rustible vs Ansible Benchmark Results
+======================================
+Date: Mon Dec 22 06:17:43 PM CET 2025
+Hosts: 5 (LXC containers on Proxmox)
+Runs per playbook: 10
+
+Average Execution Times (ms):
+-----------------------------
+Playbook                            Ansible     Rustible    Speedup
+--------                            -------     --------    -------
+bench_01_simple.yml                    2242         2454        .91x
+bench_02_file_ops.yml                  3124          497       6.28x
+bench_03_multi_task.yml                4937         2978       1.65x
+bench_04_comprehensive.yml             2942         1485       1.98x
+
+TOTAL                                 13245         7414       1.78x
+
+Raw data saved to: /home/artur/Repositories/rustible/benches/comparison/results/benchmark_20251222_181332.csv

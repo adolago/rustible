@@ -1,0 +1,24 @@
+---
+- name: Play with mixed tagged and untagged tasks
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Untagged task 1
+      debug:
+        msg: "No tags here"
+
+    - name: Tagged task
+      debug:
+        msg: "Has install tag"
+      tags:
+        - install
+
+    - name: Untagged task 2
+      debug:
+        msg: "Also no tags"
+
+    - name: Another tagged task
+      debug:
+        msg: "Has configure tag"
+      tags:
+        - configure

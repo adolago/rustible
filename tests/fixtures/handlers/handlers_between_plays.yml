@@ -1,0 +1,33 @@
+---
+# Handlers are scoped to plays
+- name: Play 1 with its own handlers
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Update config in play 1
+      copy:
+        src: config1.conf
+        dest: /etc/app/config1.conf
+      notify: restart service
+
+  handlers:
+    - name: restart service
+      debug:
+        msg: "Handler from Play 1"
+
+- name: Play 2 with its own handlers
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Update config in play 2
+      copy:
+        src: config2.conf
+        dest: /etc/app/config2.conf
+      notify: restart service
+
+  handlers:
+    - name: restart service
+      debug:
+        msg: "Handler from Play 2"

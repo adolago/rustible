@@ -1,0 +1,34 @@
+---
+# Fire-and-forget pattern with poll: 0
+- name: Fire and forget operations
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Start background daemon
+      command: /usr/sbin/start-daemon
+      async: 3600
+      poll: 0
+
+    - name: Trigger webhook notification
+      uri:
+        url: http://webhook.example.com/notify
+        method: POST
+        body:
+          event: deployment_started
+        body_format: json
+      async: 30
+      poll: 0
+
+    - name: Start log rotation
+      command: logrotate /etc/logrotate.conf
+      async: 600
+      poll: 0
+      register: logrotate_job
+
+    - name: Continue with other tasks immediately
+      debug:
+        msg: "Background tasks started, continuing..."
+
+    - name: Note about fire-and-forget
+      debug:
+        msg: "Job ID for logrotate: {{ logrotate_job.ansible_job_id }}"

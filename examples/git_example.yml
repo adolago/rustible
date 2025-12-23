@@ -1,0 +1,37 @@
+---
+# Example playbook demonstrating the git module usage
+
+- name: Git Module Example
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Clone a repository
+      git:
+        repo: https://github.com/rust-lang/rust.git
+        dest: /tmp/rust-repo
+        version: master
+        depth: 1
+
+    - name: Clone a specific branch
+      git:
+        repo: https://github.com/ansible/ansible.git
+        dest: /tmp/ansible-repo
+        version: stable-2.15
+
+    - name: Clone a specific tag/commit
+      git:
+        repo: https://github.com/torvalds/linux.git
+        dest: /tmp/linux-repo
+        version: v6.5
+
+    - name: Ensure repository exists without updating
+      git:
+        repo: https://github.com/rust-lang/rust.git
+        dest: /tmp/rust-repo
+        update: false
+
+    - name: Update existing repository
+      git:
+        repo: https://github.com/rust-lang/rust.git
+        dest: /tmp/rust-repo
+        update: true

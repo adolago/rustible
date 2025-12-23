@@ -1,0 +1,34 @@
+---
+# Block inside rescue section
+- name: Block inside rescue test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Outer block with inner block in rescue
+      block:
+        - name: Cause failure
+          fail:
+            msg: "Triggering rescue"
+      rescue:
+        - name: Pre-inner-block rescue task
+          debug:
+            msg: "Before inner block in rescue"
+        - name: Inner block in rescue
+          block:
+            - name: Inner rescue block task 1
+              debug:
+                msg: "Inner block task 1"
+            - name: Inner rescue block task 2
+              debug:
+                msg: "Inner block task 2"
+          always:
+            - name: Inner block always
+              debug:
+                msg: "Inner block always in rescue"
+        - name: Post-inner-block rescue task
+          debug:
+            msg: "After inner block in rescue"
+      always:
+        - name: Outer always
+          debug:
+            msg: "Outer always"

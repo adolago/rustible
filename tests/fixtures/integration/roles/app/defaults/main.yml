@@ -1,0 +1,9 @@
+---
+# App role defaults
+app_name: "myapp"
+app_version: "1.0.0"
+app_directory: "/opt/app"
+app_user: "app"
+app_group: "app"
+app_port: 8080
+app_environment: "production"

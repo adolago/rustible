@@ -1,0 +1,19 @@
+---
+# Common role metadata
+galaxy_info:
+  role_name: common
+  author: Rustible Tests
+  description: Common configuration role for testing
+  license: MIT
+  min_ansible_version: "2.10"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - "20.04"
+        - "22.04"
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+
+dependencies: []

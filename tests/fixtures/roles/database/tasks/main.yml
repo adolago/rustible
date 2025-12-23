@@ -1,0 +1,16 @@
+---
+# Database role tasks
+- name: Install PostgreSQL
+  package:
+    name: postgresql
+    state: present
+
+- name: Start PostgreSQL service
+  service:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: Create database
+  command: "createdb {{ db_name | default('app') }}"
+  changed_when: false

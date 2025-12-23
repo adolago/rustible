@@ -1,0 +1,16 @@
+---
+# Handlers from included file
+- name: included_handler
+  debug:
+    msg: "Included handler executed"
+
+- name: second_included_handler
+  debug:
+    msg: "Second included handler executed"
+
+- name: restart_included_service
+  debug:
+    msg: "Restarting included service"
+  listen:
+    - restart services
+    - service config changed

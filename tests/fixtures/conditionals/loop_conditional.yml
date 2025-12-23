@@ -1,0 +1,53 @@
+# Test playbook for conditional loops
+---
+- name: Test conditional loops
+  hosts: all
+  gather_facts: false
+  vars:
+    process_items: true
+    skip_items: false
+    services:
+      - name: nginx
+        enabled: true
+      - name: apache
+        enabled: false
+      - name: postgresql
+        enabled: true
+
+  tasks:
+    - name: Loop runs when condition is true
+      debug:
+        msg: "Processing: {{ item }}"
+      loop:
+        - item1
+        - item2
+        - item3
+      when: process_items
+
+    - name: Loop skipped when condition is false
+      debug:
+        msg: "This should not appear: {{ item }}"
+      loop:
+        - skip1
+        - skip2
+      when: skip_items
+
+    - name: Per-item filtering with when
+      debug:
+        msg: "Enabled service: {{ item.name }}"
+      loop: "{{ services }}"
+      when: item.enabled
+
+    - name: Loop with complex when condition
+      debug:
+        msg: "Processing {{ item }}"
+      loop:
+        - value1
+        - value2
+      when: process_items and not skip_items
+
+    - name: Skip specific items in loop
+      debug:
+        msg: "Service {{ item.name }} is enabled"
+      loop: "{{ services }}"
+      when: item.enabled and item.name != 'apache'

@@ -1,0 +1,58 @@
+# Test playbook for loop variables (ansible_loop)
+---
+- name: Test loop variables
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Display loop index (1-based)
+      debug:
+        msg: "Index {{ ansible_loop.index }}: {{ item }}"
+      loop:
+        - first
+        - second
+        - third
+
+    - name: Display loop index0 (0-based)
+      debug:
+        msg: "Index0 {{ ansible_loop.index0 }}: {{ item }}"
+      loop:
+        - alpha
+        - beta
+        - gamma
+
+    - name: Check loop.first
+      debug:
+        msg: "{{ item }} is first: {{ ansible_loop.first }}"
+      loop:
+        - one
+        - two
+        - three
+
+    - name: Check loop.last
+      debug:
+        msg: "{{ item }} is last: {{ ansible_loop.last }}"
+      loop:
+        - A
+        - B
+        - C
+
+    - name: Display loop length
+      debug:
+        msg: "Item {{ item }} of {{ ansible_loop.length }}"
+      loop:
+        - x
+        - y
+        - z
+
+    - name: Combined loop info
+      debug:
+        msg: >
+          [{{ ansible_loop.index }}/{{ ansible_loop.length }}]
+          Item: {{ item }}
+          First: {{ ansible_loop.first }}
+          Last: {{ ansible_loop.last }}
+      loop:
+        - item1
+        - item2
+        - item3

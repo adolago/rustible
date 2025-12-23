@@ -1,0 +1,11 @@
+# Main hosts file
+[webservers]
+web1
+web2
+
+[databases]
+db1
+
+[production:children]
+webservers
+databases

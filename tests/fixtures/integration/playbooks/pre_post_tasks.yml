@@ -1,0 +1,35 @@
+---
+# Playbook with pre_tasks and post_tasks
+- name: Complete task workflow
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    workflow_id: "test-12345"
+
+  pre_tasks:
+    - name: Pre-task 1 - Initialize
+      debug:
+        msg: "Pre-task: Initializing workflow {{ workflow_id }}"
+
+    - name: Pre-task 2 - Verify prerequisites
+      debug:
+        msg: "Pre-task: Checking prerequisites"
+
+  tasks:
+    - name: Main task 1
+      debug:
+        msg: "Main task: Primary operation"
+
+    - name: Main task 2
+      debug:
+        msg: "Main task: Secondary operation"
+
+  post_tasks:
+    - name: Post-task 1 - Cleanup
+      debug:
+        msg: "Post-task: Cleaning up workflow {{ workflow_id }}"
+
+    - name: Post-task 2 - Notify
+      debug:
+        msg: "Post-task: Sending notifications"

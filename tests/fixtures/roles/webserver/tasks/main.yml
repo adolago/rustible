@@ -1,0 +1,45 @@
+# Main tasks for webserver role
+---
+- name: Install web server packages
+  package:
+    name: "{{ webserver_packages }}"
+    state: present
+
+- name: Create document root
+  file:
+    path: "{{ document_root }}"
+    state: directory
+    owner: "{{ webserver_user }}"
+    group: "{{ webserver_group }}"
+    mode: "0755"
+
+- name: Deploy main configuration
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart nginx
+
+- name: Deploy site configuration
+  template:
+    src: site.conf.j2
+    dest: "/etc/nginx/sites-available/{{ server_name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable site
+  file:
+    src: "/etc/nginx/sites-available/{{ server_name }}"
+    dest: "/etc/nginx/sites-enabled/{{ server_name }}"
+    state: link
+  notify: Reload nginx
+
+- name: Start and enable nginx
+  service:
+    name: nginx
+    state: started
+    enabled: true

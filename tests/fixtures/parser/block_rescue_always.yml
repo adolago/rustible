@@ -1,0 +1,64 @@
+---
+# Block/rescue/always structure
+
+- name: Block with full error handling
+  block:
+    - name: Primary task 1
+      command: /bin/primary-task-1
+
+    - name: Primary task 2
+      command: /bin/primary-task-2
+
+    - name: Potentially failing task
+      command: /bin/risky-command
+
+  rescue:
+    - name: Rollback step 1
+      command: /bin/rollback-1
+
+    - name: Notify on failure
+      debug:
+        msg: "Block tasks failed, executed rescue"
+
+  always:
+    - name: Cleanup temp files
+      file:
+        path: /tmp/work
+        state: absent
+
+    - name: Log execution
+      debug:
+        msg: "Block execution completed"
+
+- name: Block with become and when
+  block:
+    - name: Privileged task
+      command: systemctl restart nginx
+  rescue:
+    - name: Emergency restart
+      command: systemctl restart nginx --force
+  always:
+    - name: Check status
+      command: systemctl status nginx
+  become: true
+  when: nginx_installed | default(false)
+
+- name: Nested blocks
+  block:
+    - name: Outer block task
+      debug:
+        msg: "Outer"
+
+    - name: Inner block
+      block:
+        - name: Inner block task
+          debug:
+            msg: "Inner"
+      rescue:
+        - name: Inner rescue
+          debug:
+            msg: "Inner rescue"
+  rescue:
+    - name: Outer rescue
+      debug:
+        msg: "Outer rescue"

@@ -1,0 +1,29 @@
+---
+# Extra variables file for integration testing
+app_name: "rustible-test-app"
+app_version: "2.5.0"
+app_environment: "testing"
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "testdb"
+  user: "testuser"
+
+web_config:
+  listen_port: 8080
+  workers: 4
+  timeout: 30
+
+feature_flags:
+  enable_caching: true
+  enable_logging: true
+  debug_mode: false
+
+servers:
+  - name: "server1"
+    role: "primary"
+  - name: "server2"
+    role: "replica"
+  - name: "server3"
+    role: "replica"

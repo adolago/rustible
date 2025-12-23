@@ -1,0 +1,78 @@
+---
+# Include/Import Playbook Compatibility Test
+# Tests: include_tasks, import_tasks, include_vars, include_role
+
+- name: Deploy using includes
+  hosts: all
+  gather_facts: true
+  become: true
+
+  vars:
+    environment: production
+    include_monitoring: true
+
+  vars_files:
+    - vars/common.yml
+    - "vars/{{ environment }}.yml"
+
+  pre_tasks:
+    - name: Include common variables
+      include_vars: vars/defaults.yml
+
+    - name: Include environment-specific vars
+      include_vars:
+        file: "vars/{{ ansible_os_family | lower }}.yml"
+        name: os_vars
+      when: ansible_os_family is defined
+
+  tasks:
+    # Static import - processed at parse time
+    - name: Import common setup tasks
+      import_tasks: tasks/common_setup.yml
+
+    # Dynamic include - processed at runtime
+    - name: Include web server tasks
+      include_tasks: tasks/webserver.yml
+      when: "'webservers' in group_names"
+
+    # Include with variables
+    - name: Include database tasks
+      include_tasks: tasks/database.yml
+      vars:
+        db_name: production
+        db_user: app_user
+      when: "'databases' in group_names"
+
+    # Include role dynamically
+    - name: Include monitoring role
+      include_role:
+        name: monitoring
+        tasks_from: agent
+      vars:
+        monitoring_server: "{{ groups['monitoring'][0] }}"
+      when: include_monitoring
+
+    # Import role statically
+    - name: Import security hardening
+      import_role:
+        name: security
+        tasks_from: basic
+
+    # Include tasks from a loop
+    - name: Include service-specific tasks
+      include_tasks: "tasks/{{ item }}.yml"
+      loop:
+        - nginx
+        - php
+        - redis
+      when: item in enabled_services | default(['nginx'])
+
+  post_tasks:
+    - name: Include verification tasks
+      include_tasks: tasks/verify.yml
+      vars:
+        verification_mode: full
+
+  handlers:
+    - name: Include handler file
+      import_tasks: handlers/main.yml

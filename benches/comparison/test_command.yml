@@ -1,0 +1,11 @@
+# Test command module SSH execution
+---
+- name: Command test
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Create marker file via command
+      command: "touch /tmp/rustible_ssh_test.txt"
+
+    - name: Write hostname to file
+      command: "sh -c 'hostname > /tmp/rustible_hostname.txt'"

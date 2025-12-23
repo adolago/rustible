@@ -1,0 +1,9 @@
+---
+# Alternate tasks file for tasks_from testing
+- name: Alternate task
+  debug:
+    msg: "Running alternate tasks from test_role"
+
+- name: Set alternate fact
+  set_fact:
+    alternate_tasks_run: true

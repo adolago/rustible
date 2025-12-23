@@ -1,0 +1,9 @@
+---
+# App role handlers
+- name: restart app
+  debug:
+    msg: "Handler: Restarting application {{ app_name }}"
+
+- name: reload app config
+  debug:
+    msg: "Handler: Reloading application configuration"

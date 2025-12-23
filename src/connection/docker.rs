@@ -441,10 +441,7 @@ impl Connection for DockerConnection {
 
     async fn stat(&self, path: &Path) -> ConnectionResult<FileStat> {
         // Use stat command to get file info
-        let command = format!(
-            "stat -c '%s|%a|%u|%g|%X|%Y|%F' {}",
-            path.display()
-        );
+        let command = format!("stat -c '%s|%a|%u|%g|%X|%Y|%F' {}", path.display());
         let result = self.execute(&command, None).await?;
 
         if !result.success {
@@ -552,9 +549,10 @@ pub async fn list_containers() -> ConnectionResult<Vec<ContainerInfo>> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let output = cmd.output().await.map_err(|e| {
-        ConnectionError::DockerError(format!("Failed to list containers: {}", e))
-    })?;
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| ConnectionError::DockerError(format!("Failed to list containers: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

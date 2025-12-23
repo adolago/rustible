@@ -1,0 +1,8 @@
+Unicode test content:
+English: Hello World
+Chinese: 你好世界
+Japanese: こんにちは世界
+Russian: Привет мир
+Arabic: مرحبا بالعالم
+Emoji: 🔐🔑🛡️✅❌
+Mathematical: ∑∏∫∂√∞

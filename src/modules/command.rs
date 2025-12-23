@@ -2,23 +2,61 @@
 //!
 //! This module executes commands directly without going through a shell.
 //! For shell commands (pipes, redirects, etc.), use the shell module.
+//!
+//! Supports both local execution (using std::process::Command) and remote
+//! execution via async connections (SSH, Docker, etc.).
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
+use crate::connection::{Connection, ExecuteOptions};
+use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 
 /// Module for executing commands directly
 pub struct CommandModule;
 
 impl CommandModule {
+    /// Build the command string from params (for display and remote execution)
+    fn get_command_string(&self, params: &ModuleParams) -> ModuleResult<String> {
+        let cmd = params.get_string("cmd")?;
+        let argv = params.get_vec_string("argv")?;
+
+        if let Some(argv) = argv {
+            if argv.is_empty() {
+                return Err(ModuleError::InvalidParameter(
+                    "argv cannot be empty".to_string(),
+                ));
+            }
+            // Join argv with proper escaping for shell
+            Ok(argv
+                .iter()
+                .map(|arg| shell_escape(arg))
+                .collect::<Vec<_>>()
+                .join(" "))
+        } else if let Some(cmd) = cmd {
+            if cmd.trim().is_empty() {
+                return Err(ModuleError::InvalidParameter(
+                    "cmd cannot be empty".to_string(),
+                ));
+            }
+            Ok(cmd)
+        } else {
+            Err(ModuleError::MissingParameter(
+                "Either 'cmd' or 'argv' must be provided".to_string(),
+            ))
+        }
+    }
+
+    /// Build a std::process::Command for local execution
     fn build_command(
         &self,
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<Command> {
-        let cmd = params.get_string_required("cmd")?;
+        let cmd = params.get_string("cmd")?;
         let argv = params.get_vec_string("argv")?;
 
         let mut command = if let Some(argv) = argv {
@@ -33,7 +71,7 @@ impl CommandModule {
                 cmd.args(&argv[1..]);
             }
             cmd
-        } else {
+        } else if let Some(cmd) = cmd {
             // Parse the command string into arguments
             let parts: Vec<&str> = cmd.split_whitespace().collect();
             if parts.is_empty() {
@@ -46,6 +84,10 @@ impl CommandModule {
                 cmd.args(&parts[1..]);
             }
             cmd
+        } else {
+            return Err(ModuleError::MissingParameter(
+                "Either 'cmd' or 'argv' must be provided".to_string(),
+            ));
         };
 
         // Set working directory
@@ -67,10 +109,55 @@ impl CommandModule {
         Ok(command)
     }
 
-    fn check_creates_removes(&self, params: &ModuleParams) -> ModuleResult<Option<ModuleOutput>> {
+    /// Build ExecuteOptions from params for remote execution
+    fn build_execute_options(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+    ) -> ModuleResult<ExecuteOptions> {
+        let mut options = ExecuteOptions::new();
+
+        // Set working directory
+        if let Some(chdir) = params.get_string("chdir")? {
+            options = options.with_cwd(chdir);
+        } else if let Some(ref work_dir) = context.work_dir {
+            options = options.with_cwd(work_dir.clone());
+        }
+
+        // Set environment variables
+        if let Some(serde_json::Value::Object(env)) = params.get("env") {
+            for (key, value) in env {
+                if let serde_json::Value::String(v) = value {
+                    options = options.with_env(key, v);
+                }
+            }
+        }
+
+        // Set timeout
+        if let Some(timeout) = params.get_i64("timeout")? {
+            if timeout > 0 {
+                options = options.with_timeout(timeout as u64);
+            }
+        }
+
+        // Handle privilege escalation from context
+        if context.r#become {
+            options.escalate = true;
+            options.escalate_user = context.become_user.clone();
+            options.escalate_method = context.become_method.clone();
+        }
+
+        Ok(options)
+    }
+
+    /// Check creates/removes conditions locally
+    fn check_creates_removes_local(
+        &self,
+        params: &ModuleParams,
+    ) -> ModuleResult<Option<ModuleOutput>> {
         // Check 'creates' - skip if file exists
         if let Some(creates) = params.get_string("creates")? {
-            if std::path::Path::new(&creates).exists() {
+            if Path::new(&creates).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' exists",
                     creates
@@ -80,7 +167,7 @@ impl CommandModule {
 
         // Check 'removes' - skip if file doesn't exist
         if let Some(removes) = params.get_string("removes")? {
-            if !std::path::Path::new(&removes).exists() {
+            if !Path::new(&removes).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' does not exist",
                     removes
@@ -90,6 +177,184 @@ impl CommandModule {
 
         Ok(None)
     }
+
+    /// Check creates/removes conditions on remote host
+    async fn check_creates_removes_remote(
+        &self,
+        params: &ModuleParams,
+        connection: &Arc<dyn Connection + Send + Sync>,
+    ) -> ModuleResult<Option<ModuleOutput>> {
+        // Check 'creates' - skip if file exists
+        if let Some(creates) = params.get_string("creates")? {
+            let exists = connection
+                .path_exists(Path::new(&creates))
+                .await
+                .unwrap_or(false);
+            if exists {
+                return Ok(Some(ModuleOutput::ok(format!(
+                    "Skipped, '{}' exists",
+                    creates
+                ))));
+            }
+        }
+
+        // Check 'removes' - skip if file doesn't exist
+        if let Some(removes) = params.get_string("removes")? {
+            let exists = connection
+                .path_exists(Path::new(&removes))
+                .await
+                .unwrap_or(false);
+            if !exists {
+                return Ok(Some(ModuleOutput::ok(format!(
+                    "Skipped, '{}' does not exist",
+                    removes
+                ))));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Execute command locally using std::process::Command
+    fn execute_local(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+    ) -> ModuleResult<ModuleOutput> {
+        // Check creates/removes conditions
+        if let Some(output) = self.check_creates_removes_local(params)? {
+            return Ok(output);
+        }
+
+        // In check mode, return what would happen
+        if context.check_mode {
+            let cmd = self.get_command_string(params)?;
+            return Ok(ModuleOutput::changed(format!("Would execute: {}", cmd)));
+        }
+
+        let mut command = self.build_command(params, context)?;
+        let cmd_display = self.get_command_string(params)?;
+
+        // Execute the command
+        let output = command.output().map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to execute '{}': {}", cmd_display, e))
+        })?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let rc = output.status.code().unwrap_or(-1);
+
+        // Check if command succeeded
+        let warn_on_stderr = params.get_bool_or("warn", true);
+
+        if output.status.success() {
+            let mut result =
+                ModuleOutput::changed(format!("Command '{}' executed successfully", cmd_display))
+                    .with_command_output(Some(stdout), Some(stderr.clone()), Some(rc));
+
+            if warn_on_stderr && !stderr.is_empty() {
+                result
+                    .data
+                    .insert("warnings".to_string(), serde_json::json!([stderr]));
+            }
+
+            Ok(result)
+        } else {
+            Err(ModuleError::CommandFailed {
+                code: rc,
+                message: if stderr.is_empty() { stdout } else { stderr },
+            })
+        }
+    }
+
+    /// Execute command on remote host using async connection
+    fn execute_remote(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+        connection: Arc<dyn Connection + Send + Sync>,
+    ) -> ModuleResult<ModuleOutput> {
+        // Use tokio runtime to execute async operations
+        let rt = tokio::runtime::Runtime::new().map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to create runtime: {}", e))
+        })?;
+
+        let params_clone = params.clone();
+        let check_mode = context.check_mode;
+        let cmd_display = self.get_command_string(params)?;
+        let options = self.build_execute_options(params, context)?;
+        let warn_on_stderr = params.get_bool_or("warn", true);
+
+        rt.block_on(async {
+            // Check creates/removes conditions on remote
+            if let Some(output) = self
+                .check_creates_removes_remote(&params_clone, &connection)
+                .await?
+            {
+                return Ok(output);
+            }
+
+            // In check mode, return what would happen
+            if check_mode {
+                return Ok(ModuleOutput::changed(format!(
+                    "Would execute: {}",
+                    cmd_display
+                )));
+            }
+
+            // Execute via connection
+            let result = connection
+                .execute(&cmd_display, Some(options))
+                .await
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!(
+                        "Failed to execute '{}': {}",
+                        cmd_display, e
+                    ))
+                })?;
+
+            if result.success {
+                let mut output = ModuleOutput::changed(format!(
+                    "Command '{}' executed successfully",
+                    cmd_display
+                ))
+                .with_command_output(
+                    Some(result.stdout.clone()),
+                    Some(result.stderr.clone()),
+                    Some(result.exit_code),
+                );
+
+                if warn_on_stderr && !result.stderr.is_empty() {
+                    output
+                        .data
+                        .insert("warnings".to_string(), serde_json::json!([result.stderr]));
+                }
+
+                Ok(output)
+            } else {
+                Err(ModuleError::CommandFailed {
+                    code: result.exit_code,
+                    message: if result.stderr.is_empty() {
+                        result.stdout
+                    } else {
+                        result.stderr
+                    },
+                })
+            }
+        })
+    }
+}
+
+/// Escape a string for use in shell commands
+fn shell_escape(s: &str) -> String {
+    // If the string contains no special characters, return as-is
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/')
+    {
+        return s.to_string();
+    }
+    // Otherwise, wrap in single quotes and escape any single quotes within
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 impl Module for CommandModule {
@@ -124,75 +389,26 @@ impl Module for CommandModule {
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
-        // Check creates/removes conditions
-        if let Some(output) = self.check_creates_removes(params)? {
-            return Ok(output);
-        }
-
-        // In check mode, return what would happen
-        if context.check_mode {
-            let cmd = params
-                .get_string("cmd")?
-                .unwrap_or_else(|| "command".to_string());
-            return Ok(ModuleOutput::changed(format!("Would execute: {}", cmd)));
-        }
-
-        let mut command = self.build_command(params, context)?;
-        let cmd_display = params
-            .get_string("cmd")?
-            .unwrap_or_else(|| "command".to_string());
-
-        // Execute the command
-        let output = command.output().map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to execute '{}': {}", cmd_display, e))
-        })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let rc = output.status.code().unwrap_or(-1);
-
-        // Check if command succeeded
-        let warn_on_stderr = params.get_bool_or("warn", true);
-
-        if output.status.success() {
-            let mut result =
-                ModuleOutput::changed(format!("Command '{}' executed successfully", cmd_display))
-                    .with_command_output(Some(stdout), Some(stderr.clone()), Some(rc));
-
-            if warn_on_stderr && !stderr.is_empty() {
-                result
-                    .data
-                    .insert("warnings".to_string(), serde_json::json!([stderr]));
-            }
-
-            Ok(result)
+        // Dispatch to local or remote execution based on connection
+        if let Some(ref connection) = context.connection {
+            self.execute_remote(params, context, connection.clone())
         } else {
-            Err(ModuleError::CommandFailed {
-                code: rc,
-                message: if stderr.is_empty() { stdout } else { stderr },
-            })
+            self.execute_local(params, context)
         }
     }
 
     fn check(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<ModuleOutput> {
-        // Check creates/removes conditions
-        if let Some(output) = self.check_creates_removes(params)? {
-            return Ok(output);
-        }
-
-        let cmd = params
-            .get_string("cmd")?
-            .unwrap_or_else(|| "command".to_string());
-        let _ = context;
-
-        Ok(ModuleOutput::changed(format!("Would execute: {}", cmd))
-            .with_diff(Diff::new("(none)", format!("Execute: {}", cmd))))
+        // For check mode, we run execute with check_mode=true in context
+        // The execute methods already handle check_mode internally
+        let check_context = ModuleContext {
+            check_mode: true,
+            ..context.clone()
+        };
+        self.execute(params, &check_context)
     }
 
     fn diff(&self, params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<Option<Diff>> {
-        let cmd = params
-            .get_string("cmd")?
-            .unwrap_or_else(|| "command".to_string());
+        let cmd = self.get_command_string(params)?;
         Ok(Some(Diff::new("(none)", format!("Execute: {}", cmd))))
     }
 }

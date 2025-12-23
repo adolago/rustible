@@ -1,0 +1,17 @@
+# Benchmark Inventory - Compatible with both Ansible and Rustible
+all:
+  hosts:
+    ssh-target-401:
+      ansible_host: 192.168.178.141
+    ssh-target-402:
+      ansible_host: 192.168.178.142
+    ssh-target-403:
+      ansible_host: 192.168.178.143
+    ssh-target-404:
+      ansible_host: 192.168.178.144
+    ssh-target-405:
+      ansible_host: 192.168.178.145
+  vars:
+    ansible_user: testuser
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+    ansible_python_interpreter: /usr/bin/python3

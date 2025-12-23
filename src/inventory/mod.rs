@@ -261,7 +261,10 @@ impl Inventory {
     }
 
     /// Load variables from a directory (multiple files merged)
-    fn load_vars_from_directory(&self, path: &Path) -> InventoryResult<IndexMap<String, serde_yaml::Value>> {
+    fn load_vars_from_directory(
+        &self,
+        path: &Path,
+    ) -> InventoryResult<IndexMap<String, serde_yaml::Value>> {
         let mut merged_vars = IndexMap::new();
 
         let mut entries: Vec<_> = std::fs::read_dir(path)?.filter_map(|e| e.ok()).collect();
@@ -324,7 +327,10 @@ impl Inventory {
 
     /// Parse a YAML group definition
     fn parse_yaml_group(&mut self, name: &str, value: &serde_yaml::Value) -> InventoryResult<()> {
-        let group = self.groups.entry(name.to_string()).or_insert_with(|| Group::new(name));
+        let group = self
+            .groups
+            .entry(name.to_string())
+            .or_insert_with(|| Group::new(name));
 
         if let serde_yaml::Value::Mapping(map) = value {
             // Parse hosts
@@ -473,7 +479,9 @@ impl Inventory {
                 if key == "_meta" {
                     continue;
                 }
-                self.groups.entry(key.clone()).or_insert_with(|| Group::new(key));
+                self.groups
+                    .entry(key.clone())
+                    .or_insert_with(|| Group::new(key));
             }
 
             // Second pass: populate groups and hosts
@@ -1131,10 +1139,7 @@ fn json_to_yaml(value: &serde_json::Value) -> serde_yaml::Value {
         serde_json::Value::Object(obj) => {
             let mut map = serde_yaml::Mapping::new();
             for (k, v) in obj {
-                map.insert(
-                    serde_yaml::Value::String(k.clone()),
-                    json_to_yaml(v),
-                );
+                map.insert(serde_yaml::Value::String(k.clone()), json_to_yaml(v));
             }
             serde_yaml::Value::Mapping(map)
         }
@@ -1143,7 +1148,12 @@ fn json_to_yaml(value: &serde_json::Value) -> serde_yaml::Value {
 
 impl std::fmt::Display for Inventory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Inventory ({} hosts, {} groups)", self.hosts.len(), self.groups.len())?;
+        writeln!(
+            f,
+            "Inventory ({} hosts, {} groups)",
+            self.hosts.len(),
+            self.groups.len()
+        )?;
 
         for group in self.groups.values() {
             if group.hosts.is_empty() && group.children.is_empty() {

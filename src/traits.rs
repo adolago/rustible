@@ -92,23 +92,17 @@ pub trait Module: Send + Sync + Debug {
     /// # Returns
     ///
     /// A `ModuleResult` indicating success/failure and whether changes were made.
-    async fn execute(
-        &self,
-        args: &dyn ModuleArgs,
-        ctx: &ExecutionContext,
-    ) -> Result<ModuleResult>;
+    async fn execute(&self, args: &dyn ModuleArgs, ctx: &ExecutionContext) -> Result<ModuleResult>;
 
     /// Performs a dry-run of the module (check mode).
     ///
     /// Should return what would happen without making actual changes.
-    async fn check(
-        &self,
-        args: &dyn ModuleArgs,
-        ctx: &ExecutionContext,
-    ) -> Result<ModuleResult> {
+    async fn check(&self, args: &dyn ModuleArgs, ctx: &ExecutionContext) -> Result<ModuleResult> {
         // Default implementation just reports what would be checked
         let _ = (args, ctx);
-        Ok(ModuleResult::skipped("Check mode not implemented for this module"))
+        Ok(ModuleResult::skipped(
+            "Check mode not implemented for this module",
+        ))
     }
 
     /// Returns the diff between current and desired state.
@@ -682,7 +676,11 @@ pub trait TemplateFilter: Send + Sync {
     fn name(&self) -> &str;
 
     /// Applies the filter to a value.
-    fn apply(&self, value: &serde_json::Value, args: &[serde_json::Value]) -> Result<serde_json::Value>;
+    fn apply(
+        &self,
+        value: &serde_json::Value,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value>;
 }
 
 /// Custom test for template engine.

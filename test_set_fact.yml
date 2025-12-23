@@ -1,0 +1,44 @@
+---
+- name: Test set_fact module
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Set a simple fact
+      set_fact:
+        my_var: "hello world"
+        my_number: 42
+
+    - name: Display the facts
+      debug:
+        msg: "my_var={{ my_var }}, my_number={{ my_number }}"
+
+    - name: Set a complex fact
+      set_fact:
+        my_dict:
+          key1: value1
+          key2: value2
+        my_list:
+          - item1
+          - item2
+          - item3
+
+    - name: Display complex facts
+      debug:
+        var: my_dict
+
+    - name: Display list fact
+      debug:
+        var: my_list
+
+    - name: Use fact in another task
+      debug:
+        msg: "The answer is {{ my_number }}"
+
+    - name: Set cacheable fact
+      set_fact:
+        cached_var: "cached_value"
+        cacheable: true
+
+    - name: Display cacheable fact
+      debug:
+        msg: "Cached: {{ cached_var }}"

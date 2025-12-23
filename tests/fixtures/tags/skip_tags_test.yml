@@ -1,0 +1,37 @@
+---
+- name: Play for skip-tags testing
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Install packages
+      debug:
+        msg: "Installing packages"
+      tags:
+        - install
+
+    - name: Configure service
+      debug:
+        msg: "Configuring"
+      tags:
+        - configure
+
+    - name: Slow tests
+      debug:
+        msg: "Running slow tests"
+      tags:
+        - tests
+        - slow
+
+    - name: Fast tests
+      debug:
+        msg: "Running fast tests"
+      tags:
+        - tests
+        - fast
+
+    - name: Cleanup
+      debug:
+        msg: "Cleaning up"
+      tags:
+        - cleanup
+        - always

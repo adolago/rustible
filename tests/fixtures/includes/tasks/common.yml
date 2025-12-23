@@ -1,0 +1,9 @@
+---
+# Common tasks to be included
+- name: Set common variable
+  set_fact:
+    common_var: "included_common"
+
+- name: Debug common message
+  debug:
+    msg: "Common tasks included successfully"

@@ -1,0 +1,68 @@
+---
+# Example playbook demonstrating the debug module
+- name: Debug Module Examples
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    app_name: "MyApp"
+    app_version: "1.2.3"
+    app_config:
+      database:
+        host: localhost
+        port: 5432
+        name: mydb
+      cache:
+        enabled: true
+        ttl: 3600
+    deployment_servers:
+      - web1.example.com
+      - web2.example.com
+      - web3.example.com
+
+  tasks:
+    - name: Print a simple debug message
+      debug:
+        msg: "Hello from Rustible debug module!"
+
+    - name: Print a variable value
+      debug:
+        var: app_name
+
+    - name: Print multiple pieces of information in a message
+      debug:
+        msg: "Deploying {{ app_name }} version {{ app_version }}"
+
+    - name: Print a complex object
+      debug:
+        var: app_config
+
+    - name: Print a nested variable
+      debug:
+        var: app_config.database.host
+
+    - name: Print an array
+      debug:
+        var: deployment_servers
+
+    - name: Print an undefined variable (demonstrates error handling)
+      debug:
+        var: undefined_variable
+
+    - name: Verbose debug message (only shown at -vv or higher)
+      debug:
+        msg: "This message requires verbosity level 2"
+        verbosity: 2
+
+    - name: Use debug in check mode
+      debug:
+        msg: "This works the same in check mode and normal mode"
+
+    - name: Debug with JSON formatting
+      debug:
+        var: app_config.cache
+
+    - name: Print status message
+      debug:
+        msg: "All debug tests completed successfully!"

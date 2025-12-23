@@ -44,14 +44,8 @@ impl LocalConnection {
     /// Build the command with options
     fn build_command(&self, command: &str, options: &ExecuteOptions) -> Command {
         let mut cmd = if options.escalate {
-            let escalate_method = options
-                .escalate_method
-                .as_deref()
-                .unwrap_or("sudo");
-            let escalate_user = options
-                .escalate_user
-                .as_deref()
-                .unwrap_or("root");
+            let escalate_method = options.escalate_method.as_deref().unwrap_or("sudo");
+            let escalate_user = options.escalate_user.as_deref().unwrap_or("root");
 
             match escalate_method {
                 "sudo" => {
@@ -70,7 +64,11 @@ impl LocalConnection {
                 }
                 "doas" => {
                     let mut c = Command::new("doas");
-                    c.arg("-u").arg(escalate_user).arg("sh").arg("-c").arg(command);
+                    c.arg("-u")
+                        .arg(escalate_user)
+                        .arg("sh")
+                        .arg("-c")
+                        .arg(command);
                     c
                 }
                 _ => {
@@ -230,8 +228,12 @@ impl Connection for LocalConnection {
 
         // Set owner/group if specified
         if options.owner.is_some() || options.group.is_some() {
-            self.set_ownership(remote_path, options.owner.as_deref(), options.group.as_deref())
-                .await?;
+            self.set_ownership(
+                remote_path,
+                options.owner.as_deref(),
+                options.group.as_deref(),
+            )
+            .await?;
         }
 
         Ok(())
@@ -283,8 +285,12 @@ impl Connection for LocalConnection {
 
         // Set owner/group if specified
         if options.owner.is_some() || options.group.is_some() {
-            self.set_ownership(remote_path, options.owner.as_deref(), options.group.as_deref())
-                .await?;
+            self.set_ownership(
+                remote_path,
+                options.owner.as_deref(),
+                options.group.as_deref(),
+            )
+            .await?;
         }
 
         Ok(())
@@ -338,11 +344,7 @@ impl Connection for LocalConnection {
 
     async fn stat(&self, path: &Path) -> ConnectionResult<FileStat> {
         let metadata = fs::metadata(path).map_err(|e| {
-            ConnectionError::TransferFailed(format!(
-                "Failed to stat {}: {}",
-                path.display(),
-                e
-            ))
+            ConnectionError::TransferFailed(format!("Failed to stat {}: {}", path.display(), e))
         })?;
 
         Ok(FileStat {
@@ -445,10 +447,7 @@ mod tests {
     async fn test_local_execute_with_env() {
         let conn = LocalConnection::new();
         let options = ExecuteOptions::new().with_env("TEST_VAR", "test_value");
-        let result = conn
-            .execute("echo $TEST_VAR", Some(options))
-            .await
-            .unwrap();
+        let result = conn.execute("echo $TEST_VAR", Some(options)).await.unwrap();
 
         assert!(result.success);
         assert!(result.stdout.contains("test_value"));

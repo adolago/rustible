@@ -1,0 +1,25 @@
+---
+# Block with error info access in rescue
+- name: Block error info test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Block with error capture
+      block:
+        - name: Task that fails
+          command: /bin/false
+          register: failed_command
+      rescue:
+        - name: Access ansible_failed_task
+          debug:
+            msg: "Failed task name: {{ ansible_failed_task.name }}"
+        - name: Access ansible_failed_result
+          debug:
+            msg: "Failed result: {{ ansible_failed_result }}"
+        - name: Log failure details
+          debug:
+            msg: "Error occurred in task '{{ ansible_failed_task.name }}'"
+      always:
+        - name: Cleanup regardless
+          debug:
+            msg: "Cleanup complete"

@@ -1,0 +1,21 @@
+---
+- name: Test group module
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Create a test group
+      group:
+        name: testgroup123
+        state: present
+        gid: 9999
+
+    - name: Verify group exists (idempotent)
+      group:
+        name: testgroup123
+        state: present
+        gid: 9999
+
+    - name: Remove the test group
+      group:
+        name: testgroup123
+        state: absent

@@ -1,0 +1,21 @@
+# Benchmark 01: Simple Command Execution
+# Tests: SSH connection overhead, basic command execution
+---
+- name: Simple benchmark - Echo commands
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Echo test 1
+      command: echo "Hello from {{ inventory_hostname }}"
+
+    - name: Echo test 2
+      command: echo "Benchmark test"
+
+    - name: Echo test 3
+      command: hostname
+
+    - name: Echo test 4
+      command: date
+
+    - name: Echo test 5
+      command: whoami

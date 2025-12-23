@@ -1,0 +1,7 @@
+---
+# Variables for conditional include testing
+conditional_var: "loaded"
+conditional_list:
+  - a
+  - b
+  - c

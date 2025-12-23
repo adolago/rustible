@@ -1,0 +1,41 @@
+# Test playbook for delegation edge cases
+---
+- name: Delegation edge cases test
+  hosts: webservers
+  gather_facts: false
+  tasks:
+    - name: Delegate to self
+      debug:
+        msg: "Delegating to self: {{ inventory_hostname }}"
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Delegate with ignore_errors
+      command: /nonexistent/command
+      delegate_to: db1
+      ignore_errors: true
+
+    - name: Delegate with when condition
+      debug:
+        msg: "Conditional delegation"
+      delegate_to: localhost
+      when: true
+
+    - name: Delegate to undefined host (should fail gracefully)
+      debug:
+        msg: "This might fail"
+      delegate_to: nonexistent_host
+      ignore_errors: true
+
+    - name: Multiple consecutive delegations
+      debug:
+        msg: "First delegation"
+      delegate_to: db1
+
+    - name: Back to normal
+      debug:
+        msg: "No delegation"
+
+    - name: Delegate again
+      debug:
+        msg: "Second delegation"
+      delegate_to: localhost

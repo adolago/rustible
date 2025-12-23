@@ -1,0 +1,23 @@
+---
+- name: Play with always tag
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Always runs task
+      debug:
+        msg: "This always runs"
+      tags:
+        - always
+
+    - name: Regular tagged task
+      debug:
+        msg: "Only runs when install tag specified"
+      tags:
+        - install
+
+    - name: Another always task
+      debug:
+        msg: "This also always runs"
+      tags:
+        - always
+        - cleanup

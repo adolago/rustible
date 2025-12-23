@@ -56,11 +56,7 @@ impl ChaosTestConfig {
 
         let hosts = env::var("RUSTIBLE_TEST_SSH_HOSTS")
             .map(|h| h.split(',').map(String::from).collect())
-            .unwrap_or_else(|_| {
-                (141..=145)
-                    .map(|i| format!("192.168.178.{}", i))
-                    .collect()
-            });
+            .unwrap_or_else(|_| (141..=145).map(|i| format!("192.168.178.{}", i)).collect());
 
         Self {
             enabled,
@@ -87,9 +83,9 @@ impl ChaosTestConfig {
 /// A wrapper connection that introduces chaos (failures, delays)
 pub struct ChaosConnection<C: rustible::connection::Connection> {
     inner: C,
-    failure_rate: f64,          // 0.0 to 1.0
-    latency_ms: Option<u64>,    // Additional latency per operation
-    fail_after_n: Option<u32>,  // Fail after N successful operations
+    failure_rate: f64,         // 0.0 to 1.0
+    latency_ms: Option<u64>,   // Additional latency per operation
+    fail_after_n: Option<u32>, // Fail after N successful operations
     operation_count: AtomicUsize,
     should_fail_next: AtomicBool,
 }
@@ -281,10 +277,7 @@ async fn test_random_connection_failures_10_percent() {
     let total_ops = 50;
 
     for i in 0..total_ops {
-        match chaos_conn
-            .execute(&format!("echo test_{}", i), None)
-            .await
-        {
+        match chaos_conn.execute(&format!("echo test_{}", i), None).await {
             Ok(result) if result.success => successes += 1,
             _ => failures += 1,
         }
@@ -339,10 +332,7 @@ async fn test_random_connection_failures_30_percent() {
     let total_ops = 50;
 
     for i in 0..total_ops {
-        match chaos_conn
-            .execute(&format!("echo test_{}", i), None)
-            .await
-        {
+        match chaos_conn.execute(&format!("echo test_{}", i), None).await {
             Ok(result) if result.success => successes += 1,
             _ => failures += 1,
         }
@@ -498,9 +488,7 @@ async fn test_fail_after_n_operations() {
     let mut results = vec![];
 
     for i in 0..10 {
-        let result = chaos_conn
-            .execute(&format!("echo op_{}", i), None)
-            .await;
+        let result = chaos_conn.execute(&format!("echo op_{}", i), None).await;
         results.push(result.is_ok());
     }
 
@@ -510,14 +498,8 @@ async fn test_fail_after_n_operations() {
 
     println!("Results: {:?}", results);
 
-    assert!(
-        successes.iter().all(|&&s| s),
-        "First 5 should succeed"
-    );
-    assert!(
-        failures.iter().all(|&&s| !s),
-        "Remaining should fail"
-    );
+    assert!(successes.iter().all(|&&s| s), "First 5 should succeed");
+    assert!(failures.iter().all(|&&s| !s), "Remaining should fail");
 
     chaos_conn.close().await.ok();
 }
@@ -557,10 +539,7 @@ async fn test_recovery_after_forced_failure() {
             conn.close().await.ok();
             // Try to use closed connection - should fail
             let result_after_close = conn.execute("echo 'after close'", None).await;
-            assert!(
-                result_after_close.is_err(),
-                "Should fail after close"
-            );
+            assert!(result_after_close.is_err(), "Should fail after close");
         } else {
             assert!(result.is_ok(), "Normal operation should succeed");
             conn.close().await.ok();
@@ -648,7 +627,10 @@ async fn test_concurrent_operations_with_failures() {
     // With 20% per-op failure rate across 3 hosts and 10 ops each,
     // expect roughly 15-25% overall failure
     assert!(failures >= 1, "Should have some failures");
-    assert!(successes >= total * 60 / 100, "Should have majority success");
+    assert!(
+        successes >= total * 60 / 100,
+        "Should have majority success"
+    );
 }
 
 // =============================================================================
@@ -870,7 +852,10 @@ async fn test_always_block_guaranteed_execution() {
         .expect("Failed to connect");
 
     let verify = conn
-        .execute("cat /tmp/always_marker 2>/dev/null || echo 'NOT_FOUND'", None)
+        .execute(
+            "cat /tmp/always_marker 2>/dev/null || echo 'NOT_FOUND'",
+            None,
+        )
         .await
         .unwrap();
 

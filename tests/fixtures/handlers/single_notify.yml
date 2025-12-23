@@ -1,0 +1,17 @@
+---
+# Single task notifies single handler
+- name: Test single notification
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Update configuration
+      copy:
+        src: config.conf
+        dest: /etc/app/config.conf
+      notify: restart service
+
+  handlers:
+    - name: restart service
+      debug:
+        msg: "Service restarted"

@@ -1,0 +1,68 @@
+# Full Rustible Configuration File (YAML format)
+# Used for testing complete configuration loading
+
+defaults:
+  inventory: /etc/rustible/hosts
+  remote_user: yaml_user
+  forks: 25
+  module_name: command
+  host_key_checking: false
+  timeout: 180
+  gathering: true
+  transport: ssh
+  hash_behaviour: replace
+  retry_files_enabled: false
+  roles_path:
+    - /opt/yaml/roles
+    - /usr/share/yaml/roles
+  collections_path:
+    - /opt/yaml/collections
+  strategy: linear
+
+connection:
+  pipelining: false
+  control_path: /tmp/yaml-cp/%r@%h:%p
+  control_master: auto
+  control_persist: 180
+  ssh_executable: /usr/bin/ssh
+  scp_if_ssh: false
+  sftp_batch_mode: true
+
+privilege_escalation:
+  become: true
+  become_method: doas
+  become_user: admin
+  become_ask_pass: true
+
+ssh:
+  ssh_args:
+    - "-o"
+    - "StrictHostKeyChecking=accept-new"
+  ssh_common_args:
+    - "-C"
+  retries: 3
+  pipelining: false
+
+colors:
+  enabled: true
+  ok: cyan
+  changed: magenta
+  error: bright_red
+
+logging:
+  log_level: info
+  log_timestamp: true
+
+vault:
+  password_file: /etc/rustible/yaml_vault_pass
+
+galaxy:
+  server: https://yaml.galaxy.example.com
+  ignore_certs: true
+
+module_paths:
+  - /opt/yaml/modules
+
+environment:
+  CONFIG_FORMAT: yaml
+  TEST_VAR: yaml_test

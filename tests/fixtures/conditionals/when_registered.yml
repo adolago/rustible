@@ -1,0 +1,48 @@
+# Test playbook for when conditions with registered variables
+---
+- name: Test registered variables in when conditions
+  hosts: all
+  gather_facts: false
+  vars:
+    should_run_command: true
+
+  tasks:
+    - name: First task that registers result
+      debug:
+        msg: "First task running"
+      register: first_result
+
+    - name: Should run - check if result is defined
+      debug:
+        msg: "First result is defined"
+      when: first_result is defined
+
+    - name: Should run - check if result changed
+      debug:
+        msg: "First result may have changed"
+      when: first_result is defined
+
+    - name: Set a fact with value
+      set_fact:
+        my_status: success
+        my_count: 5
+
+    - name: Should run - check set_fact value
+      debug:
+        msg: "Status is success"
+      when: my_status == 'success'
+
+    - name: Should run - check numeric set_fact
+      debug:
+        msg: "Count is 5"
+      when: my_count == 5
+
+    - name: Skip command task
+      command: echo "hello"
+      register: cmd_result
+      when: false
+
+    - name: Should run - check skipped result
+      debug:
+        msg: "Command was skipped"
+      when: cmd_result is not defined or cmd_result.skipped | default(false)

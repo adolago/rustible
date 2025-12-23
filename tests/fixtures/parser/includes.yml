@@ -1,0 +1,55 @@
+---
+# Playbook with include/import directives
+- name: Play with includes
+  hosts: all
+  tasks:
+    # Include tasks (dynamic)
+    - name: Include common setup
+      include_tasks: tasks/common.yml
+
+    - name: Include with vars
+      include_tasks: tasks/configure.yml
+      vars:
+        config_file: /etc/myapp.conf
+        config_mode: "0644"
+
+    # Import tasks (static)
+    - name: Import base tasks
+      import_tasks: tasks/base.yml
+
+    - name: Conditional import
+      import_tasks: tasks/debian.yml
+      when: ansible_os_family == "Debian"
+
+    # Include role (dynamic)
+    - name: Include nginx role
+      include_role:
+        name: nginx
+      vars:
+        nginx_port: 8080
+
+    - name: Include role with options
+      include_role:
+        name: application
+        tasks_from: deploy.yml
+        handlers_from: main.yml
+        defaults_from: production.yml
+      when: deploy_application | bool
+
+    # Import role (static)
+    - name: Import common role
+      import_role:
+        name: common
+
+    # Include vars
+    - name: Include environment variables
+      include_vars: "vars/{{ env }}.yml"
+
+    - name: Include vars with options
+      include_vars:
+        dir: vars/
+        files_matching: "*.yml"
+        extensions:
+          - yml
+          - yaml
+        ignore_unknown_extensions: true

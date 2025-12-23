@@ -1,0 +1,21 @@
+---
+# Multiple plays playbook
+- name: First play
+  hosts: webservers
+  tasks:
+    - name: Task in first play
+      debug:
+        msg: "First play task"
+
+- name: Second play
+  hosts: databases
+  tasks:
+    - name: Task in second play
+      debug:
+        msg: "Second play task"
+
+- name: Third play
+  hosts: all
+  tasks:
+    - name: Task in third play
+      ping:

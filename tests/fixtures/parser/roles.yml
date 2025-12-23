@@ -1,0 +1,63 @@
+---
+# Playbook with various role syntax options
+- name: Play with roles
+  hosts: all
+  roles:
+    # Simple role name
+    - common
+
+    # Role with explicit 'role' key
+    - role: nginx
+
+    # Role with variables
+    - role: postgresql
+      vars:
+        postgresql_version: "14"
+        postgresql_data_dir: /var/lib/postgresql/14/data
+
+    # Role with tags
+    - role: security
+      tags:
+        - security
+        - hardening
+
+    # Role with when condition
+    - role: monitoring
+      when: enable_monitoring | default(true)
+
+    # Role with become
+    - role: firewall
+      become: true
+      become_user: root
+
+    # Role with delegate_to
+    - role: load_balancer
+      delegate_to: lb.example.com
+
+    # Role with all options
+    - role: application
+      vars:
+        app_port: 8080
+        app_workers: 4
+      tags:
+        - app
+        - deploy
+      when: deploy_app | bool
+      become: true
+      become_method: sudo
+      become_user: appuser
+
+    # Role with tasks_from, handlers_from, etc.
+    - role: common
+      tasks_from: setup.yml
+      handlers_from: main.yml
+      vars_from: production.yml
+      defaults_from: main.yml
+
+    # Role allowing duplicates
+    - role: post_setup
+      allow_duplicates: true
+
+    # Role with public flag
+    - role: shared_vars
+      public: true

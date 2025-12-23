@@ -1,0 +1,40 @@
+---
+# Block with handler notifications
+- name: Block handler notify test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Block with notifications
+      block:
+        - name: Task that notifies
+          debug:
+            msg: "Making a change"
+          changed_when: true
+          notify: block handler
+
+        - name: Another notifying task
+          debug:
+            msg: "Another change"
+          changed_when: true
+          notify: block handler
+
+      rescue:
+        - name: Rescue notification
+          debug:
+            msg: "Notifying from rescue"
+          changed_when: true
+          notify: rescue handler
+
+      always:
+        - name: Always cleanup
+          debug:
+            msg: "Cleanup"
+
+  handlers:
+    - name: block handler
+      debug:
+        msg: "Block handler executed"
+
+    - name: rescue handler
+      debug:
+        msg: "Rescue handler executed"

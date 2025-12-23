@@ -1,0 +1,15 @@
+# Minimal Playbook - The simplest valid playbook
+#
+# This playbook demonstrates the absolute minimum required structure for a
+# Rustible playbook. It is useful for:
+# - Testing playbook parsing
+# - Verifying basic executor functionality
+# - Smoke tests
+---
+- name: Minimal Test Play
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Print hello message
+      debug:
+        msg: "Hello, World!"

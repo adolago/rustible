@@ -1,0 +1,30 @@
+# Test playbook for handlers with delegate_to
+---
+- name: Handler delegation test
+  hosts: webservers
+  gather_facts: false
+  tasks:
+    - name: Task that notifies delegated handler
+      copy:
+        src: test.conf
+        dest: /etc/test.conf
+      notify: restart delegated service
+      delegate_to: db1
+
+    - name: Task with notify and delegate
+      debug:
+        msg: "Notify from delegated task"
+      delegate_to: localhost
+      notify: local handler
+      changed_when: true
+
+  handlers:
+    - name: restart delegated service
+      debug:
+        msg: "Handler running on delegate"
+      delegate_to: db1
+
+    - name: local handler
+      debug:
+        msg: "Local handler executed"
+      delegate_to: localhost

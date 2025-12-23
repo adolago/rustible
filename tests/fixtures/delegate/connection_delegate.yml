@@ -1,0 +1,30 @@
+# Test playbook for connection handling with delegate_to
+---
+- name: Connection delegation test
+  hosts: webservers
+  gather_facts: false
+  vars:
+    delegate_target: db1
+  tasks:
+    - name: Delegate with connection type
+      debug:
+        msg: "Using connection for delegation"
+      delegate_to: localhost
+      connection: local
+
+    - name: Delegate to SSH host
+      debug:
+        msg: "SSH delegation"
+      delegate_to: "{{ delegate_target }}"
+
+    - name: Delegate with become
+      command: whoami
+      delegate_to: db1
+      become: true
+      become_user: root
+
+    - name: Delegate with environment
+      command: env
+      delegate_to: localhost
+      environment:
+        DELEGATED_VAR: "delegated_value"

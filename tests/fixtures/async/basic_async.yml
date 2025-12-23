@@ -1,0 +1,22 @@
+---
+# Basic async task execution
+- name: Basic async operations
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Run long command async
+      command: sleep 5
+      async: 10
+      poll: 2
+      register: async_result
+
+    - name: Fire and forget task
+      command: /usr/bin/background-process
+      async: 3600
+      poll: 0
+
+    - name: Async with immediate return
+      shell: echo "started" && sleep 3 && echo "finished"
+      async: 30
+      poll: 5
+      register: shell_async

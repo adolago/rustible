@@ -1,12 +1,14 @@
 //! Service module - Service management
 //!
 //! This module manages system services using systemd (or other init systems).
+//! It supports both local and remote execution via the connection interface.
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
-use std::process::Command;
+use crate::connection::{CommandResult, Connection, ExecuteOptions};
+use std::sync::Arc;
 
 /// Supported init systems
 #[derive(Debug, Clone, PartialEq)]
@@ -19,42 +21,56 @@ pub enum InitSystem {
 }
 
 impl InitSystem {
-    fn detect() -> Option<Self> {
+    /// Detect the init system on a target via connection
+    async fn detect_async(connection: &dyn Connection) -> Option<Self> {
         // Check for systemd first (most common)
-        if std::path::Path::new("/run/systemd/system").exists() {
-            return Some(InitSystem::Systemd);
+        let result = connection
+            .execute("test -d /run/systemd/system && echo yes || echo no", None)
+            .await;
+        if let Ok(result) = result {
+            if result.stdout.trim() == "yes" {
+                return Some(InitSystem::Systemd);
+            }
         }
 
-        // Check for other init systems
-        if Command::new("which")
-            .arg("systemctl")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return Some(InitSystem::Systemd);
+        // Check for systemctl
+        let result = connection
+            .execute("which systemctl >/dev/null 2>&1 && echo yes || echo no", None)
+            .await;
+        if let Ok(result) = result {
+            if result.stdout.trim() == "yes" {
+                return Some(InitSystem::Systemd);
+            }
         }
 
-        if Command::new("which")
-            .arg("rc-service")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return Some(InitSystem::OpenRC);
+        // Check for OpenRC
+        let result = connection
+            .execute("which rc-service >/dev/null 2>&1 && echo yes || echo no", None)
+            .await;
+        if let Ok(result) = result {
+            if result.stdout.trim() == "yes" {
+                return Some(InitSystem::OpenRC);
+            }
         }
 
-        if Command::new("which")
-            .arg("launchctl")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return Some(InitSystem::Launchd);
+        // Check for launchctl (macOS)
+        let result = connection
+            .execute("which launchctl >/dev/null 2>&1 && echo yes || echo no", None)
+            .await;
+        if let Ok(result) = result {
+            if result.stdout.trim() == "yes" {
+                return Some(InitSystem::Launchd);
+            }
         }
 
-        if std::path::Path::new("/etc/init.d").exists() {
-            return Some(InitSystem::SysV);
+        // Check for SysV init scripts
+        let result = connection
+            .execute("test -d /etc/init.d && echo yes || echo no", None)
+            .await;
+        if let Ok(result) = result {
+            if result.stdout.trim() == "yes" {
+                return Some(InitSystem::SysV);
+            }
         }
 
         None
@@ -89,117 +105,136 @@ impl ServiceState {
 pub struct ServiceModule;
 
 impl ServiceModule {
-    fn systemd_is_active(service: &str) -> ModuleResult<bool> {
-        let output = Command::new("systemctl")
-            .args(["is-active", service])
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to check service status: {}", e))
-            })?;
-
-        Ok(output.status.success())
-    }
-
-    fn systemd_is_enabled(service: &str) -> ModuleResult<bool> {
-        let output = Command::new("systemctl")
-            .args(["is-enabled", service])
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!(
-                    "Failed to check service enabled status: {}",
-                    e
-                ))
-            })?;
-
-        Ok(output.status.success())
-    }
-
-    fn systemd_action(service: &str, action: &str) -> ModuleResult<(bool, String, String)> {
-        let output = Command::new("systemctl")
-            .args([action, service])
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to {} service: {}", action, e))
-            })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        Ok((output.status.success(), stdout, stderr))
-    }
-
-    fn systemd_daemon_reload() -> ModuleResult<()> {
-        let output = Command::new("systemctl")
-            .arg("daemon-reload")
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to reload systemd: {}", e))
-            })?;
-
-        if output.status.success() {
-            Ok(())
+    /// Build execute options with privilege escalation if needed
+    fn build_execute_options(context: &ModuleContext) -> Option<ExecuteOptions> {
+        if context.r#become {
+            Some(ExecuteOptions {
+                escalate: true,
+                escalate_user: context.become_user.clone(),
+                escalate_method: context.become_method.clone(),
+                ..Default::default()
+            })
         } else {
-            Err(ModuleError::ExecutionFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ))
+            None
         }
     }
 
-    fn sysv_is_active(service: &str) -> ModuleResult<bool> {
-        let output = Command::new("service")
-            .args([service, "status"])
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to check service status: {}", e))
-            })?;
-
-        Ok(output.status.success())
+    /// Execute a command via connection
+    async fn execute_command(
+        connection: &dyn Connection,
+        command: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<CommandResult> {
+        let options = Self::build_execute_options(context);
+        connection.execute(command, options).await.map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Connection execute failed: {}", e))
+        })
     }
 
-    fn sysv_action(service: &str, action: &str) -> ModuleResult<(bool, String, String)> {
-        let output = Command::new("service")
-            .args([service, action])
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to {} service: {}", action, e))
-            })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        Ok((output.status.success(), stdout, stderr))
+    /// Check if service is active (systemd)
+    async fn systemd_is_active(
+        connection: &dyn Connection,
+        service: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<bool> {
+        let cmd = format!("systemctl is-active {}", service);
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        Ok(result.success)
     }
 
-    fn openrc_is_active(service: &str) -> ModuleResult<bool> {
-        let output = Command::new("rc-service")
-            .args([service, "status"])
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to check service status: {}", e))
-            })?;
-
-        Ok(output.status.success())
+    /// Check if service is enabled (systemd)
+    async fn systemd_is_enabled(
+        connection: &dyn Connection,
+        service: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<bool> {
+        let cmd = format!("systemctl is-enabled {}", service);
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        Ok(result.success)
     }
 
-    fn openrc_action(service: &str, action: &str) -> ModuleResult<(bool, String, String)> {
-        let output = Command::new("rc-service")
-            .args([service, action])
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to {} service: {}", action, e))
-            })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        Ok((output.status.success(), stdout, stderr))
+    /// Execute a systemd action
+    async fn systemd_action(
+        connection: &dyn Connection,
+        service: &str,
+        action: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<(bool, String, String)> {
+        let cmd = format!("systemctl {} {}", action, service);
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        Ok((result.success, result.stdout, result.stderr))
     }
 
-    fn is_active(init: &InitSystem, service: &str) -> ModuleResult<bool> {
+    /// Reload systemd daemon
+    async fn systemd_daemon_reload(
+        connection: &dyn Connection,
+        context: &ModuleContext,
+    ) -> ModuleResult<()> {
+        let result = Self::execute_command(connection, "systemctl daemon-reload", context).await?;
+        if result.success {
+            Ok(())
+        } else {
+            Err(ModuleError::ExecutionFailed(result.stderr))
+        }
+    }
+
+    /// Check if service is active (SysV)
+    async fn sysv_is_active(
+        connection: &dyn Connection,
+        service: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<bool> {
+        let cmd = format!("service {} status", service);
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        Ok(result.success)
+    }
+
+    /// Execute a SysV action
+    async fn sysv_action(
+        connection: &dyn Connection,
+        service: &str,
+        action: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<(bool, String, String)> {
+        let cmd = format!("service {} {}", service, action);
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        Ok((result.success, result.stdout, result.stderr))
+    }
+
+    /// Check if service is active (OpenRC)
+    async fn openrc_is_active(
+        connection: &dyn Connection,
+        service: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<bool> {
+        let cmd = format!("rc-service {} status", service);
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        Ok(result.success)
+    }
+
+    /// Execute an OpenRC action
+    async fn openrc_action(
+        connection: &dyn Connection,
+        service: &str,
+        action: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<(bool, String, String)> {
+        let cmd = format!("rc-service {} {}", service, action);
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        Ok((result.success, result.stdout, result.stderr))
+    }
+
+    /// Check if service is active for any init system
+    async fn is_active(
+        connection: &dyn Connection,
+        init: &InitSystem,
+        service: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<bool> {
         match init {
-            InitSystem::Systemd => Self::systemd_is_active(service),
-            InitSystem::SysV => Self::sysv_is_active(service),
-            InitSystem::OpenRC => Self::openrc_is_active(service),
+            InitSystem::Systemd => Self::systemd_is_active(connection, service, context).await,
+            InitSystem::SysV => Self::sysv_is_active(connection, service, context).await,
+            InitSystem::OpenRC => Self::openrc_is_active(connection, service, context).await,
             _ => Err(ModuleError::Unsupported(format!(
                 "Init system {:?} not fully supported yet",
                 init
@@ -207,53 +242,44 @@ impl ServiceModule {
         }
     }
 
-    fn service_action(
+    /// Execute a service action for any init system
+    async fn service_action(
+        connection: &dyn Connection,
         init: &InitSystem,
         service: &str,
         action: &str,
+        context: &ModuleContext,
     ) -> ModuleResult<(bool, String, String)> {
         match init {
-            InitSystem::Systemd => Self::systemd_action(service, action),
-            InitSystem::SysV => Self::sysv_action(service, action),
-            InitSystem::OpenRC => Self::openrc_action(service, action),
+            InitSystem::Systemd => {
+                Self::systemd_action(connection, service, action, context).await
+            }
+            InitSystem::SysV => Self::sysv_action(connection, service, action, context).await,
+            InitSystem::OpenRC => Self::openrc_action(connection, service, action, context).await,
             _ => Err(ModuleError::Unsupported(format!(
                 "Init system {:?} not fully supported yet",
                 init
             ))),
         }
     }
-}
 
-impl Module for ServiceModule {
-    fn name(&self) -> &'static str {
-        "service"
-    }
-
-    fn description(&self) -> &'static str {
-        "Manage system services"
-    }
-
-    fn classification(&self) -> ModuleClassification {
-        ModuleClassification::RemoteCommand
-    }
-
-    fn required_params(&self) -> &[&'static str] {
-        &["name"]
-    }
-
-    fn execute(
+    /// Execute the service module with async connection
+    async fn execute_async(
         &self,
         params: &ModuleParams,
         context: &ModuleContext,
+        connection: Arc<dyn Connection + Send + Sync>,
     ) -> ModuleResult<ModuleOutput> {
         let service = params.get_string_required("name")?;
         let state = params.get_string("state")?;
         let enabled = params.get_bool("enabled")?;
         let daemon_reload = params.get_bool_or("daemon_reload", false);
 
-        let init = InitSystem::detect().ok_or_else(|| {
-            ModuleError::ExecutionFailed("Could not detect init system".to_string())
-        })?;
+        let init = InitSystem::detect_async(connection.as_ref())
+            .await
+            .ok_or_else(|| {
+                ModuleError::ExecutionFailed("Could not detect init system".to_string())
+            })?;
 
         let mut changed = false;
         let mut messages = Vec::new();
@@ -263,7 +289,7 @@ impl Module for ServiceModule {
             if context.check_mode {
                 messages.push("Would reload systemd daemon".to_string());
             } else {
-                Self::systemd_daemon_reload()?;
+                Self::systemd_daemon_reload(connection.as_ref(), context).await?;
                 messages.push("Reloaded systemd daemon".to_string());
                 changed = true;
             }
@@ -272,7 +298,8 @@ impl Module for ServiceModule {
         // Handle enabled state
         if let Some(should_enable) = enabled {
             if init == InitSystem::Systemd {
-                let is_enabled = Self::systemd_is_enabled(&service)?;
+                let is_enabled =
+                    Self::systemd_is_enabled(connection.as_ref(), &service, context).await?;
 
                 if should_enable != is_enabled {
                     if context.check_mode {
@@ -281,7 +308,9 @@ impl Module for ServiceModule {
                         changed = true;
                     } else {
                         let action = if should_enable { "enable" } else { "disable" };
-                        let (success, _, stderr) = Self::systemd_action(&service, action)?;
+                        let (success, _, stderr) =
+                            Self::systemd_action(connection.as_ref(), &service, action, context)
+                                .await?;
 
                         if !success {
                             return Err(ModuleError::ExecutionFailed(format!(
@@ -300,7 +329,8 @@ impl Module for ServiceModule {
         // Handle state
         if let Some(state_str) = state {
             let desired_state = ServiceState::from_str(&state_str)?;
-            let is_active = Self::is_active(&init, &service)?;
+            let is_active =
+                Self::is_active(connection.as_ref(), &init, &service, context).await?;
 
             match desired_state {
                 ServiceState::Started => {
@@ -309,8 +339,14 @@ impl Module for ServiceModule {
                             messages.push(format!("Would start service '{}'", service));
                             changed = true;
                         } else {
-                            let (success, _, stderr) =
-                                Self::service_action(&init, &service, "start")?;
+                            let (success, _, stderr) = Self::service_action(
+                                connection.as_ref(),
+                                &init,
+                                &service,
+                                "start",
+                                context,
+                            )
+                            .await?;
 
                             if !success {
                                 return Err(ModuleError::ExecutionFailed(format!(
@@ -333,8 +369,14 @@ impl Module for ServiceModule {
                             messages.push(format!("Would stop service '{}'", service));
                             changed = true;
                         } else {
-                            let (success, _, stderr) =
-                                Self::service_action(&init, &service, "stop")?;
+                            let (success, _, stderr) = Self::service_action(
+                                connection.as_ref(),
+                                &init,
+                                &service,
+                                "stop",
+                                context,
+                            )
+                            .await?;
 
                             if !success {
                                 return Err(ModuleError::ExecutionFailed(format!(
@@ -356,8 +398,14 @@ impl Module for ServiceModule {
                         messages.push(format!("Would restart service '{}'", service));
                         changed = true;
                     } else {
-                        let (success, _, stderr) =
-                            Self::service_action(&init, &service, "restart")?;
+                        let (success, _, stderr) = Self::service_action(
+                            connection.as_ref(),
+                            &init,
+                            &service,
+                            "restart",
+                            context,
+                        )
+                        .await?;
 
                         if !success {
                             return Err(ModuleError::ExecutionFailed(format!(
@@ -376,13 +424,25 @@ impl Module for ServiceModule {
                         messages.push(format!("Would reload service '{}'", service));
                         changed = true;
                     } else {
-                        let (success, _, stderr) = Self::service_action(&init, &service, "reload")?;
+                        let (success, _, stderr) = Self::service_action(
+                            connection.as_ref(),
+                            &init,
+                            &service,
+                            "reload",
+                            context,
+                        )
+                        .await?;
 
                         if !success {
-                            // Try reload-or-restart as fallback
+                            // Try reload-or-restart as fallback for systemd
                             if init == InitSystem::Systemd {
-                                let (success2, _, stderr2) =
-                                    Self::systemd_action(&service, "reload-or-restart")?;
+                                let (success2, _, stderr2) = Self::systemd_action(
+                                    connection.as_ref(),
+                                    &service,
+                                    "reload-or-restart",
+                                    context,
+                                )
+                                .await?;
                                 if !success2 {
                                     return Err(ModuleError::ExecutionFailed(format!(
                                         "Failed to reload service '{}': {}",
@@ -412,14 +472,20 @@ impl Module for ServiceModule {
 
         // Get current status for output
         let status = if init == InitSystem::Systemd {
-            let is_active = Self::systemd_is_active(&service).unwrap_or(false);
-            let is_enabled = Self::systemd_is_enabled(&service).unwrap_or(false);
+            let is_active = Self::systemd_is_active(connection.as_ref(), &service, context)
+                .await
+                .unwrap_or(false);
+            let is_enabled = Self::systemd_is_enabled(connection.as_ref(), &service, context)
+                .await
+                .unwrap_or(false);
             serde_json::json!({
                 "active": is_active,
                 "enabled": is_enabled
             })
         } else {
-            let is_active = Self::is_active(&init, &service).unwrap_or(false);
+            let is_active = Self::is_active(connection.as_ref(), &init, &service, context)
+                .await
+                .unwrap_or(false);
             serde_json::json!({
                 "active": is_active
             })
@@ -432,27 +498,29 @@ impl Module for ServiceModule {
         }
     }
 
-    fn check(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<ModuleOutput> {
-        let check_context = ModuleContext {
-            check_mode: true,
-            ..context.clone()
-        };
-        self.execute(params, &check_context)
-    }
-
-    fn diff(&self, params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<Option<Diff>> {
+    /// Execute diff with async connection
+    async fn diff_async(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+        connection: Arc<dyn Connection + Send + Sync>,
+    ) -> ModuleResult<Option<Diff>> {
         let service = params.get_string_required("name")?;
         let state = params.get_string("state")?;
         let enabled = params.get_bool("enabled")?;
 
-        let init = match InitSystem::detect() {
+        let init = match InitSystem::detect_async(connection.as_ref()).await {
             Some(i) => i,
             None => return Ok(None),
         };
 
-        let is_active = Self::is_active(&init, &service).unwrap_or(false);
+        let is_active = Self::is_active(connection.as_ref(), &init, &service, context)
+            .await
+            .unwrap_or(false);
         let is_enabled = if init == InitSystem::Systemd {
-            Self::systemd_is_enabled(&service).unwrap_or(false)
+            Self::systemd_is_enabled(connection.as_ref(), &service, context)
+                .await
+                .unwrap_or(false)
         } else {
             false
         };
@@ -507,6 +575,68 @@ impl Module for ServiceModule {
     }
 }
 
+impl Module for ServiceModule {
+    fn name(&self) -> &'static str {
+        "service"
+    }
+
+    fn description(&self) -> &'static str {
+        "Manage system services"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::RemoteCommand
+    }
+
+    fn required_params(&self) -> &[&'static str] {
+        &["name"]
+    }
+
+    fn execute(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+    ) -> ModuleResult<ModuleOutput> {
+        // Get connection from context
+        let connection = context.connection.clone().ok_or_else(|| {
+            ModuleError::ExecutionFailed(
+                "No connection available for service module execution".to_string(),
+            )
+        })?;
+
+        // Use tokio runtime to execute async code
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            ModuleError::ExecutionFailed("No tokio runtime available".to_string())
+        })?;
+
+        handle.block_on(self.execute_async(params, context, connection))
+    }
+
+    fn check(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<ModuleOutput> {
+        let check_context = ModuleContext {
+            check_mode: true,
+            ..context.clone()
+        };
+        self.execute(params, &check_context)
+    }
+
+    fn diff(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<Option<Diff>> {
+        // Get connection from context
+        let connection = match context.connection.clone() {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        // Use tokio runtime to execute async code
+        let handle = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => return Ok(None),
+        };
+
+        handle.block_on(self.diff_async(params, context, connection))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,12 +667,12 @@ mod tests {
     }
 
     #[test]
-    fn test_init_system_detection() {
-        // This will return something on most systems
-        let init = InitSystem::detect();
-        // Just verify it doesn't panic
-        let _ = init;
+    fn test_service_module_metadata() {
+        let module = ServiceModule;
+        assert_eq!(module.name(), "service");
+        assert_eq!(module.classification(), ModuleClassification::RemoteCommand);
+        assert_eq!(module.required_params(), &["name"]);
     }
 
-    // Integration tests would require root access and actual services
+    // Integration tests would require actual services and a connection
 }

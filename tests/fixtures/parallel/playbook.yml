@@ -1,0 +1,32 @@
+---
+- name: Parallel Execution Test Playbook
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Get hostname
+      command: hostname
+      register: hostname_result
+
+    - name: Display hostname
+      debug:
+        msg: "Running on host: {{ hostname_result.stdout }}"
+
+    - name: Create test directory
+      file:
+        path: /tmp/rustible_test
+        state: directory
+
+    - name: Create test file
+      command: echo "Test from {{ inventory_hostname }}" > /tmp/rustible_test/{{ inventory_hostname }}.txt
+
+    - name: Verify file
+      command: cat /tmp/rustible_test/{{ inventory_hostname }}.txt
+      register: file_content
+
+    - name: Display result
+      debug:
+        msg: "{{ file_content.stdout }}"
+
+    - name: Sleep to simulate work
+      command: sleep 1

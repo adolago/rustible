@@ -1,0 +1,27 @@
+---
+all:
+  hosts:
+    ssh_host:
+      ansible_host: 192.168.1.10
+      ansible_port: 2222
+      ansible_user: deploy
+      ansible_ssh_private_key_file: /path/to/key.pem
+      ansible_connection: ssh
+    local_host:
+      ansible_connection: local
+      ansible_python_interpreter: /usr/bin/python3
+    docker_container:
+      ansible_connection: docker
+      ansible_host: my_container
+    podman_container:
+      ansible_connection: podman
+      ansible_host: my_pod
+    windows_host:
+      ansible_host: 192.168.1.20
+      ansible_connection: winrm
+      ansible_port: 5985
+    become_host:
+      ansible_host: 192.168.1.30
+      ansible_become: true
+      ansible_become_method: sudo
+      ansible_become_user: root

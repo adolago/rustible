@@ -1,0 +1,51 @@
+{
+    "webservers": {
+        "hosts": ["web1", "web2", "web3"],
+        "vars": {
+            "http_port": 80,
+            "https_port": 443
+        }
+    },
+    "databases": {
+        "hosts": ["db1", "db2"],
+        "vars": {
+            "db_port": 5432
+        }
+    },
+    "production": {
+        "children": ["webservers", "databases"],
+        "vars": {
+            "environment": "production",
+            "monitoring": true
+        }
+    },
+    "_meta": {
+        "hostvars": {
+            "web1": {
+                "ansible_host": "10.0.0.1",
+                "ansible_port": 22,
+                "server_role": "primary"
+            },
+            "web2": {
+                "ansible_host": "10.0.0.2",
+                "ansible_port": 22,
+                "server_role": "secondary"
+            },
+            "web3": {
+                "ansible_host": "10.0.0.3",
+                "ansible_port": 2222,
+                "server_role": "backup"
+            },
+            "db1": {
+                "ansible_host": "10.0.1.1",
+                "db_role": "primary",
+                "replication": true
+            },
+            "db2": {
+                "ansible_host": "10.0.1.2",
+                "db_role": "replica",
+                "replication": true
+            }
+        }
+    }
+}

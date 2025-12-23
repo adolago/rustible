@@ -1,16 +1,19 @@
 //! Copy module - Copy files to destination
 //!
 //! This module copies files from a source to a destination, with support for
-//! permissions, ownership, and backup creation.
+//! permissions, ownership, and backup creation. It supports both local operations
+//! and remote file transfers over SSH connections.
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
+use crate::connection::{Connection, TransferOptions};
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
+use std::sync::Arc;
 
 /// Module for copying files
 pub struct CopyModule;
@@ -90,6 +93,475 @@ impl CopyModule {
         fs::copy(src, dest)?;
         Ok(())
     }
+
+    /// Compute a simple checksum for content comparison
+    fn compute_checksum(data: &[u8]) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        data.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
+
+    /// Async implementation for remote copy using connection
+    async fn execute_remote_async(
+        connection: Arc<dyn Connection + Send + Sync>,
+        dest: &str,
+        src: Option<&str>,
+        content: Option<&str>,
+        mode: Option<u32>,
+        owner: Option<&str>,
+        group: Option<&str>,
+        backup: bool,
+        backup_suffix: &str,
+        check_mode: bool,
+        diff_mode: bool,
+    ) -> ModuleResult<ModuleOutput> {
+        let dest_path = Path::new(dest);
+
+        // Determine the final destination path (handle directory destinations)
+        let final_dest = if connection.is_directory(dest_path).await.unwrap_or(false) {
+            if let Some(src_str) = src {
+                let src_path = Path::new(src_str);
+                dest_path.join(src_path.file_name().ok_or_else(|| {
+                    ModuleError::InvalidParameter(
+                        "Cannot determine filename from source".to_string(),
+                    )
+                })?)
+            } else {
+                return Err(ModuleError::InvalidParameter(
+                    "Cannot copy content to a directory without specifying filename".to_string(),
+                ));
+            }
+        } else {
+            dest_path.to_path_buf()
+        };
+
+        // Check if file already exists and get checksum
+        let (needs_copy, current_checksum) =
+            if connection.path_exists(&final_dest).await.unwrap_or(false) {
+                // Download current content to check if it differs
+                if let Some(content_str) = content {
+                    // Compare content
+                    match connection.download_content(&final_dest).await {
+                        Ok(existing) => {
+                            let existing_str = String::from_utf8_lossy(&existing);
+                            (
+                                existing_str.as_ref() != content_str,
+                                Some(Self::compute_checksum(&existing)),
+                            )
+                        }
+                        Err(_) => (true, None),
+                    }
+                } else if let Some(src_str) = src {
+                    // Compare file checksums
+                    let src_path = Path::new(src_str);
+                    if !src_path.exists() {
+                        return Err(ModuleError::ExecutionFailed(format!(
+                            "Source file '{}' does not exist",
+                            src_str
+                        )));
+                    }
+
+                    let src_content = fs::read(src_path).map_err(ModuleError::Io)?;
+
+                    match connection.download_content(&final_dest).await {
+                        Ok(existing) => {
+                            let src_checksum = Self::compute_checksum(&src_content);
+                            let dest_checksum = Self::compute_checksum(&existing);
+                            (src_checksum != dest_checksum, Some(dest_checksum))
+                        }
+                        Err(_) => (true, None),
+                    }
+                } else {
+                    (false, None)
+                }
+            } else {
+                (true, None)
+            };
+
+        // Check if only permissions need updating
+        if !needs_copy {
+            let perm_changed = if let Some(m) = mode {
+                match connection.stat(&final_dest).await {
+                    Ok(stat) => (stat.mode & 0o7777) != m,
+                    Err(_) => false,
+                }
+            } else {
+                false
+            };
+
+            if perm_changed {
+                if check_mode {
+                    return Ok(ModuleOutput::changed(format!(
+                        "Would change permissions on '{}'",
+                        final_dest.display()
+                    )));
+                }
+
+                // Update permissions via chmod command
+                let chmod_cmd = format!("chmod {:o} {}", mode.unwrap(), final_dest.display());
+                connection.execute(&chmod_cmd, None).await.map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to set permissions: {}", e))
+                })?;
+
+                return Ok(ModuleOutput::changed(format!(
+                    "Changed permissions on '{}'",
+                    final_dest.display()
+                )));
+            }
+
+            return Ok(ModuleOutput::ok(format!(
+                "File '{}' is already up to date",
+                final_dest.display()
+            )));
+        }
+
+        // In check mode, report what would happen
+        if check_mode {
+            let src_display = if content.is_some() {
+                "(content)"
+            } else if let Some(s) = src {
+                s
+            } else {
+                ""
+            };
+
+            let diff = if diff_mode {
+                if let Some(content_str) = content {
+                    let before = if let Some(cksum) = current_checksum {
+                        format!("(existing file with checksum {})", cksum)
+                    } else {
+                        String::new()
+                    };
+                    Some(Diff::new(before, content_str))
+                } else {
+                    Some(Diff::new(
+                        format!("(current state of {})", final_dest.display()),
+                        format!("(contents of {})", src_display),
+                    ))
+                }
+            } else {
+                None
+            };
+
+            let mut output = ModuleOutput::changed(format!(
+                "Would copy {} to '{}'",
+                src_display,
+                final_dest.display()
+            ));
+
+            if let Some(d) = diff {
+                output = output.with_diff(d);
+            }
+
+            return Ok(output);
+        }
+
+        // Create backup if requested
+        if backup && connection.path_exists(&final_dest).await.unwrap_or(false) {
+            let backup_path = format!("{}{}", final_dest.display(), backup_suffix);
+            let backup_dest = Path::new(&backup_path);
+
+            // Download and re-upload as backup
+            match connection.download_content(&final_dest).await {
+                Ok(backup_content) => {
+                    connection
+                        .upload_content(&backup_content, backup_dest, None)
+                        .await
+                        .map_err(|e| {
+                            ModuleError::ExecutionFailed(format!("Failed to create backup: {}", e))
+                        })?;
+                }
+                Err(e) => {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Failed to read file for backup: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        // Build transfer options
+        let mut transfer_opts = TransferOptions::new();
+        if let Some(m) = mode {
+            transfer_opts = transfer_opts.with_mode(m);
+        }
+        if let Some(o) = owner {
+            transfer_opts = transfer_opts.with_owner(o);
+        }
+        if let Some(g) = group {
+            transfer_opts = transfer_opts.with_group(g);
+        }
+        transfer_opts = transfer_opts.with_create_dirs();
+
+        // Perform the copy
+        let src_display = if let Some(content_str) = content {
+            // Upload content directly
+            connection
+                .upload_content(content_str.as_bytes(), &final_dest, Some(transfer_opts))
+                .await
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to upload content: {}", e))
+                })?;
+            "(content)".to_string()
+        } else if let Some(src_str) = src {
+            // Upload file
+            let src_path = Path::new(src_str);
+            connection
+                .upload(src_path, &final_dest, Some(transfer_opts))
+                .await
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to upload file: {}", e))
+                })?;
+            src_str.to_string()
+        } else {
+            return Err(ModuleError::MissingParameter(
+                "Either 'src' or 'content' must be provided".to_string(),
+            ));
+        };
+
+        // Get file info from remote
+        let mut output = ModuleOutput::changed(format!(
+            "Copied {} to '{}'",
+            src_display,
+            final_dest.display()
+        ));
+
+        // Add file metadata if available
+        if let Ok(stat) = connection.stat(&final_dest).await {
+            output = output
+                .with_data("dest", serde_json::json!(final_dest.to_string_lossy()))
+                .with_data("size", serde_json::json!(stat.size))
+                .with_data(
+                    "mode",
+                    serde_json::json!(format!("{:o}", stat.mode & 0o7777)),
+                )
+                .with_data("uid", serde_json::json!(stat.uid))
+                .with_data("gid", serde_json::json!(stat.gid));
+        }
+
+        Ok(output)
+    }
+
+    /// Execute remote copy using the connection from context
+    /// Uses tokio::runtime::Handle::current().block_on() as a sync->async bridge
+    fn execute_remote(
+        connection: Arc<dyn Connection + Send + Sync>,
+        dest: &str,
+        src: Option<&str>,
+        content: Option<&str>,
+        mode: Option<u32>,
+        owner: Option<&str>,
+        group: Option<&str>,
+        backup: bool,
+        backup_suffix: &str,
+        check_mode: bool,
+        diff_mode: bool,
+    ) -> ModuleResult<ModuleOutput> {
+        // Use the current tokio runtime handle to execute async operations
+        // This allows us to bridge from the sync Module trait to async connection operations
+        let handle = tokio::runtime::Handle::current();
+        handle.block_on(Self::execute_remote_async(
+            connection,
+            dest,
+            src,
+            content,
+            mode,
+            owner,
+            group,
+            backup,
+            backup_suffix,
+            check_mode,
+            diff_mode,
+        ))
+    }
+
+    /// Execute local copy (when connection is None or local)
+    fn execute_local(
+        dest: &str,
+        src: Option<&str>,
+        content: Option<&str>,
+        mode: Option<u32>,
+        force: bool,
+        backup: bool,
+        backup_suffix: &str,
+        check_mode: bool,
+        diff_mode: bool,
+    ) -> ModuleResult<ModuleOutput> {
+        let dest_path = Path::new(dest);
+
+        // Determine if we're copying from src or content
+        let (source_content, src_display) = if let Some(content_str) = content {
+            (Some(content_str.to_string()), "(content)".to_string())
+        } else if let Some(src_str) = src {
+            let src_path = Path::new(src_str);
+            if !src_path.exists() {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "Source file '{}' does not exist",
+                    src_str
+                )));
+            }
+            (None, src_str.to_string())
+        } else {
+            return Err(ModuleError::MissingParameter(
+                "Either 'src' or 'content' must be provided".to_string(),
+            ));
+        };
+
+        // Check if dest is a directory
+        let final_dest = if dest_path.is_dir() {
+            if let Some(src_str) = src {
+                let src_path = Path::new(src_str);
+                dest_path.join(src_path.file_name().ok_or_else(|| {
+                    ModuleError::InvalidParameter(
+                        "Cannot determine filename from source".to_string(),
+                    )
+                })?)
+            } else {
+                return Err(ModuleError::InvalidParameter(
+                    "Cannot copy content to a directory without specifying filename".to_string(),
+                ));
+            }
+        } else {
+            dest_path.to_path_buf()
+        };
+
+        // Check if copy is needed
+        let needs_copy = if let Some(src_str) = src {
+            let src_path = Path::new(src_str);
+            Self::files_differ(src_path, &final_dest)?
+        } else {
+            // For content, always check
+            if final_dest.exists() {
+                let mut existing = String::new();
+                fs::File::open(&final_dest)?.read_to_string(&mut existing)?;
+                existing != source_content.as_ref().unwrap().as_str()
+            } else {
+                true
+            }
+        };
+
+        if !needs_copy {
+            // Check if only permissions need updating
+            let perm_changed = if let Some(m) = mode {
+                if final_dest.exists() {
+                    let current = fs::metadata(&final_dest)?.permissions().mode() & 0o7777;
+                    current != m
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if perm_changed {
+                if check_mode {
+                    return Ok(ModuleOutput::changed(format!(
+                        "Would change permissions on '{}'",
+                        final_dest.display()
+                    )));
+                }
+                Self::set_permissions(&final_dest, mode)?;
+                return Ok(ModuleOutput::changed(format!(
+                    "Changed permissions on '{}'",
+                    final_dest.display()
+                )));
+            }
+
+            return Ok(ModuleOutput::ok(format!(
+                "File '{}' is already up to date",
+                final_dest.display()
+            )));
+        }
+
+        // In check mode, return what would happen
+        if check_mode {
+            let diff = if diff_mode {
+                if let Some(ref content_str) = source_content {
+                    let before = if final_dest.exists() {
+                        fs::read_to_string(&final_dest).unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    Some(Diff::new(before, content_str.clone()))
+                } else {
+                    Some(Diff::new(
+                        format!("(current state of {})", final_dest.display()),
+                        format!("(contents of {})", src_display),
+                    ))
+                }
+            } else {
+                None
+            };
+
+            let mut output = ModuleOutput::changed(format!(
+                "Would copy {} to '{}'",
+                src_display,
+                final_dest.display()
+            ));
+
+            if let Some(d) = diff {
+                output = output.with_diff(d);
+            }
+
+            return Ok(output);
+        }
+
+        // Create backup if requested
+        let backup_file = if backup {
+            Self::create_backup(&final_dest, backup_suffix)?
+        } else {
+            None
+        };
+
+        // Create parent directories if needed
+        if let Some(parent) = final_dest.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        // Perform the copy
+        if let Some(ref content_str) = source_content {
+            Self::copy_content(content_str, &final_dest)?;
+        } else if let Some(src_str) = src {
+            let src_path = Path::new(src_str);
+            Self::copy_file(src_path, &final_dest, force)?;
+        }
+
+        // Set permissions
+        let perm_changed = Self::set_permissions(&final_dest, mode)?;
+
+        let mut output = ModuleOutput::changed(format!(
+            "Copied {} to '{}'",
+            src_display,
+            final_dest.display()
+        ));
+
+        if let Some(backup_path) = backup_file {
+            output = output.with_data("backup_file", serde_json::json!(backup_path));
+        }
+
+        if perm_changed {
+            output = output.with_data("mode_changed", serde_json::json!(true));
+        }
+
+        // Add file info to output
+        let meta = fs::metadata(&final_dest)?;
+        output = output
+            .with_data("dest", serde_json::json!(final_dest.to_string_lossy()))
+            .with_data("size", serde_json::json!(meta.len()))
+            .with_data(
+                "mode",
+                serde_json::json!(format!("{:o}", meta.permissions().mode() & 0o7777)),
+            )
+            .with_data("uid", serde_json::json!(meta.uid()))
+            .with_data("gid", serde_json::json!(meta.gid()));
+
+        Ok(output)
+    }
 }
 
 impl Module for CopyModule {
@@ -127,7 +599,6 @@ impl Module for CopyModule {
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
         let dest = params.get_string_required("dest")?;
-        let dest_path = Path::new(&dest);
         let src = params.get_string("src")?;
         let content = params.get_string("content")?;
         let force = params.get_bool_or("force", true);
@@ -136,176 +607,39 @@ impl Module for CopyModule {
             .get_string("backup_suffix")?
             .unwrap_or_else(|| "~".to_string());
         let mode = params.get_u32("mode")?;
+        let owner = params.get_string("owner")?;
+        let group = params.get_string("group")?;
 
-        // Determine if we're copying from src or content
-        let (source_content, src_display) = if let Some(ref content_str) = content {
-            (Some(content_str.clone()), "(content)".to_string())
-        } else if let Some(ref src_str) = src {
-            let src_path = Path::new(src_str);
-            if !src_path.exists() {
-                return Err(ModuleError::ExecutionFailed(format!(
-                    "Source file '{}' does not exist",
-                    src_str
-                )));
-            }
-            (None, src_str.clone())
-        } else {
-            return Err(ModuleError::MissingParameter(
-                "Either 'src' or 'content' must be provided".to_string(),
-            ));
-        };
-
-        // Check if dest is a directory
-        let final_dest = if dest_path.is_dir() {
-            if let Some(ref src_str) = src {
-                let src_path = Path::new(src_str);
-                dest_path.join(src_path.file_name().ok_or_else(|| {
-                    ModuleError::InvalidParameter(
-                        "Cannot determine filename from source".to_string(),
-                    )
-                })?)
-            } else {
-                return Err(ModuleError::InvalidParameter(
-                    "Cannot copy content to a directory without specifying filename".to_string(),
-                ));
-            }
-        } else {
-            dest_path.to_path_buf()
-        };
-
-        // Check if copy is needed
-        let needs_copy = if let Some(ref src_str) = src {
-            let src_path = Path::new(src_str);
-            Self::files_differ(src_path, &final_dest)?
-        } else {
-            // For content, always check
-            if final_dest.exists() {
-                let mut existing = String::new();
-                fs::File::open(&final_dest)?.read_to_string(&mut existing)?;
-                existing != source_content.as_ref().unwrap().as_str()
-            } else {
-                true
-            }
-        };
-
-        if !needs_copy {
-            // Check if only permissions need updating
-            let perm_changed = if let Some(m) = mode {
-                if final_dest.exists() {
-                    let current = fs::metadata(&final_dest)?.permissions().mode() & 0o7777;
-                    current != m
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-
-            if perm_changed {
-                if context.check_mode {
-                    return Ok(ModuleOutput::changed(format!(
-                        "Would change permissions on '{}'",
-                        final_dest.display()
-                    )));
-                }
-                Self::set_permissions(&final_dest, mode)?;
-                return Ok(ModuleOutput::changed(format!(
-                    "Changed permissions on '{}'",
-                    final_dest.display()
-                )));
-            }
-
-            return Ok(ModuleOutput::ok(format!(
-                "File '{}' is already up to date",
-                final_dest.display()
-            )));
-        }
-
-        // In check mode, return what would happen
-        if context.check_mode {
-            let diff = if context.diff_mode {
-                if let Some(ref content_str) = source_content {
-                    let before = if final_dest.exists() {
-                        fs::read_to_string(&final_dest).unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    Some(Diff::new(before, content_str.clone()))
-                } else {
-                    Some(Diff::new(
-                        format!("(current state of {})", final_dest.display()),
-                        format!("(contents of {})", src_display),
-                    ))
-                }
-            } else {
-                None
-            };
-
-            let mut output = ModuleOutput::changed(format!(
-                "Would copy {} to '{}'",
-                src_display,
-                final_dest.display()
-            ));
-
-            if let Some(d) = diff {
-                output = output.with_diff(d);
-            }
-
-            return Ok(output);
-        }
-
-        // Create backup if requested
-        let backup_file = if backup {
-            Self::create_backup(&final_dest, &backup_suffix)?
-        } else {
-            None
-        };
-
-        // Create parent directories if needed
-        if let Some(parent) = final_dest.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
-        }
-
-        // Perform the copy
-        if let Some(ref content_str) = source_content {
-            Self::copy_content(content_str, &final_dest)?;
-        } else if let Some(ref src_str) = src {
-            let src_path = Path::new(src_str);
-            Self::copy_file(src_path, &final_dest, force)?;
-        }
-
-        // Set permissions
-        let perm_changed = Self::set_permissions(&final_dest, mode)?;
-
-        let mut output = ModuleOutput::changed(format!(
-            "Copied {} to '{}'",
-            src_display,
-            final_dest.display()
-        ));
-
-        if let Some(backup_path) = backup_file {
-            output = output.with_data("backup_file", serde_json::json!(backup_path));
-        }
-
-        if perm_changed {
-            output = output.with_data("mode_changed", serde_json::json!(true));
-        }
-
-        // Add file info to output
-        let meta = fs::metadata(&final_dest)?;
-        output = output
-            .with_data("dest", serde_json::json!(final_dest.to_string_lossy()))
-            .with_data("size", serde_json::json!(meta.len()))
-            .with_data(
-                "mode",
-                serde_json::json!(format!("{:o}", meta.permissions().mode() & 0o7777)),
+        // Check if we have a remote connection
+        if let Some(ref connection) = context.connection {
+            // Remote execution via async connection
+            Self::execute_remote(
+                connection.clone(),
+                &dest,
+                src.as_deref(),
+                content.as_deref(),
+                mode,
+                owner.as_deref(),
+                group.as_deref(),
+                backup,
+                &backup_suffix,
+                context.check_mode,
+                context.diff_mode,
             )
-            .with_data("uid", serde_json::json!(meta.uid()))
-            .with_data("gid", serde_json::json!(meta.gid()));
-
-        Ok(output)
+        } else {
+            // Local execution (connection is None)
+            Self::execute_local(
+                &dest,
+                src.as_deref(),
+                content.as_deref(),
+                mode,
+                force,
+                backup,
+                &backup_suffix,
+                context.check_mode,
+                context.diff_mode,
+            )
+        }
     }
 
     fn check(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<ModuleOutput> {
@@ -316,11 +650,46 @@ impl Module for CopyModule {
         self.execute(params, &check_context)
     }
 
-    fn diff(&self, params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<Option<Diff>> {
+    fn diff(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<Option<Diff>> {
         let dest = params.get_string_required("dest")?;
         let dest_path = Path::new(&dest);
         let content = params.get_string("content")?;
 
+        // For remote connections, we need to fetch the remote file content
+        if let Some(ref connection) = context.connection {
+            // Use async bridge to get remote file content
+            let handle = tokio::runtime::Handle::current();
+
+            if let Some(content_str) = content {
+                let before = handle.block_on(async {
+                    match connection.download_content(dest_path).await {
+                        Ok(data) => String::from_utf8_lossy(&data).to_string(),
+                        Err(_) => String::new(),
+                    }
+                });
+                return Ok(Some(Diff::new(before, content_str)));
+            }
+
+            let src = params.get_string("src")?;
+            if let Some(src_str) = src {
+                let src_path = Path::new(&src_str);
+                if src_path.exists() {
+                    let src_content =
+                        fs::read_to_string(src_path).unwrap_or_else(|_| "(binary file)".to_string());
+                    let dest_content = handle.block_on(async {
+                        match connection.download_content(dest_path).await {
+                            Ok(data) => String::from_utf8_lossy(&data).to_string(),
+                            Err(_) => String::new(),
+                        }
+                    });
+                    return Ok(Some(Diff::new(dest_content, src_content)));
+                }
+            }
+
+            return Ok(None);
+        }
+
+        // Local diff
         if let Some(content_str) = content {
             let before = if dest_path.exists() {
                 fs::read_to_string(dest_path).unwrap_or_default()

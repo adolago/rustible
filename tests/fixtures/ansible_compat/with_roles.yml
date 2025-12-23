@@ -1,0 +1,54 @@
+---
+# Role Inclusion Playbook Compatibility Test
+# Tests: simple roles, roles with vars, roles with when/tags
+
+- name: Deploy application with roles
+  hosts: appservers
+  gather_facts: true
+  become: true
+
+  vars:
+    environment: production
+    deploy_user: deploy
+    app_version: "2.0.0"
+
+  roles:
+    # Simple role name
+    - common
+
+    # Role with variables
+    - role: nginx
+      vars:
+        nginx_port: 8080
+        nginx_worker_processes: auto
+        nginx_worker_connections: 1024
+
+    # Role with conditional
+    - role: docker
+      when: install_docker is defined and install_docker
+
+    # Role with tags
+    - role: monitoring
+      tags:
+        - monitoring
+        - prometheus
+
+    # Role with multiple options
+    - role: application
+      vars:
+        app_name: myapp
+        app_port: 5000
+      tags:
+        - deploy
+        - app
+      when: deploy_app | default(true)
+
+- name: Configure load balancer
+  hosts: loadbalancers
+  become: true
+
+  roles:
+    - role: haproxy
+      vars:
+        haproxy_frontend_port: 80
+        haproxy_backends: "{{ groups['appservers'] }}"

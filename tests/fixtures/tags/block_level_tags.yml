@@ -1,0 +1,25 @@
+---
+- name: Play with block-level tags
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Task before block
+      debug:
+        msg: "Before block"
+
+    - block:
+        - name: Task in tagged block
+          debug:
+            msg: "Inside block"
+        - name: Another task in block
+          debug:
+            msg: "Also inside block"
+      tags:
+        - database
+        - setup
+
+    - name: Task after block
+      debug:
+        msg: "After block"
+      tags:
+        - cleanup

@@ -1,0 +1,38 @@
+---
+all:
+  children:
+    test_group:
+      hosts:
+        localhost:
+          ansible_connection: local
+          ansible_python_interpreter: /usr/bin/python3
+
+        # These would be actual hosts in a real environment
+        # For testing, they can be configured via environment variables
+        # host1:
+        #   ansible_host: 192.168.178.141
+        #   ansible_user: testuser
+        #   ansible_port: 22
+        #   ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+        #   ansible_python_interpreter: /usr/bin/python3
+        #
+        # host2:
+        #   ansible_host: 192.168.178.142
+        #   ansible_user: testuser
+        #   ansible_port: 22
+        #   ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+        #   ansible_python_interpreter: /usr/bin/python3
+        #
+        # host3:
+        #   ansible_host: 192.168.178.143
+        #   ansible_user: testuser
+        #   ansible_port: 22
+        #   ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+        #   ansible_python_interpreter: /usr/bin/python3
+        #
+        # host4:
+        #   ansible_host: 192.168.178.144
+        #   ansible_user: testuser
+        #   ansible_port: 22
+        #   ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+        #   ansible_python_interpreter: /usr/bin/python3

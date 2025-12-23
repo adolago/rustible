@@ -1,0 +1,24 @@
+---
+- name: Play with never tag
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Never runs unless specified
+      debug:
+        msg: "This only runs when explicitly specified"
+      tags:
+        - never
+        - debug_mode
+
+    - name: Regular task
+      debug:
+        msg: "Normal task"
+      tags:
+        - install
+
+    - name: Another never task
+      debug:
+        msg: "Also needs explicit specification"
+      tags:
+        - never
+        - dangerous

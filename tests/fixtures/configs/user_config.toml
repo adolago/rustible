@@ -1,0 +1,13 @@
+# Simulated user config (~/.rustible.cfg)
+[defaults]
+forks = 8
+timeout = 90
+remote_user = "user_user"
+strategy = "free"
+
+[privilege_escalation]
+become = true
+become_method = "doas"
+
+[ssh]
+retries = 4

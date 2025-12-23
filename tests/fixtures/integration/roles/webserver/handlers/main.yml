@@ -1,0 +1,9 @@
+---
+# Webserver role handlers
+- name: restart webserver
+  debug:
+    msg: "Handler: Restarting {{ webserver_package }}"
+
+- name: reload webserver
+  debug:
+    msg: "Handler: Reloading {{ webserver_package }} configuration"

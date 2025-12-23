@@ -1,0 +1,11 @@
+{
+    "custom_app_version": "2.5.1",
+    "custom_app_port": 8080,
+    "custom_app_enabled": true,
+    "custom_app_config": {
+        "debug": false,
+        "log_level": "info",
+        "workers": 4
+    },
+    "custom_app_features": ["auth", "cache", "metrics"]
+}

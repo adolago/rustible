@@ -1,0 +1,15 @@
+---
+# Main tasks for test_role
+- name: Test role main task
+  debug:
+    msg: "Test role executing with role_var={{ role_var | default('default_role_var') }}"
+
+- name: Set role fact
+  set_fact:
+    test_role_executed: true
+
+- name: Notify role handler
+  debug:
+    msg: "Notifying role handler"
+  notify: test_role_handler
+  changed_when: true

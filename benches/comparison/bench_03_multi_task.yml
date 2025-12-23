@@ -1,0 +1,55 @@
+# Benchmark 03: Multi-task Playbook
+# Tests: Task execution overhead, variable handling, conditionals
+---
+- name: Multi-task benchmark
+  hosts: all
+  gather_facts: false
+  vars:
+    test_var: "benchmark_value"
+    loop_items:
+      - item1
+      - item2
+      - item3
+      - item4
+      - item5
+  tasks:
+    - name: Task 1 - Simple command
+      command: echo "Task 1"
+
+    - name: Task 2 - With variable
+      command: echo "Variable is {{ test_var }}"
+
+    - name: Task 3 - Create temp file
+      copy:
+        content: "Multi-task test\n"
+        dest: /tmp/multi_task_test.txt
+        mode: '0644'
+
+    - name: Task 4 - Read temp file
+      command: cat /tmp/multi_task_test.txt
+      changed_when: false
+
+    - name: Task 5 - Check if file exists
+      stat:
+        path: /tmp/multi_task_test.txt
+      register: stat_result
+
+    - name: Task 6 - Conditional task
+      command: echo "File exists!"
+      when: stat_result.stat.exists
+
+    - name: Task 7 - Loop task
+      command: echo "Processing {{ item }}"
+      loop: "{{ loop_items }}"
+
+    - name: Task 8 - Set fact
+      set_fact:
+        computed_value: "computed_{{ inventory_hostname }}"
+
+    - name: Task 9 - Use computed fact
+      command: echo "Computed value is {{ computed_value }}"
+
+    - name: Task 10 - Cleanup
+      file:
+        path: /tmp/multi_task_test.txt
+        state: absent

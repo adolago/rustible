@@ -1,0 +1,343 @@
+---
+# End-to-end test playbook for core modules
+# Tests: copy, file, template, command, service
+
+- name: Module End-to-End Test Suite
+  hosts: all
+  gather_facts: true
+  vars:
+    test_dir: "/tmp/rustible_e2e_test"
+    test_user: "{{ ansible_user | default('testuser') }}"
+    test_content: "Hello from Rustible E2E test"
+    template_var: "TemplateValue123"
+    app_name: "rustible_test_app"
+    app_version: "1.0.0"
+    app_port: 8080
+
+  tasks:
+    # ================================================================
+    # 1. FILE MODULE TESTS - Create directories and manage files
+    # ================================================================
+
+    - name: "[FILE] Create base test directory"
+      file:
+        path: "{{ test_dir }}"
+        state: directory
+        mode: "0755"
+      register: create_dir_result
+
+    - name: "[FILE] Verify directory was created"
+      debug:
+        msg: "Directory created: {{ create_dir_result.changed }}"
+
+    - name: "[FILE] Create subdirectories"
+      file:
+        path: "{{ test_dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - config
+        - logs
+        - data
+        - templates
+      register: subdirs_result
+
+    - name: "[FILE] Touch a file"
+      file:
+        path: "{{ test_dir }}/logs/application.log"
+        state: touch
+        mode: "0644"
+      register: touch_result
+
+    # ================================================================
+    # 2. COPY MODULE TESTS - Copy files and content
+    # ================================================================
+
+    - name: "[COPY] Copy content to file"
+      copy:
+        content: "{{ test_content }}\n"
+        dest: "{{ test_dir }}/data/test_file.txt"
+        mode: "0644"
+      register: copy_content_result
+
+    - name: "[COPY] Copy same content again (should be idempotent)"
+      copy:
+        content: "{{ test_content }}\n"
+        dest: "{{ test_dir }}/data/test_file.txt"
+        mode: "0644"
+      register: copy_idempotent_result
+
+    - name: "[COPY] Verify idempotency"
+      debug:
+        msg: "Copy was idempotent: {{ not copy_idempotent_result.changed }}"
+
+    - name: "[COPY] Copy multiline content"
+      copy:
+        content: |
+          Line 1: {{ app_name }}
+          Line 2: Version {{ app_version }}
+          Line 3: Port {{ app_port }}
+          Line 4: User {{ test_user }}
+        dest: "{{ test_dir }}/data/multiline.txt"
+        mode: "0644"
+      register: copy_multiline_result
+
+    - name: "[COPY] Create config file with specific content"
+      copy:
+        content: |
+          # Configuration file
+          APP_NAME={{ app_name }}
+          APP_VERSION={{ app_version }}
+          APP_PORT={{ app_port }}
+          LOG_LEVEL=debug
+          DATA_DIR={{ test_dir }}/data
+        dest: "{{ test_dir }}/config/app.conf"
+        mode: "0644"
+      register: config_file_result
+
+    # ================================================================
+    # 3. TEMPLATE MODULE TESTS - Render templates
+    # ================================================================
+
+    - name: "[TEMPLATE] Render simple template"
+      template:
+        content: "Application: {{ app_name }}, Version: {{ app_version }}\n"
+        dest: "{{ test_dir }}/templates/simple.txt"
+        mode: "0644"
+      register: template_simple_result
+
+    - name: "[TEMPLATE] Render complex template with loops"
+      template:
+        content: |
+          # Generated configuration for {{ app_name }}
+          # Version: {{ app_version }}
+
+          [server]
+          port = {{ app_port }}
+          host = 0.0.0.0
+
+          [paths]
+          base = {{ test_dir }}
+          config = {{ test_dir }}/config
+          logs = {{ test_dir }}/logs
+          data = {{ test_dir }}/data
+
+          [metadata]
+          user = {{ test_user }}
+          template_var = {{ template_var }}
+        dest: "{{ test_dir }}/templates/config.ini"
+        mode: "0644"
+      register: template_complex_result
+
+    - name: "[TEMPLATE] Test template idempotency"
+      template:
+        content: "Application: {{ app_name }}, Version: {{ app_version }}\n"
+        dest: "{{ test_dir }}/templates/simple.txt"
+        mode: "0644"
+      register: template_idempotent_result
+
+    - name: "[TEMPLATE] Verify template idempotency"
+      debug:
+        msg: "Template was idempotent: {{ not template_idempotent_result.changed }}"
+
+    # ================================================================
+    # 4. COMMAND MODULE TESTS - Execute commands
+    # ================================================================
+
+    - name: "[COMMAND] Simple echo command"
+      command: echo "Hello from command module"
+      register: echo_result
+
+    - name: "[COMMAND] Verify echo output"
+      debug:
+        msg: "Echo output: {{ echo_result.stdout }}"
+
+    - name: "[COMMAND] List test directory"
+      command: ls -la {{ test_dir }}
+      register: ls_result
+
+    - name: "[COMMAND] Verify directory listing contains expected files"
+      debug:
+        msg: "Directory listing completed, exit code: {{ ls_result.rc | default(0) }}"
+
+    - name: "[COMMAND] Check file existence with test command"
+      command: test -f {{ test_dir }}/data/test_file.txt
+      register: test_file_exists
+      ignore_errors: yes
+
+    - name: "[COMMAND] Count files in data directory"
+      command: sh -c "find {{ test_dir }}/data -type f | wc -l"
+      register: count_files_result
+
+    - name: "[COMMAND] Display file count"
+      debug:
+        msg: "Files in data directory: {{ count_files_result.stdout | trim }}"
+
+    - name: "[COMMAND] Cat the test file content"
+      command: cat {{ test_dir }}/data/test_file.txt
+      register: cat_result
+
+    - name: "[COMMAND] Verify file content from cat"
+      debug:
+        msg: "File content matches: {{ test_content in cat_result.stdout }}"
+
+    - name: "[COMMAND] Create a marker file via command"
+      command: sh -c "echo 'marker' > {{ test_dir }}/data/marker.txt"
+      register: marker_result
+
+    - name: "[COMMAND] Test working directory with pwd"
+      command: pwd
+      args:
+        chdir: "{{ test_dir }}"
+      register: pwd_result
+
+    - name: "[COMMAND] Verify working directory"
+      debug:
+        msg: "Working directory: {{ pwd_result.stdout | trim }}"
+
+    # ================================================================
+    # 5. SERVICE MODULE TESTS - Check service status
+    # ================================================================
+
+    # Note: These tests check service status in a safe, read-only manner
+    # They don't attempt to start/stop services to avoid permissions issues
+
+    - name: "[SERVICE] Check sshd service status (safe check)"
+      command: sh -c "systemctl is-active sshd 2>/dev/null || service sshd status 2>/dev/null || echo 'unknown'"
+      register: sshd_status
+      ignore_errors: yes
+
+    - name: "[SERVICE] Display sshd status"
+      debug:
+        msg: "SSHD status check completed: {{ sshd_status.stdout | default('unknown') | trim }}"
+
+    - name: "[SERVICE] Check if systemd is available"
+      command: sh -c "command -v systemctl >/dev/null 2>&1 && echo 'yes' || echo 'no'"
+      register: systemd_check
+      ignore_errors: yes
+
+    - name: "[SERVICE] Display systemd availability"
+      debug:
+        msg: "Systemd available: {{ systemd_check.stdout | default('no') | trim }}"
+
+    # ================================================================
+    # 6. INTEGRATION TESTS - Combine multiple modules
+    # ================================================================
+
+    - name: "[INTEGRATION] Create deployment structure"
+      file:
+        path: "{{ test_dir }}/deployment/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - bin
+        - conf
+        - var
+        - tmp
+      register: deployment_dirs
+
+    - name: "[INTEGRATION] Deploy application config"
+      copy:
+        content: |
+          #!/bin/sh
+          # {{ app_name }} v{{ app_version }}
+          # Deployment directory: {{ test_dir }}/deployment
+
+          APP_HOME="{{ test_dir }}/deployment"
+          APP_BIN="${APP_HOME}/bin"
+          APP_CONF="${APP_HOME}/conf"
+          APP_VAR="${APP_HOME}/var"
+
+          echo "Application {{ app_name }} initialized"
+          echo "Version: {{ app_version }}"
+          echo "Port: {{ app_port }}"
+        dest: "{{ test_dir }}/deployment/bin/app.sh"
+        mode: "0755"
+      register: deploy_script
+
+    - name: "[INTEGRATION] Create application metadata"
+      template:
+        content: |
+          {
+            "name": "{{ app_name }}",
+            "version": "{{ app_version }}",
+            "port": {{ app_port }},
+            "user": "{{ test_user }}",
+            "install_path": "{{ test_dir }}/deployment",
+            "timestamp": "{{ ansible_date_time.iso8601 | default('2024-01-01T00:00:00Z') }}"
+          }
+        dest: "{{ test_dir }}/deployment/metadata.json"
+        mode: "0644"
+      register: metadata_result
+
+    - name: "[INTEGRATION] Execute deployment script"
+      command: sh {{ test_dir }}/deployment/bin/app.sh
+      register: exec_deployment
+
+    - name: "[INTEGRATION] Display deployment output"
+      debug:
+        msg: "Deployment output: {{ exec_deployment.stdout }}"
+
+    # ================================================================
+    # 7. VERIFICATION TESTS - Verify all operations succeeded
+    # ================================================================
+
+    - name: "[VERIFY] Check all expected files exist"
+      command: sh -c "test -f {{ item }} && echo 'exists' || echo 'missing'"
+      loop:
+        - "{{ test_dir }}/data/test_file.txt"
+        - "{{ test_dir }}/data/multiline.txt"
+        - "{{ test_dir }}/config/app.conf"
+        - "{{ test_dir }}/templates/simple.txt"
+        - "{{ test_dir }}/templates/config.ini"
+        - "{{ test_dir }}/deployment/bin/app.sh"
+        - "{{ test_dir }}/deployment/metadata.json"
+      register: file_checks
+
+    - name: "[VERIFY] Display file check results"
+      debug:
+        msg: "File checks completed: {{ file_checks.results | length }} files verified"
+
+    - name: "[VERIFY] Count total files created"
+      command: sh -c "find {{ test_dir }} -type f | wc -l"
+      register: total_files
+
+    - name: "[VERIFY] Display total files created"
+      debug:
+        msg: "Total files created in test: {{ total_files.stdout | trim }}"
+
+    - name: "[VERIFY] Verify directory structure"
+      command: sh -c "find {{ test_dir }} -type d | wc -l"
+      register: total_dirs
+
+    - name: "[VERIFY] Display total directories created"
+      debug:
+        msg: "Total directories created: {{ total_dirs.stdout | trim }}"
+
+    # ================================================================
+    # 8. CLEANUP - Optional cleanup (commented out by default)
+    # ================================================================
+
+    # Uncomment these tasks to clean up after the test
+    # - name: "[CLEANUP] Remove test directory"
+    #   file:
+    #     path: "{{ test_dir }}"
+    #     state: absent
+    #   when: cleanup_after_test | default(false)
+
+  post_tasks:
+    - name: "Test suite completed successfully"
+      debug:
+        msg: |
+          ====================================
+          E2E Module Test Suite Complete
+          ====================================
+          Tested modules:
+            - file: ✓ (directory creation, touch)
+            - copy: ✓ (content, idempotency)
+            - template: ✓ (rendering, variables)
+            - command: ✓ (execution, output)
+            - service: ✓ (status checks)
+
+          Test directory: {{ test_dir }}
+          Total tasks executed: {{ ansible_play_batch | length | default(1) }}

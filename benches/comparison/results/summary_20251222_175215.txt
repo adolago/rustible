@@ -1,0 +1,10 @@
+Rustible vs Ansible Benchmark Results
+======================================
+Date: Mon Dec 22 05:52:33 PM CET 2025
+Hosts: 5 (LXC containers on Proxmox)
+Runs per playbook: 3
+
+Average Execution Times (ms):
+-----------------------------
+Playbook                            Ansible     Rustible    Speedup
+--------                            -------     --------    -------

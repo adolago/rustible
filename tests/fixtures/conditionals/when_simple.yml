@@ -1,0 +1,63 @@
+# Test playbook for simple when conditions
+---
+- name: Test simple when conditions
+  hosts: all
+  gather_facts: false
+  vars:
+    enable_feature: true
+    disable_feature: false
+    my_string: "hello"
+    my_number: 42
+    empty_string: ""
+    zero_value: 0
+
+  tasks:
+    - name: Should run - when true
+      debug:
+        msg: "This task runs because when is true"
+      when: true
+
+    - name: Should skip - when false
+      debug:
+        msg: "This task skips because when is false"
+      when: false
+
+    - name: Should run - when True (Python style)
+      debug:
+        msg: "Python-style True works"
+      when: True
+
+    - name: Should skip - when False (Python style)
+      debug:
+        msg: "Python-style False works"
+      when: False
+
+    - name: Should run - truthy variable
+      debug:
+        msg: "enable_feature is truthy"
+      when: enable_feature
+
+    - name: Should skip - falsy variable
+      debug:
+        msg: "disable_feature is falsy"
+      when: disable_feature
+
+    - name: Should run - non-empty string is truthy
+      debug:
+        msg: "Non-empty string is truthy"
+      when: my_string
+
+    - name: Should skip - empty string is falsy
+      debug:
+        msg: "Empty string is falsy"
+      when: empty_string
+
+    - name: Should run - non-zero number is truthy
+      debug:
+        msg: "Non-zero number is truthy"
+      when: my_number
+
+    - name: Should skip - zero is falsy
+      debug:
+        msg: "Zero is falsy"
+      when: zero_value

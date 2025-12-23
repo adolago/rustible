@@ -1,0 +1,9 @@
+---
+# Another role for testing dynamic role selection
+- name: Another role task
+  debug:
+    msg: "Another role executing"
+
+- name: Set another role fact
+  set_fact:
+    another_role_executed: true

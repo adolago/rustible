@@ -1,0 +1,9 @@
+---
+# Tasks to be included in a loop
+- name: Process loop item
+  debug:
+    msg: "Processing item: {{ item }}"
+
+- name: Set fact for loop item
+  set_fact:
+    "loop_processed_{{ item }}": true

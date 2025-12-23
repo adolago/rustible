@@ -1,0 +1,5 @@
+---
+# Common role handlers
+- name: apply common config
+  debug:
+    msg: "Handler: Applying common configuration changes"

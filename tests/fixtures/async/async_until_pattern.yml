@@ -1,0 +1,49 @@
+---
+# Until loop pattern with async_status
+- name: Until pattern with async
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Start deployment
+      command: /opt/deploy/start.sh
+      async: 1800
+      poll: 0
+      register: deploy_job
+
+    - name: Wait for deployment to complete
+      async_status:
+        jid: "{{ deploy_job.ansible_job_id }}"
+      register: deploy_result
+      until: deploy_result.finished
+      retries: 60
+      delay: 30
+
+    - name: Verify deployment success
+      assert:
+        that:
+          - deploy_result.rc == 0
+        fail_msg: "Deployment failed with rc={{ deploy_result.rc }}"
+        success_msg: "Deployment completed successfully"
+
+    - name: Start health check job
+      uri:
+        url: http://localhost:8080/health
+        return_content: yes
+      async: 120
+      poll: 0
+      register: health_job
+      ignore_errors: yes
+
+    - name: Poll until healthy
+      async_status:
+        jid: "{{ health_job.ansible_job_id }}"
+      register: health_result
+      until: health_result.finished and health_result.status == 200
+      retries: 24
+      delay: 5
+      ignore_errors: yes
+
+    - name: Report health status
+      debug:
+        msg: "Service health: {{ 'UP' if health_result.status == 200 else 'DOWN' }}"
+      when: health_result is defined

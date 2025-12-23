@@ -1,0 +1,42 @@
+---
+# Multi-play playbook for integration testing
+- name: First play - Setup
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    play1_var: "from_play1"
+
+  tasks:
+    - name: First play task 1
+      debug:
+        msg: "Play 1, Task 1: {{ play1_var }}"
+
+    - name: First play task 2
+      debug:
+        msg: "Play 1, Task 2"
+
+- name: Second play - Configure
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    play2_var: "from_play2"
+
+  tasks:
+    - name: Second play task 1
+      debug:
+        msg: "Play 2, Task 1: {{ play2_var }}"
+
+    - name: Second play task 2
+      debug:
+        msg: "Play 2, Task 2"
+
+- name: Third play - Verify
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Final verification
+      debug:
+        msg: "All plays completed"

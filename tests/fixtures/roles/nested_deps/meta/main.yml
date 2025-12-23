@@ -1,0 +1,4 @@
+---
+# Deeply nested dependencies: nested_deps -> level1_dep -> level2_dep -> level3_dep
+dependencies:
+  - level1_dep

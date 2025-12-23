@@ -1,0 +1,78 @@
+# Test playbook for when conditions with logical operators
+---
+- name: Test logical operators in when
+  hosts: all
+  gather_facts: false
+  vars:
+    is_admin: true
+    is_logged_in: true
+    is_guest: false
+    is_moderator: false
+    is_active: true
+    is_verified: true
+    is_banned: false
+
+  tasks:
+    # NOT operator tests
+    - name: Should skip - not true
+      debug:
+        msg: "Not true should skip"
+      when: not true
+
+    - name: Should run - not false
+      debug:
+        msg: "Not false should run"
+      when: not false
+
+    - name: Should run - not is_guest
+      debug:
+        msg: "User is not a guest"
+      when: not is_guest
+
+    - name: Should skip - not is_admin
+      debug:
+        msg: "User is not an admin"
+      when: not is_admin
+
+    # AND operator tests
+    - name: Should run - both conditions true
+      debug:
+        msg: "Admin and logged in"
+      when: is_admin and is_logged_in
+
+    - name: Should skip - one condition false
+      debug:
+        msg: "Admin and guest (should not run)"
+      when: is_admin and is_guest
+
+    - name: Should skip - both conditions false
+      debug:
+        msg: "Guest and moderator (should not run)"
+      when: is_guest and is_moderator
+
+    # OR operator tests
+    - name: Should run - first condition true
+      debug:
+        msg: "Admin or guest"
+      when: is_admin or is_guest
+
+    - name: Should run - second condition true
+      debug:
+        msg: "Guest or admin"
+      when: is_guest or is_admin
+
+    - name: Should skip - both conditions false
+      debug:
+        msg: "Guest or moderator (should not run)"
+      when: is_guest or is_moderator
+
+    # Combined operators
+    - name: Should run - complex condition
+      debug:
+        msg: "Active and verified, not banned"
+      when: is_active and is_verified and not is_banned
+
+    - name: Should run - mixed and/or
+      debug:
+        msg: "Admin or (logged in and active)"
+      when: is_admin or is_logged_in and is_active

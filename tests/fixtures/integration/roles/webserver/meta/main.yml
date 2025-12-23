@@ -1,0 +1,10 @@
+---
+# Webserver role metadata
+galaxy_info:
+  role_name: webserver
+  author: Rustible Tests
+  description: Web server configuration role for testing
+  license: MIT
+
+dependencies:
+  - role: common

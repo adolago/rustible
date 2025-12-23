@@ -1,0 +1,26 @@
+# Role metadata
+---
+galaxy_info:
+  role_name: webserver
+  author: Rustible Contributors
+  description: Deploy and configure nginx web server
+  company: Example Inc.
+  license: MIT
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+
+  galaxy_tags:
+    - web
+    - nginx
+    - server
+
+dependencies: []

@@ -1,0 +1,32 @@
+---
+# Async tasks with privilege escalation
+- name: Async with become
+  hosts: all
+  gather_facts: false
+  become: yes
+  become_user: root
+  tasks:
+    - name: Run privileged async command
+      command: /usr/sbin/system-update
+      async: 1800
+      poll: 30
+      register: update_result
+
+    - name: Async system maintenance as root
+      shell: |
+        apt-get update
+        apt-get upgrade -y
+      async: 3600
+      poll: 0
+      become: yes
+      become_user: root
+      register: maintenance_job
+
+    - name: Check maintenance status
+      async_status:
+        jid: "{{ maintenance_job.ansible_job_id }}"
+      register: maintenance_status
+      become: yes
+      until: maintenance_status.finished
+      retries: 120
+      delay: 30

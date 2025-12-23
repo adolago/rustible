@@ -1,0 +1,26 @@
+---
+- name: Play with include_tasks and tags
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Before include
+      debug:
+        msg: "Before"
+      tags:
+        - before
+
+    - name: Include install tasks
+      include_tasks: install_tasks.yml
+      tags:
+        - install
+
+    - name: Include configure tasks
+      include_tasks: configure_tasks.yml
+      tags:
+        - configure
+
+    - name: After include
+      debug:
+        msg: "After"
+      tags:
+        - after

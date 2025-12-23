@@ -1,0 +1,5 @@
+# Partial config - only defaults section
+[defaults]
+forks = 15
+timeout = 90
+remote_user = "partial_user"

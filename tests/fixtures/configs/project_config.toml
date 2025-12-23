@@ -1,0 +1,15 @@
+# Simulated project config (./rustible.cfg)
+[defaults]
+forks = 16
+timeout = 120
+remote_user = "project_user"
+inventory = "./inventory/hosts.yml"
+
+[privilege_escalation]
+become = true
+become_method = "sudo"
+become_user = "admin"
+
+[ssh]
+retries = 5
+private_key_file = "./keys/deploy_key"

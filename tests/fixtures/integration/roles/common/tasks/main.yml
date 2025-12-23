@@ -1,0 +1,24 @@
+---
+# Common role tasks
+- name: Set common facts
+  set_fact:
+    common_role_executed: true
+    common_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d') | default('2024-01-01') }}"
+
+- name: Display common settings
+  debug:
+    msg: "Common role: Setting {{ common_setting | default('default_setting') }}"
+
+- name: Ensure base packages
+  debug:
+    msg: "Would install: {{ item }}"
+  loop:
+    - curl
+    - wget
+    - vim
+    - git
+
+- name: Configure common settings
+  debug:
+    msg: "Common configuration applied"
+  notify: apply common config

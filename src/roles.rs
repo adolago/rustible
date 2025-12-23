@@ -1,7 +1,7 @@
 //! Role definitions for Rustible
 
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// A role containing reusable automation
 #[derive(Debug, Clone, Serialize, Deserialize)]

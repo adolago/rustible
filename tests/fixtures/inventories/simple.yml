@@ -1,0 +1,22 @@
+# Simple Inventory - Basic host and group structure
+#
+# This inventory demonstrates the basic YAML inventory format:
+# - Single group with hosts
+# - Basic host variables
+# - Connection type specification
+---
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+  children:
+    webservers:
+      hosts:
+        web1:
+          ansible_host: 192.168.1.10
+        web2:
+          ansible_host: 192.168.1.11
+    databases:
+      hosts:
+        db1:
+          ansible_host: 192.168.1.20

@@ -54,11 +54,7 @@ impl ParallelTestConfig {
         // Default to scale fleet hosts
         let hosts = env::var("RUSTIBLE_TEST_SCALE_HOSTS")
             .map(|h| h.split(',').map(String::from).collect())
-            .unwrap_or_else(|_| {
-                (151..=160)
-                    .map(|i| format!("192.168.178.{}", i))
-                    .collect()
-            });
+            .unwrap_or_else(|_| (151..=160).map(|i| format!("192.168.178.{}", i)).collect());
 
         let inventory_path = env::var("RUSTIBLE_TEST_INVENTORY").map(PathBuf::from).ok();
 
@@ -1010,14 +1006,18 @@ async fn test_connection_pool_exhaustion() {
     // Get connections up to pool limit
     let conn1 = pool
         .get_or_create(&pool_key, || {
-            Box::pin(async { rustible::connection::SshConnection::connect(ssh_config.clone()).await })
+            Box::pin(async {
+                rustible::connection::SshConnection::connect(ssh_config.clone()).await
+            })
         })
         .await
         .expect("Failed to get conn1");
 
     let conn2 = pool
         .get_or_create(&pool_key, || {
-            Box::pin(async { rustible::connection::SshConnection::connect(ssh_config.clone()).await })
+            Box::pin(async {
+                rustible::connection::SshConnection::connect(ssh_config.clone()).await
+            })
         })
         .await
         .expect("Failed to get conn2");
@@ -1026,7 +1026,9 @@ async fn test_connection_pool_exhaustion() {
     // Behavior depends on implementation
     let result = pool
         .get_or_create(&pool_key, || {
-            Box::pin(async { rustible::connection::SshConnection::connect(ssh_config.clone()).await })
+            Box::pin(async {
+                rustible::connection::SshConnection::connect(ssh_config.clone()).await
+            })
         })
         .await;
 
@@ -1037,7 +1039,9 @@ async fn test_connection_pool_exhaustion() {
     // Should now be able to get a connection
     let conn3 = pool
         .get_or_create(&pool_key, || {
-            Box::pin(async { rustible::connection::SshConnection::connect(ssh_config.clone()).await })
+            Box::pin(async {
+                rustible::connection::SshConnection::connect(ssh_config.clone()).await
+            })
         })
         .await
         .expect("Should get connection after return");

@@ -1,0 +1,26 @@
+---
+# Test meta: flush_handlers
+- name: Test flush handlers
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: First change
+      copy:
+        src: file1.conf
+        dest: /etc/app/file1.conf
+      notify: restart service
+
+    - name: Force handler execution
+      meta: flush_handlers
+
+    - name: Second change (after flush)
+      copy:
+        src: file2.conf
+        dest: /etc/app/file2.conf
+      notify: restart service
+
+  handlers:
+    - name: restart service
+      debug:
+        msg: "Service restarted"

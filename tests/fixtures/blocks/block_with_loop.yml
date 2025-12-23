@@ -1,0 +1,26 @@
+---
+# Block with loop
+- name: Block with loop test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Looped block
+      loop:
+        - first
+        - second
+        - third
+      block:
+        - name: Task in looped block
+          debug:
+            msg: "Processing item: {{ item }}"
+        - name: Another task in loop
+          debug:
+            msg: "Item {{ item }} completed"
+      rescue:
+        - name: Rescue for loop iteration
+          debug:
+            msg: "Rescue for item: {{ item }}"
+      always:
+        - name: Always for loop iteration
+          debug:
+            msg: "Always for item: {{ item }}"

@@ -1,0 +1,19 @@
+---
+# Test handler with delegate_to
+- name: Test handler with delegate_to
+  hosts: webservers
+  gather_facts: false
+
+  tasks:
+    - name: Update load balancer config
+      copy:
+        src: lb.conf
+        dest: /etc/haproxy/haproxy.cfg
+      notify: reload haproxy
+
+  handlers:
+    - name: reload haproxy
+      service:
+        name: haproxy
+        state: reloaded
+      delegate_to: loadbalancer

@@ -1,0 +1,38 @@
+---
+# Nested block structures
+- name: Nested blocks test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Outer block
+      block:
+        - name: Outer task 1
+          debug:
+            msg: "Outer: task 1"
+        - name: Inner block
+          block:
+            - name: Inner task 1
+              debug:
+                msg: "Inner: task 1"
+            - name: Inner task 2
+              debug:
+                msg: "Inner: task 2"
+          rescue:
+            - name: Inner rescue
+              debug:
+                msg: "Inner: rescue"
+          always:
+            - name: Inner always
+              debug:
+                msg: "Inner: always"
+        - name: Outer task 2
+          debug:
+            msg: "Outer: task 2"
+      rescue:
+        - name: Outer rescue
+          debug:
+            msg: "Outer: rescue"
+      always:
+        - name: Outer always
+          debug:
+            msg: "Outer: always"

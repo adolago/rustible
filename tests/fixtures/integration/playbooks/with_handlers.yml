@@ -1,0 +1,44 @@
+---
+# Playbook with handlers for integration testing
+- name: Configure with handlers
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    service_name: "nginx"
+    config_path: "/tmp/rustible_test_config"
+
+  tasks:
+    - name: Create configuration file
+      copy:
+        content: |
+          # Test configuration for {{ service_name }}
+          server {
+              listen 80;
+              server_name localhost;
+          }
+        dest: "{{ config_path }}/{{ service_name }}.conf"
+      notify:
+        - restart service
+        - reload config
+
+    - name: Update secondary config
+      copy:
+        content: "upstream_servers: localhost:8080"
+        dest: "{{ config_path }}/upstream.conf"
+      notify: reload config
+
+    - name: Non-changing task
+      debug:
+        msg: "This task makes no changes"
+
+  handlers:
+    - name: restart service
+      debug:
+        msg: "Handler: Restarting {{ service_name }}"
+
+    - name: reload config
+      debug:
+        msg: "Handler: Reloading configuration"
+      listen:
+        - configuration changed

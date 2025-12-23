@@ -75,7 +75,10 @@ impl Inventory {
             .with_context(|| format!("Failed to read inventory file: {}", path.display()))?;
 
         // Determine format based on extension
-        if path.extension().map_or(false, |ext| ext == "yml" || ext == "yaml") {
+        if path
+            .extension()
+            .map_or(false, |ext| ext == "yml" || ext == "yaml")
+        {
             Self::parse_yaml(&content)
         } else if path.extension().map_or(false, |ext| ext == "json") {
             Self::parse_json(&content)
@@ -324,9 +327,7 @@ impl Inventory {
         self.hosts
             .values()
             .filter(|h| {
-                h.name == pattern
-                    || h.name.contains(pattern)
-                    || glob_match(&h.name, pattern)
+                h.name == pattern || h.name.contains(pattern) || glob_match(&h.name, pattern)
             })
             .collect()
     }
@@ -351,7 +352,8 @@ impl ListHostsArgs {
         let inventory_path = match ctx.inventory() {
             Some(path) => path.clone(),
             None => {
-                ctx.output.error("No inventory specified. Use -i to specify an inventory file.");
+                ctx.output
+                    .error("No inventory specified. Use -i to specify an inventory file.");
                 return Ok(1);
             }
         };
@@ -363,7 +365,8 @@ impl ListHostsArgs {
         let hosts = inventory.get_hosts(&self.pattern);
 
         if hosts.is_empty() {
-            ctx.output.warning(&format!("No hosts matched pattern: {}", self.pattern));
+            ctx.output
+                .warning(&format!("No hosts matched pattern: {}", self.pattern));
             return Ok(0);
         }
 
@@ -390,7 +393,8 @@ impl ListHostsArgs {
             println!("{}", serde_yaml::to_string(&output)?);
         } else if self.graph {
             // Graph output (grouped by groups)
-            ctx.output.section(&format!("Hosts matching pattern: {}", self.pattern));
+            ctx.output
+                .section(&format!("Hosts matching pattern: {}", self.pattern));
 
             let mut groups_shown: HashMap<String, Vec<String>> = HashMap::new();
             for host in &hosts {
@@ -447,10 +451,8 @@ impl ListTasksArgs {
         let content = std::fs::read_to_string(&self.playbook)?;
         let playbook: serde_yaml::Value = serde_yaml::from_str(&content)?;
 
-        ctx.output.section(&format!(
-            "Tasks in playbook: {}",
-            self.playbook.display()
-        ));
+        ctx.output
+            .section(&format!("Tasks in playbook: {}", self.playbook.display()));
 
         let mut task_count = 0;
 
@@ -504,12 +506,7 @@ impl ListTasksArgs {
                         let module = detect_module(task);
 
                         if self.verbose {
-                            println!(
-                                "  {:>3}. {} [{}]",
-                                task_idx + 1,
-                                task_name,
-                                module
-                            );
+                            println!("  {:>3}. {} [{}]", task_idx + 1, task_name, module);
 
                             // Show tags
                             if let Some(tags) = task.get("tags") {

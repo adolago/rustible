@@ -1,0 +1,8 @@
+---
+# Single play playbook - basic
+- name: Single play test
+  hosts: all
+  tasks:
+    - name: Simple debug task
+      debug:
+        msg: "Hello from single play"

@@ -1,0 +1,41 @@
+---
+# Complete block/rescue/always structure
+- name: Block rescue always test
+  hosts: localhost
+  gather_facts: false
+  vars:
+    force_failure: false
+  tasks:
+    - name: Complete block structure
+      block:
+        - name: Block task 1
+          debug:
+            msg: "Block: step 1"
+        - name: Block task 2
+          debug:
+            msg: "Block: step 2"
+        - name: Conditional failure
+          fail:
+            msg: "Triggered failure"
+          when: force_failure
+        - name: Block task 3
+          debug:
+            msg: "Block: step 3"
+      rescue:
+        - name: Rescue task 1
+          debug:
+            msg: "Rescue: handling error"
+        - name: Rescue task 2
+          debug:
+            msg: "Rescue: recovery complete"
+      always:
+        - name: Always task 1
+          debug:
+            msg: "Always: cleanup started"
+        - name: Always task 2
+          debug:
+            msg: "Always: cleanup complete"
+
+    - name: Post-block verification
+      debug:
+        msg: "Execution continues after block"

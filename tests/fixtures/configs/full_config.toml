@@ -1,0 +1,97 @@
+# Full Rustible Configuration File
+# Used for testing complete configuration loading
+
+# Top-level keys must appear before any [section] headers
+module_paths = ["/opt/modules", "/usr/share/rustible/modules"]
+role_paths = ["/opt/custom/roles"]
+
+[defaults]
+inventory = "/etc/rustible/hosts"
+remote_user = "deploy"
+forks = 20
+module_name = "shell"
+host_key_checking = false
+timeout = 120
+gathering = true
+transport = "ssh"
+hash_behaviour = "merge"
+retry_files_enabled = true
+retry_files_save_path = "/var/log/rustible/retry"
+roles_path = ["/opt/roles", "/usr/share/rustible/roles"]
+collections_path = ["/opt/collections"]
+action_plugins = ["/opt/plugins/action"]
+strategy_plugins = ["/opt/plugins/strategy"]
+strategy = "free"
+
+[connection]
+pipelining = true
+control_path = "/tmp/rustible-cp/%r@%h:%p"
+control_master = "auto"
+control_persist = 300
+ssh_executable = "/usr/bin/ssh"
+scp_if_ssh = true
+sftp_batch_mode = true
+
+[privilege_escalation]
+become = true
+become_method = "sudo"
+become_user = "root"
+become_ask_pass = false
+become_flags = "-H -S -n"
+
+[ssh]
+ssh_args = ["-o", "ControlMaster=auto", "-o", "ControlPersist=60s"]
+ssh_common_args = ["-o", "ForwardAgent=yes"]
+ssh_extra_args = ["-vv"]
+scp_extra_args = ["-l", "8192"]
+sftp_extra_args = ["-B", "32768"]
+retries = 5
+private_key_file = "/home/deploy/.ssh/deploy_key"
+known_hosts_file = "/home/deploy/.ssh/known_hosts"
+control_path = "/tmp/ssh-mux/%r@%h:%p"
+pipelining = true
+
+[colors]
+enabled = true
+highlight = "bright_white"
+verbose = "bright_blue"
+warn = "yellow"
+error = "bright_red"
+debug = "gray"
+ok = "bright_green"
+changed = "bright_yellow"
+unreachable = "red"
+skipped = "bright_cyan"
+diff_add = "green"
+diff_remove = "red"
+diff_lines = "cyan"
+
+[logging]
+log_path = "/var/log/rustible/rustible.log"
+log_level = "debug"
+log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+log_timestamp = true
+
+[vault]
+password_file = "/etc/rustible/vault_password"
+identity_list = ["vault1@/path/to/pass1", "vault2@/path/to/pass2"]
+encrypt_vault_id = "vault1"
+
+[galaxy]
+server = "https://galaxy.example.com"
+ignore_certs = false
+cache_dir = "/var/cache/rustible/galaxy"
+
+[[galaxy.server_list]]
+name = "galaxy"
+url = "https://galaxy.ansible.com"
+token = "token123"
+
+[[galaxy.server_list]]
+name = "private"
+url = "https://private.galaxy.local"
+
+[environment]
+ANSIBLE_HOST_KEY_CHECKING = "False"
+PYTHONPATH = "/opt/python/lib"
+JAVA_HOME = "/usr/lib/jvm/java-17"

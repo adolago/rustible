@@ -3,22 +3,33 @@
 //! This module provides the core traits, types, and registry for the Rustible module system.
 //! Modules are the building blocks that perform actual work on target systems.
 
+pub mod apt;
+pub mod assert;
+pub mod blockinfile;
 pub mod command;
 pub mod copy;
+pub mod debug;
+pub mod dnf;
 // TODO: facts module needs to be converted to sync Module trait
 // pub mod facts;
 pub mod file;
-// TODO: lineinfile module needs to be converted to sync Module trait
-// pub mod lineinfile;
+pub mod git;
+pub mod group;
+pub mod lineinfile;
 pub mod package;
+pub mod pip;
 pub mod python;
 pub mod service;
+pub mod set_fact;
 pub mod shell;
+pub mod stat;
 pub mod template;
 pub mod user;
+pub mod yum;
 
 pub use python::PythonModuleExecutor;
 
+use crate::connection::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -298,7 +309,7 @@ impl ModuleOutput {
 pub type ModuleParams = HashMap<String, serde_json::Value>;
 
 /// Context for module execution
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ModuleContext {
     /// Whether to run in check mode (dry run)
     pub check_mode: bool,
@@ -316,6 +327,24 @@ pub struct ModuleContext {
     pub become_method: Option<String>,
     /// User to become
     pub become_user: Option<String>,
+    /// Connection to use for remote operations
+    pub connection: Option<Arc<dyn Connection + Send + Sync>>,
+}
+
+impl std::fmt::Debug for ModuleContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModuleContext")
+            .field("check_mode", &self.check_mode)
+            .field("diff_mode", &self.diff_mode)
+            .field("vars", &self.vars)
+            .field("facts", &self.facts)
+            .field("work_dir", &self.work_dir)
+            .field("become", &self.r#become)
+            .field("become_method", &self.become_method)
+            .field("become_user", &self.become_user)
+            .field("connection", &self.connection.as_ref().map(|c| c.identifier()))
+            .finish()
+    }
 }
 
 impl Default for ModuleContext {
@@ -329,6 +358,7 @@ impl Default for ModuleContext {
             r#become: false,
             become_method: None,
             become_user: None,
+            connection: None,
         }
     }
 }
@@ -355,6 +385,11 @@ impl ModuleContext {
 
     pub fn with_facts(mut self, facts: HashMap<String, serde_json::Value>) -> Self {
         self.facts = facts;
+        self
+    }
+
+    pub fn with_connection(mut self, connection: Arc<dyn Connection + Send + Sync>) -> Self {
+        self.connection = Some(connection);
         self
     }
 }
@@ -554,16 +589,39 @@ impl ModuleRegistry {
     /// Create a registry with all built-in modules
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
+        // Package management modules
+        registry.register(Arc::new(apt::AptModule));
+        registry.register(Arc::new(dnf::DnfModule));
+        registry.register(Arc::new(package::PackageModule));
+        registry.register(Arc::new(pip::PipModule));
+        registry.register(Arc::new(yum::YumModule));
+
+        // Core command modules
         registry.register(Arc::new(command::CommandModule));
         registry.register(Arc::new(shell::ShellModule));
+
+        // File/transport modules
+        registry.register(Arc::new(blockinfile::BlockinfileModule));
         registry.register(Arc::new(copy::CopyModule));
-        registry.register(Arc::new(template::TemplateModule));
         registry.register(Arc::new(file::FileModule));
-        registry.register(Arc::new(package::PackageModule));
+        registry.register(Arc::new(lineinfile::LineinfileModule));
+        registry.register(Arc::new(template::TemplateModule));
+
+        // System management modules
+        registry.register(Arc::new(group::GroupModule));
         registry.register(Arc::new(service::ServiceModule));
         registry.register(Arc::new(user::UserModule));
-        // TODO: These modules need to be converted to sync Module trait
-        // registry.register(Arc::new(lineinfile::LineinfileModule));
+
+        // Source control modules
+        registry.register(Arc::new(git::GitModule));
+
+        // Logic/utility modules
+        registry.register(Arc::new(assert::AssertModule));
+        registry.register(Arc::new(debug::DebugModule));
+        registry.register(Arc::new(set_fact::SetFactModule));
+        registry.register(Arc::new(stat::StatModule));
+
+        // TODO: facts module needs to be converted to sync Module trait
         // registry.register(Arc::new(facts::FactsModule));
         registry
     }

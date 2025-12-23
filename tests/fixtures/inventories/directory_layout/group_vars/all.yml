@@ -1,0 +1,7 @@
+---
+# Variables for all hosts
+ntp_server: ntp.example.com
+dns_servers:
+  - 8.8.8.8
+  - 8.8.4.4
+timezone: UTC

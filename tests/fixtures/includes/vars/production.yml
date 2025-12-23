@@ -1,0 +1,6 @@
+---
+# Production environment variables
+environment: production
+debug_mode: false
+log_level: warn
+database_host: prod-db.example.com

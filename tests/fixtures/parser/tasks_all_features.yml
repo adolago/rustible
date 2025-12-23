@@ -1,0 +1,150 @@
+---
+# Tasks file with all task features
+
+- name: Basic task with module
+  debug:
+    msg: "Hello world"
+
+- name: Task with when condition (single)
+  debug:
+    msg: "Conditional task"
+  when: ansible_os_family == "Debian"
+
+- name: Task with when condition (multiple)
+  debug:
+    msg: "Multiple conditions"
+  when:
+    - ansible_distribution == "Ubuntu"
+    - ansible_distribution_version >= "20.04"
+    - install_nginx | bool
+
+- name: Task with loop
+  debug:
+    msg: "Item: {{ item }}"
+  loop:
+    - one
+    - two
+    - three
+
+- name: Task with loop and loop_control
+  debug:
+    msg: "Index {{ my_idx }}: {{ my_item }}"
+  loop:
+    - first
+    - second
+    - third
+  loop_control:
+    loop_var: my_item
+    index_var: my_idx
+    label: "{{ my_item | upper }}"
+    pause: 1
+    extended: true
+
+- name: Task with legacy with_items
+  debug:
+    msg: "{{ item }}"
+  with_items:
+    - apple
+    - banana
+    - cherry
+
+- name: Task with register
+  command: echo "hello"
+  register: echo_result
+
+- name: Task with notify (single)
+  copy:
+    content: "config data"
+    dest: /etc/myapp/config
+  notify: restart myapp
+
+- name: Task with notify (multiple)
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+  notify:
+    - restart nginx
+    - reload php-fpm
+
+- name: Task with delegate_to
+  shell: hostname
+  delegate_to: localhost
+  delegate_facts: true
+
+- name: Task with ignore_errors
+  command: /bin/false
+  ignore_errors: true
+
+- name: Task with changed_when and failed_when
+  shell: /usr/bin/update-script.sh
+  register: update_result
+  changed_when: update_result.rc == 2
+  failed_when: update_result.rc not in [0, 2]
+
+- name: Task with tags
+  apt:
+    name: nginx
+    state: present
+  tags:
+    - packages
+    - nginx
+    - never
+
+- name: Task with become options
+  command: systemctl restart nginx
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: Task with retries and until
+  uri:
+    url: http://localhost:8080/health
+    method: GET
+  register: health_check
+  retries: 5
+  delay: 10
+  until: health_check.status == 200
+
+- name: Task with async and poll
+  command: /usr/bin/long-running-job.sh
+  async: 3600
+  poll: 30
+
+- name: Task with environment
+  command: echo $MY_VAR
+  environment:
+    MY_VAR: "custom_value"
+    DEBUG: "1"
+
+- name: Task with task-level vars
+  debug:
+    msg: "Local var: {{ local_var }}"
+  vars:
+    local_var: "task-specific-value"
+    other_var: 42
+
+- name: Task with run_once
+  debug:
+    msg: "Only once across all hosts"
+  run_once: true
+
+- name: Task with throttle and timeout
+  uri:
+    url: http://api.example.com/slow-endpoint
+  throttle: 2
+  timeout: 60
+
+- name: Task with no_log
+  command: echo "{{ secret_password }}"
+  no_log: true
+
+- name: Task with diff and check_mode
+  copy:
+    content: "test"
+    dest: /tmp/test
+  diff: true
+  check_mode: true
+
+- name: Task with any_errors_fatal
+  command: /critical/script.sh
+  any_errors_fatal: true

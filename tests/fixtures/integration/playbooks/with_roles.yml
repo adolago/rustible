@@ -1,0 +1,22 @@
+---
+# Playbook with roles for integration testing
+- name: Deploy with roles
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    app_name: "testapp"
+    app_version: "1.0.0"
+
+  roles:
+    - role: common
+      vars:
+        common_setting: "enabled"
+    - role: webserver
+      when: install_web | default(true)
+    - app
+
+  tasks:
+    - name: Final configuration task
+      debug:
+        msg: "Roles completed, running final tasks"

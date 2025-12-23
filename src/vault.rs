@@ -1,12 +1,15 @@
 //! Vault for encrypted secrets management
 
-use aes_gcm::{Aes256Gcm, KeyInit, aead::{Aead, generic_array::GenericArray}};
-use aes_gcm::aead::generic_array::typenum;
-use argon2::Argon2;
-use argon2::password_hash::SaltString;
-use rand::rngs::OsRng;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use crate::error::{Error, Result};
+use aes_gcm::aead::generic_array::typenum;
+use aes_gcm::{
+    aead::{generic_array::GenericArray, Aead},
+    Aes256Gcm, KeyInit,
+};
+use argon2::password_hash::SaltString;
+use argon2::Argon2;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use rand::rngs::OsRng;
 
 /// Vault header marker
 const VAULT_HEADER: &str = "$RUSTIBLE_VAULT;1.0;AES256";
@@ -19,7 +22,9 @@ pub struct Vault {
 impl Vault {
     /// Create a new vault with password
     pub fn new(password: impl Into<String>) -> Self {
-        Self { password: password.into() }
+        Self {
+            password: password.into(),
+        }
     }
 
     /// Encrypt content
@@ -31,7 +36,8 @@ impl Vault {
         let nonce_bytes: [u8; 12] = rand::random();
         let nonce = GenericArray::from_slice(&nonce_bytes);
 
-        let ciphertext = cipher.encrypt(nonce, content.as_bytes())
+        let ciphertext = cipher
+            .encrypt(nonce, content.as_bytes())
             .map_err(|e| Error::Vault(format!("Encryption failed: {}", e)))?;
 
         let mut encrypted = Vec::new();
@@ -50,16 +56,19 @@ impl Vault {
             return Err(Error::Vault("Invalid vault format".into()));
         }
 
-        let encrypted = BASE64.decode(lines[1..].join(""))
+        let encrypted = BASE64
+            .decode(lines[1..].join(""))
             .map_err(|e| Error::Vault(format!("Base64 decode failed: {}", e)))?;
 
         // Parse salt, nonce, and ciphertext
-        let salt_end = encrypted.iter().position(|&b| b == b'\n')
+        let salt_end = encrypted
+            .iter()
+            .position(|&b| b == b'\n')
             .ok_or_else(|| Error::Vault("Invalid vault format".into()))?;
         let salt_str = std::str::from_utf8(&encrypted[..salt_end])
             .map_err(|_| Error::Vault("Invalid salt".into()))?;
-        let salt = SaltString::from_b64(salt_str)
-            .map_err(|_| Error::Vault("Invalid salt".into()))?;
+        let salt =
+            SaltString::from_b64(salt_str).map_err(|_| Error::Vault("Invalid salt".into()))?;
 
         let nonce_start = salt_end + 1;
         let nonce = GenericArray::from_slice(&encrypted[nonce_start..nonce_start + 12]);
@@ -68,7 +77,8 @@ impl Vault {
         let key = self.derive_key(&salt)?;
         let cipher = Aes256Gcm::new(&key);
 
-        let plaintext = cipher.decrypt(nonce, ciphertext)
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
             .map_err(|_| Error::Vault("Decryption failed - wrong password?".into()))?;
 
         String::from_utf8(plaintext)
@@ -83,7 +93,8 @@ impl Vault {
     fn derive_key(&self, salt: &SaltString) -> Result<GenericArray<u8, typenum::U32>> {
         let argon2 = Argon2::default();
         let mut key = [0u8; 32];
-        argon2.hash_password_into(self.password.as_bytes(), salt.as_str().as_bytes(), &mut key)
+        argon2
+            .hash_password_into(self.password.as_bytes(), salt.as_str().as_bytes(), &mut key)
             .map_err(|e| Error::Vault(format!("Key derivation failed: {}", e)))?;
         Ok(GenericArray::clone_from_slice(&key))
     }

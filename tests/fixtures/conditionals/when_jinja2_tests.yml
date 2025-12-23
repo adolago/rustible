@@ -1,0 +1,92 @@
+# Test playbook for Jinja2 tests in when conditions
+---
+- name: Test Jinja2 tests in when conditions
+  hosts: all
+  gather_facts: false
+  vars:
+    defined_var: "I am defined"
+    null_var: null
+    true_var: true
+    false_var: false
+    string_var: "hello"
+    number_var: 42
+    list_var:
+      - item1
+      - item2
+      - item3
+    dict_var:
+      key1: value1
+      key2: value2
+    empty_list: []
+    empty_dict: {}
+
+  tasks:
+    # is defined / is not defined tests
+    - name: Should run - variable is defined
+      debug:
+        msg: "defined_var is defined"
+      when: defined_var is defined
+
+    - name: Should skip - undefined variable
+      debug:
+        msg: "undefined_var is defined"
+      when: undefined_var is defined
+
+    - name: Should run - variable is not defined
+      debug:
+        msg: "missing_var is not defined"
+      when: missing_var is not defined
+
+    - name: Should skip - defined var is not defined
+      debug:
+        msg: "defined_var is not defined"
+      when: defined_var is not defined
+
+    # in operator tests
+    - name: Should run - item in list
+      debug:
+        msg: "item1 is in list_var"
+      when: "'item1' in list_var"
+
+    - name: Should skip - item not in list
+      debug:
+        msg: "item4 is in list_var"
+      when: "'item4' in list_var"
+
+    # Combine defined and comparison
+    - name: Should run - defined and equals
+      debug:
+        msg: "defined_var is defined and has value"
+      when: defined_var is defined and defined_var == "I am defined"
+
+    # Boolean tests
+    - name: Should run - true_var is truthy
+      debug:
+        msg: "true_var is truthy"
+      when: true_var
+
+    - name: Should skip - false_var is falsy
+      debug:
+        msg: "false_var is truthy"
+      when: false_var
+
+    # List/Dict tests
+    - name: Should run - non-empty list is truthy
+      debug:
+        msg: "list_var is truthy"
+      when: list_var
+
+    - name: Should skip - empty list is falsy
+      debug:
+        msg: "empty_list is truthy"
+      when: empty_list
+
+    - name: Should run - non-empty dict is truthy
+      debug:
+        msg: "dict_var is truthy"
+      when: dict_var
+
+    - name: Should skip - empty dict is falsy
+      debug:
+        msg: "empty_dict is truthy"
+      when: empty_dict

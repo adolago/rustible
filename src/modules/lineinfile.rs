@@ -2,10 +2,16 @@
 //!
 //! This module ensures a particular line is in a file, or replaces an existing
 //! line using a back-referenced regular expression.
+//!
+//! Supports both local and remote execution:
+//! - Local: Uses native Rust std::fs operations
+//! - Remote: Downloads file via connection, edits in memory, uploads back
 
 use super::{
-    Diff, Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParamExt,
 };
+use crate::connection::TransferOptions;
 use regex::Regex;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -246,81 +252,211 @@ impl LineinfileModule {
             line.to_string()
         }
     }
-}
 
-impl Module for LineinfileModule {
-    fn name(&self) -> &'static str {
-        "lineinfile"
-    }
-
-    fn description(&self) -> &'static str {
-        "Ensure a particular line is in a file"
-    }
-
-    fn required_params(&self) -> &[&'static str] {
-        &["path"]
-    }
-
-    fn validate_params(&self, params: &ModuleParams) -> ModuleResult<()> {
-        let state = params
-            .get_string("state")?
-            .unwrap_or_else(|| "present".to_string());
-
-        if state == "present" {
-            if params.get("line").is_none() && params.get("regexp").is_none() {
-                return Err(ModuleError::MissingParameter(
-                    "Either 'line' or 'regexp' is required for state=present".to_string(),
-                ));
-            }
-        } else if state == "absent" {
-            if params.get("line").is_none() && params.get("regexp").is_none() {
-                return Err(ModuleError::MissingParameter(
-                    "Either 'line' or 'regexp' is required for state=absent".to_string(),
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
-    fn execute(
-        &self,
-        params: &ModuleParams,
+    /// Execute lineinfile on a remote host via connection
+    ///
+    /// This method downloads the file content from the remote host, performs line edits
+    /// in memory, and uploads the modified content back. This pattern avoids remote
+    /// command execution and works across all connection types (SSH, Docker, etc.).
+    #[allow(clippy::too_many_arguments)]
+    fn execute_remote(
         context: &ModuleContext,
+        path: &str,
+        state: LineState,
+        line: Option<String>,
+        regexp: Option<Regex>,
+        insertafter: Option<String>,
+        insertbefore: Option<String>,
+        create: bool,
+        backup: bool,
+        backup_suffix: String,
+        firstmatch: bool,
+        backrefs: bool,
+        mode: Option<u32>,
     ) -> ModuleResult<ModuleOutput> {
-        let path_str = params.get_string_required("path")?;
-        let path = Path::new(&path_str);
-        let state_str = params
-            .get_string("state")?
-            .unwrap_or_else(|| "present".to_string());
-        let state = LineState::from_str(&state_str)?;
-        let line = params.get_string("line")?;
-        let regexp_str = params.get_string("regexp")?;
-        let insertafter = params.get_string("insertafter")?;
-        let insertbefore = params.get_string("insertbefore")?;
-        let create = params.get_bool_or("create", false);
-        let backup = params.get_bool_or("backup", false);
-        let backup_suffix = params
-            .get_string("backup_suffix")?
-            .unwrap_or_else(|| "~".to_string());
-        let firstmatch = params.get_bool_or("firstmatch", false);
-        let backrefs = params.get_bool_or("backrefs", false);
-        let mode = params.get_u32("mode")?;
+        let connection = context.connection.as_ref().ok_or_else(|| {
+            ModuleError::ExecutionFailed("No connection available for remote execution".to_string())
+        })?;
 
-        // Compile regexp if provided
-        let regexp = if let Some(ref re_str) = regexp_str {
-            Some(
-                Regex::new(re_str)
-                    .map_err(|e| ModuleError::InvalidParameter(format!("Invalid regexp: {}", e)))?,
-            )
-        } else {
-            None
-        };
+        // Use tokio runtime to execute async operations
+        let rt = tokio::runtime::Runtime::new().map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to create runtime: {}", e))
+        })?;
+
+        let conn = connection.clone();
+        let check_mode = context.check_mode;
+        let diff_mode = context.diff_mode;
+
+        rt.block_on(async move {
+            let remote_path = Path::new(path);
+
+            // Check if file exists on remote
+            let file_exists = conn.path_exists(remote_path).await.unwrap_or(false);
+
+            if !file_exists && !create {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "File '{}' does not exist and create=false",
+                    path
+                )));
+            }
+
+            // Download file content (empty if doesn't exist)
+            let content = if file_exists {
+                conn.download_content(remote_path)
+                    .await
+                    .map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to download file: {}", e))
+                    })?
+            } else {
+                Vec::new()
+            };
+
+            // Parse lines from content
+            let content_str = String::from_utf8_lossy(&content);
+            let mut lines: Vec<String> = content_str.lines().map(|s| s.to_string()).collect();
+            let original_lines = lines.clone();
+
+            // Apply changes based on state
+            let changed = match state {
+                LineState::Present => {
+                    let line_str = line.as_ref().ok_or_else(|| {
+                        ModuleError::MissingParameter(
+                            "line is required for state=present".to_string(),
+                        )
+                    })?;
+
+                    // Handle backrefs
+                    let final_line = if backrefs {
+                        if let Some(ref re) = regexp {
+                            // Find the matching line and apply backrefs
+                            let matching_line = lines.iter().find(|l| re.is_match(l));
+                            if let Some(orig) = matching_line {
+                                Self::apply_backrefs(line_str, re, orig)
+                            } else {
+                                // No match - line won't be added when using backrefs
+                                return Ok(ModuleOutput::ok(format!(
+                                    "No match for regexp in '{}'",
+                                    path
+                                )));
+                            }
+                        } else {
+                            line_str.clone()
+                        }
+                    } else {
+                        line_str.clone()
+                    };
+
+                    Self::ensure_line_present(
+                        &mut lines,
+                        &final_line,
+                        regexp.as_ref(),
+                        insertafter.as_deref(),
+                        insertbefore.as_deref(),
+                        firstmatch,
+                    )?
+                }
+                LineState::Absent => {
+                    Self::ensure_line_absent(&mut lines, line.as_deref(), regexp.as_ref())?
+                }
+            };
+
+            if !changed {
+                return Ok(ModuleOutput::ok(format!(
+                    "File '{}' already has desired content",
+                    path
+                )));
+            }
+
+            // In check mode, don't actually write
+            if check_mode {
+                let diff = if diff_mode {
+                    Some(Diff::new(original_lines.join("\n"), lines.join("\n")))
+                } else {
+                    None
+                };
+
+                let mut output = ModuleOutput::changed(format!("Would modify '{}'", path));
+
+                if let Some(d) = diff {
+                    output = output.with_diff(d);
+                }
+
+                return Ok(output);
+            }
+
+            // Create backup if requested
+            if backup && file_exists {
+                let backup_path_str = format!("{}{}", path, backup_suffix);
+                let backup_dest = Path::new(&backup_path_str);
+
+                conn.upload_content(&content, backup_dest, None)
+                    .await
+                    .map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to create backup: {}", e))
+                    })?;
+            }
+
+            // Prepare new content
+            let new_content = if lines.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", lines.join("\n"))
+            };
+
+            // Build transfer options
+            let mut transfer_opts = TransferOptions::new();
+            if let Some(m) = mode {
+                transfer_opts = transfer_opts.with_mode(m);
+            }
+            transfer_opts = transfer_opts.with_create_dirs();
+
+            // Upload modified content
+            conn.upload_content(new_content.as_bytes(), remote_path, Some(transfer_opts))
+                .await
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to upload file: {}", e))
+                })?;
+
+            let mut output = ModuleOutput::changed(format!("Modified '{}'", path));
+
+            if diff_mode {
+                output = output.with_diff(Diff::new(original_lines.join("\n"), lines.join("\n")));
+            }
+
+            if backup && file_exists {
+                output = output.with_data(
+                    "backup_file",
+                    serde_json::json!(format!("{}{}", path, backup_suffix)),
+                );
+            }
+
+            Ok(output)
+        })
+    }
+
+    /// Execute lineinfile locally using filesystem operations
+    #[allow(clippy::too_many_arguments)]
+    fn execute_local(
+        context: &ModuleContext,
+        path_str: &str,
+        state: LineState,
+        line: Option<String>,
+        regexp: Option<Regex>,
+        insertafter: Option<String>,
+        insertbefore: Option<String>,
+        create: bool,
+        backup: bool,
+        backup_suffix: String,
+        firstmatch: bool,
+        backrefs: bool,
+        mode: Option<u32>,
+    ) -> ModuleResult<ModuleOutput> {
+        let path = Path::new(path_str);
 
         // Check if file exists
         if !path.exists() && !create {
             return Err(ModuleError::ExecutionFailed(format!(
-                "File '{}' does not exist",
+                "File '{}' does not exist and create=false",
                 path_str
             )));
         }
@@ -416,6 +552,117 @@ impl Module for LineinfileModule {
         }
 
         Ok(output)
+    }
+}
+
+impl Module for LineinfileModule {
+    fn name(&self) -> &'static str {
+        "lineinfile"
+    }
+
+    fn description(&self) -> &'static str {
+        "Ensure a particular line is in a file"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::NativeTransport
+    }
+
+    fn required_params(&self) -> &[&'static str] {
+        &["path"]
+    }
+
+    fn validate_params(&self, params: &ModuleParams) -> ModuleResult<()> {
+        let state = params
+            .get_string("state")?
+            .unwrap_or_else(|| "present".to_string());
+
+        if state == "present" {
+            if params.get("line").is_none() && params.get("regexp").is_none() {
+                return Err(ModuleError::MissingParameter(
+                    "Either 'line' or 'regexp' is required for state=present".to_string(),
+                ));
+            }
+        } else if state == "absent" {
+            if params.get("line").is_none() && params.get("regexp").is_none() {
+                return Err(ModuleError::MissingParameter(
+                    "Either 'line' or 'regexp' is required for state=absent".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn execute(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+    ) -> ModuleResult<ModuleOutput> {
+        let path_str = params.get_string_required("path")?;
+        let state_str = params
+            .get_string("state")?
+            .unwrap_or_else(|| "present".to_string());
+        let state = LineState::from_str(&state_str)?;
+        let line = params.get_string("line")?;
+        let regexp_str = params.get_string("regexp")?;
+        let insertafter = params.get_string("insertafter")?;
+        let insertbefore = params.get_string("insertbefore")?;
+        let create = params.get_bool_or("create", false);
+        let backup = params.get_bool_or("backup", false);
+        let backup_suffix = params
+            .get_string("backup_suffix")?
+            .unwrap_or_else(|| "~".to_string());
+        let firstmatch = params.get_bool_or("firstmatch", false);
+        let backrefs = params.get_bool_or("backrefs", false);
+        let mode = params.get_u32("mode")?;
+
+        // Compile regexp if provided
+        let regexp = if let Some(ref re_str) = regexp_str {
+            Some(
+                Regex::new(re_str)
+                    .map_err(|e| ModuleError::InvalidParameter(format!("Invalid regexp: {}", e)))?,
+            )
+        } else {
+            None
+        };
+
+        // Route to remote or local execution based on connection availability
+        if context.connection.is_some() {
+            // Remote execution via connection
+            Self::execute_remote(
+                context,
+                &path_str,
+                state,
+                line,
+                regexp,
+                insertafter,
+                insertbefore,
+                create,
+                backup,
+                backup_suffix,
+                firstmatch,
+                backrefs,
+                mode,
+            )
+        } else {
+            // Local execution using filesystem operations
+            Self::execute_local(
+                context,
+                &path_str,
+                state,
+                line,
+                regexp,
+                insertafter,
+                insertbefore,
+                create,
+                backup,
+                backup_suffix,
+                firstmatch,
+                backrefs,
+                mode,
+            )
+        }
     }
 
     fn check(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<ModuleOutput> {

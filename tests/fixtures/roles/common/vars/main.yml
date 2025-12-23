@@ -1,0 +1,6 @@
+---
+# Role vars (higher precedence than defaults)
+sysctl_settings:
+  net.core.somaxconn: 65535
+  vm.swappiness: 10
+internal_config_version: "1.0.0"

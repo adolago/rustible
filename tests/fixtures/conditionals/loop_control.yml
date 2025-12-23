@@ -1,0 +1,59 @@
+# Test playbook for loop_control options
+---
+- name: Test loop_control options
+  hosts: all
+  gather_facts: false
+  vars:
+    users:
+      - name: alice
+        role: admin
+        password: secret_password_alice
+      - name: bob
+        role: developer
+        password: secret_password_bob
+
+  tasks:
+    - name: Custom loop variable name
+      debug:
+        msg: "Processing package: {{ package }}"
+      loop:
+        - nginx
+        - php
+        - mysql
+      loop_control:
+        loop_var: package
+
+    - name: Custom index variable
+      debug:
+        msg: "Index {{ my_idx }}: {{ item }}"
+      loop:
+        - red
+        - green
+        - blue
+      loop_control:
+        index_var: my_idx
+
+    - name: Custom label for output
+      debug:
+        msg: "Processing user {{ item.name }}"
+      loop: "{{ users }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Combined loop_control options
+      debug:
+        msg: "User {{ user.name }} at index {{ user_index }}"
+      loop: "{{ users }}"
+      loop_control:
+        loop_var: user
+        index_var: user_index
+        label: "{{ user.name }}"
+
+    - name: Pause between iterations
+      debug:
+        msg: "Processing with delay: {{ item }}"
+      loop:
+        - step1
+        - step2
+      loop_control:
+        pause: 0

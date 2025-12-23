@@ -1,0 +1,88 @@
+# Benchmark: Parallel Host Execution
+# Tests: Parallel vs sequential speedup with multiple hosts
+# Purpose: Demonstrates the performance impact of different fork values
+---
+- name: Parallel host execution benchmark
+  hosts: all
+  gather_facts: false
+  tasks:
+    # Simple commands that execute quickly - ideal for showing parallel speedup
+    - name: Command 1 - Hostname
+      command: hostname
+      changed_when: false
+
+    - name: Command 2 - Uptime
+      command: uptime
+      changed_when: false
+
+    - name: Command 3 - Date
+      command: date
+      changed_when: false
+
+    - name: Command 4 - Whoami
+      command: whoami
+      changed_when: false
+
+    - name: Command 5 - PWD
+      command: pwd
+      changed_when: false
+
+    - name: Command 6 - Echo hostname
+      command: echo "Host {{ inventory_hostname }}"
+      changed_when: false
+
+    - name: Command 7 - Uname
+      command: uname -a
+      changed_when: false
+
+    - name: Command 8 - Environment check
+      command: env | grep -E '^(PATH|HOME|USER)=' | wc -l
+      changed_when: false
+
+    - name: Command 9 - CPU info
+      command: cat /proc/cpuinfo | grep -c processor
+      changed_when: false
+
+    - name: Command 10 - Memory info
+      command: cat /proc/meminfo | grep MemTotal
+      changed_when: false
+
+    - name: Command 11 - Disk usage
+      command: df -h /
+      changed_when: false
+
+    - name: Command 12 - Process count
+      command: ps aux | wc -l
+      changed_when: false
+
+    - name: Command 13 - Network interfaces
+      command: ip addr show | grep -c 'inet '
+      changed_when: false
+
+    - name: Command 14 - System load
+      command: cat /proc/loadavg
+      changed_when: false
+
+    - name: Command 15 - Kernel version
+      command: uname -r
+      changed_when: false
+
+    - name: Command 16 - Shell info
+      command: echo "$SHELL"
+      changed_when: false
+
+    - name: Command 17 - Time zone
+      command: date +%Z
+      changed_when: false
+
+    - name: Command 18 - Python version
+      command: python3 --version
+      changed_when: false
+
+    - name: Command 19 - System architecture
+      command: arch
+      changed_when: false
+
+    - name: Command 20 - Directory listing
+      command: ls -la /etc | wc -l
+      changed_when: false

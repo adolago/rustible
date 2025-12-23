@@ -1,0 +1,52 @@
+# Test playbook for simple loop constructs
+---
+- name: Test simple loop constructs
+  hosts: all
+  gather_facts: false
+  vars:
+    packages:
+      - nginx
+      - php
+      - mysql
+    colors:
+      - red
+      - green
+      - blue
+
+  tasks:
+    - name: Simple loop with inline list
+      debug:
+        msg: "Processing item: {{ item }}"
+      loop:
+        - item1
+        - item2
+        - item3
+
+    - name: Loop with variable list
+      debug:
+        msg: "Installing package: {{ item }}"
+      loop: "{{ packages }}"
+
+    - name: Loop with numbers
+      debug:
+        msg: "Number: {{ item }}"
+      loop:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+
+    - name: Empty loop should do nothing
+      debug:
+        msg: "This should not appear"
+      loop: []
+
+    - name: Loop with mixed types
+      debug:
+        msg: "Value: {{ item }}"
+      loop:
+        - hello
+        - 42
+        - true
+        - null

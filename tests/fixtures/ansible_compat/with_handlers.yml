@@ -1,0 +1,88 @@
+---
+# Handler Notification Playbook Compatibility Test
+# Tests: single notify, multiple notifies, listen, handler ordering
+
+- name: Configure services with handlers
+  hosts: all
+  gather_facts: false
+  become: true
+
+  vars:
+    config_dir: /etc/myapp
+    log_dir: /var/log/myapp
+
+  tasks:
+    - name: Create config directory
+      file:
+        path: "{{ config_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Deploy main configuration
+      copy:
+        src: files/main.conf
+        dest: "{{ config_dir }}/main.conf"
+      notify:
+        - reload configuration
+        - restart application
+
+    - name: Deploy database configuration
+      template:
+        src: templates/db.conf.j2
+        dest: "{{ config_dir }}/db.conf"
+      notify: restart application
+
+    - name: Deploy logging configuration
+      copy:
+        src: files/logging.conf
+        dest: "{{ config_dir }}/logging.conf"
+      notify:
+        - rotate logs
+        - restart application
+
+    - name: Update system packages
+      package:
+        name: "*"
+        state: latest
+      notify: reboot if needed
+
+    - name: Deploy nginx site config
+      template:
+        src: templates/site.conf.j2
+        dest: /etc/nginx/sites-available/myapp
+      notify: app reconfigured
+
+  handlers:
+    - name: reload configuration
+      command: /usr/local/bin/reload-config.sh
+
+    - name: restart application
+      service:
+        name: myapp
+        state: restarted
+
+    - name: rotate logs
+      command: logrotate -f /etc/logrotate.d/myapp
+
+    - name: reboot if needed
+      reboot:
+        msg: "Rebooting after package update"
+        reboot_timeout: 300
+      when: reboot_required is defined and reboot_required
+
+    # Handlers with listen - multiple handlers triggered by one name
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+      listen: app reconfigured
+
+    - name: restart php-fpm
+      service:
+        name: php-fpm
+        state: restarted
+      listen: app reconfigured
+
+    - name: clear cache
+      command: /usr/local/bin/clear-cache.sh
+      listen: app reconfigured

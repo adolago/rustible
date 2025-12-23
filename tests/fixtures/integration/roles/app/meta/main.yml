@@ -1,0 +1,12 @@
+---
+# App role metadata
+galaxy_info:
+  role_name: app
+  author: Rustible Tests
+  description: Application deployment role for testing
+  license: MIT
+
+dependencies:
+  - role: common
+  - role: webserver
+    when: app_needs_webserver | default(false)

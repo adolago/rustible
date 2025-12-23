@@ -1,8 +1,8 @@
 //! Template engine for Rustible (Jinja2-compatible)
 
+use crate::error::Result;
 use minijinja::Environment;
 use std::collections::HashMap;
-use crate::error::Result;
 
 /// Template engine using minijinja
 pub struct TemplateEngine {
@@ -17,7 +17,11 @@ impl TemplateEngine {
     }
 
     /// Render a template string
-    pub fn render(&self, template: &str, vars: &HashMap<String, serde_json::Value>) -> Result<String> {
+    pub fn render(
+        &self,
+        template: &str,
+        vars: &HashMap<String, serde_json::Value>,
+    ) -> Result<String> {
         let tmpl = self.env.template_from_str(template)?;
         let result = tmpl.render(vars)?;
         Ok(result)

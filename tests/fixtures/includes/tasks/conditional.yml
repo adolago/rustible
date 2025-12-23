@@ -1,0 +1,9 @@
+---
+# Conditionally included tasks
+- name: Conditional task
+  debug:
+    msg: "Conditional include was true"
+
+- name: Set conditional fact
+  set_fact:
+    conditional_included: true

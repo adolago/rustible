@@ -1,0 +1,27 @@
+---
+# async_status module usage patterns
+- name: Check async job status
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Start long-running job
+      command: /usr/bin/long-job.sh
+      async: 3600
+      poll: 0
+      register: long_job
+
+    - name: Wait a bit
+      pause:
+        seconds: 5
+
+    - name: Check job status
+      async_status:
+        jid: "{{ long_job.ansible_job_id }}"
+      register: job_result
+      until: job_result.finished
+      retries: 30
+      delay: 10
+
+    - name: Verify job completed
+      debug:
+        msg: "Job finished with status: {{ job_result.rc }}"

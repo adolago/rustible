@@ -1,0 +1,3 @@
+---
+# Role variables (higher precedence than defaults)
+role_internal_var: "internal_value"

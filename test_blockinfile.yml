@@ -1,0 +1,41 @@
+---
+- name: Test blockinfile module
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Create test file
+      file:
+        path: /tmp/test_blockinfile.txt
+        state: touch
+
+    - name: Add a block to the file
+      blockinfile:
+        path: /tmp/test_blockinfile.txt
+        block: |
+          This is line 1
+          This is line 2
+          This is line 3
+        marker: "# {mark} MANAGED BLOCK"
+
+    - name: Verify block is idempotent
+      blockinfile:
+        path: /tmp/test_blockinfile.txt
+        block: |
+          This is line 1
+          This is line 2
+          This is line 3
+        marker: "# {mark} MANAGED BLOCK"
+
+    - name: Update the block
+      blockinfile:
+        path: /tmp/test_blockinfile.txt
+        block: |
+          Updated line 1
+          Updated line 2
+        marker: "# {mark} MANAGED BLOCK"
+
+    - name: Remove the block
+      blockinfile:
+        path: /tmp/test_blockinfile.txt
+        state: absent
+        marker: "# {mark} MANAGED BLOCK"

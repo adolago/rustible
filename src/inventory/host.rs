@@ -337,17 +337,17 @@ impl Host {
                     "ansible_become" => {
                         host.connection.r#become = value.to_lowercase() == "true" || value == "1"
                     }
-                    "ansible_become_method" => {
-                        host.connection.become_method = value.to_string()
-                    }
+                    "ansible_become_method" => host.connection.become_method = value.to_string(),
                     "ansible_become_user" => host.connection.become_user = value.to_string(),
                     "ansible_python_interpreter" => {
                         host.connection.python_interpreter = Some(value.to_string())
                     }
                     _ => {
                         // Store as generic variable
-                        host.vars
-                            .insert(key.to_string(), serde_yaml::Value::String(value.to_string()));
+                        host.vars.insert(
+                            key.to_string(),
+                            serde_yaml::Value::String(value.to_string()),
+                        );
                     }
                 }
             }
@@ -413,8 +413,8 @@ mod tests {
 
     #[test]
     fn test_host_parse() {
-        let host = Host::parse("web1 ansible_host=10.0.0.1 ansible_port=2222 ansible_user=admin")
-            .unwrap();
+        let host =
+            Host::parse("web1 ansible_host=10.0.0.1 ansible_port=2222 ansible_user=admin").unwrap();
         assert_eq!(host.name, "web1");
         assert_eq!(host.address(), "10.0.0.1");
         assert_eq!(host.connection.ssh.port, 2222);

@@ -1,0 +1,12 @@
+---
+# Test empty handlers list
+- name: Test empty handlers
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Simple task without notify
+      debug:
+        msg: "No handlers to run"
+
+  handlers: []

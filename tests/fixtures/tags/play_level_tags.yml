@@ -1,0 +1,25 @@
+---
+- name: Play with play-level tags
+  hosts: localhost
+  gather_facts: false
+  tags:
+    - webserver
+    - production
+  tasks:
+    - name: Task inherits play tags
+      debug:
+        msg: "This task inherits webserver and production tags"
+
+    - name: Task with additional tag
+      debug:
+        msg: "This has play tags plus extra"
+      tags:
+        - nginx
+
+- name: Second play without tags
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Task in untagged play
+      debug:
+        msg: "No play-level tags"

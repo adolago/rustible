@@ -1,0 +1,54 @@
+# Benchmark 02: File Operations
+# Tests: File creation, content writing, permissions
+---
+- name: File operations benchmark
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Create test directory
+      file:
+        path: /tmp/rustible_bench
+        state: directory
+        mode: '0755'
+
+    - name: Create test file 1
+      copy:
+        content: "Test content for benchmark 1\n"
+        dest: /tmp/rustible_bench/file1.txt
+        mode: '0644'
+
+    - name: Create test file 2
+      copy:
+        content: "Test content for benchmark 2\n"
+        dest: /tmp/rustible_bench/file2.txt
+        mode: '0644'
+
+    - name: Create test file 3
+      copy:
+        content: "Test content for benchmark 3\nWith multiple lines\nFor testing\n"
+        dest: /tmp/rustible_bench/file3.txt
+        mode: '0644'
+
+    - name: Verify file exists
+      stat:
+        path: /tmp/rustible_bench/file1.txt
+      register: file_stat
+
+    - name: Read file content
+      command: cat /tmp/rustible_bench/file1.txt
+      changed_when: false
+
+    - name: Remove test file 1
+      file:
+        path: /tmp/rustible_bench/file1.txt
+        state: absent
+
+    - name: Remove test file 2
+      file:
+        path: /tmp/rustible_bench/file2.txt
+        state: absent
+
+    - name: Remove test directory
+      file:
+        path: /tmp/rustible_bench
+        state: absent

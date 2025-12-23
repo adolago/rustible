@@ -1,0 +1,22 @@
+# Test playbook for run_once with delegate_to
+---
+- name: Run once with delegate test
+  hosts: webservers
+  gather_facts: false
+  tasks:
+    - name: Run once on first host
+      debug:
+        msg: "Run once from {{ inventory_hostname }}"
+      run_once: true
+
+    - name: Run once with delegate_to
+      debug:
+        msg: "Run once delegated to db1"
+      delegate_to: db1
+      run_once: true
+
+    - name: Run once and register
+      command: echo "single_execution"
+      delegate_to: localhost
+      run_once: true
+      register: single_result

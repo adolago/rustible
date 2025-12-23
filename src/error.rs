@@ -394,9 +394,7 @@ impl Error {
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
-            Error::TaskSkipped(_)
-                | Error::ConnectionTimeout { .. }
-                | Error::TaskTimeout { .. }
+            Error::TaskSkipped(_) | Error::ConnectionTimeout { .. } | Error::TaskTimeout { .. }
         )
     }
 

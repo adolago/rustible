@@ -1,0 +1,45 @@
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+    web01:
+      ansible_host: 192.168.1.10
+    web02:
+      ansible_host: 192.168.1.11
+    web03:
+      ansible_host: 192.168.1.12
+    db01:
+      ansible_host: 192.168.1.20
+    db02:
+      ansible_host: 192.168.1.21
+    cache01:
+      ansible_host: 192.168.1.30
+    app01:
+      ansible_host: 192.168.1.40
+    app02:
+      ansible_host: 192.168.1.41
+  children:
+    webservers:
+      hosts:
+        web01: {}
+        web02: {}
+        web03: {}
+    dbservers:
+      hosts:
+        db01: {}
+        db02: {}
+    appservers:
+      hosts:
+        app01: {}
+        app02: {}
+    cacheservers:
+      hosts:
+        cache01: {}
+    production:
+      children:
+        webservers: {}
+        dbservers: {}
+    staging:
+      children:
+        appservers: {}
+        cacheservers: {}

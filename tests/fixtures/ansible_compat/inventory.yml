@@ -1,0 +1,92 @@
+---
+# YAML Inventory Compatibility Test
+# Tests: hosts, groups, children, vars, host vars, group vars
+
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: /usr/bin/python3
+
+  children:
+    webservers:
+      hosts:
+        web1:
+          ansible_host: 192.168.1.10
+          ansible_user: deploy
+          ansible_port: 22
+          http_port: 80
+        web2:
+          ansible_host: 192.168.1.11
+          ansible_user: deploy
+          ansible_port: 22
+          http_port: 8080
+        web3:
+          ansible_host: 192.168.1.12
+          ansible_user: webadmin
+          ansible_ssh_private_key_file: ~/.ssh/web_key
+      vars:
+        nginx_version: "1.18"
+        server_type: nginx
+        max_connections: 1000
+
+    databases:
+      hosts:
+        db1:
+          ansible_host: 192.168.1.20
+          ansible_user: dbadmin
+          db_port: 5432
+          db_role: primary
+        db2:
+          ansible_host: 192.168.1.21
+          ansible_user: dbadmin
+          db_port: 5432
+          db_role: replica
+      vars:
+        db_engine: postgresql
+        db_version: "14"
+
+    appservers:
+      hosts:
+        app1:
+          ansible_host: 192.168.1.30
+          app_port: 5000
+        app2:
+          ansible_host: 192.168.1.31
+          app_port: 5001
+        app3:
+          ansible_host: 192.168.1.32
+          app_port: 5002
+      vars:
+        app_user: apprunner
+        app_environment: production
+
+    # Nested groups
+    production:
+      children:
+        webservers:
+        databases:
+        appservers:
+      vars:
+        environment: production
+        log_level: warn
+
+    staging:
+      hosts:
+        staging1:
+          ansible_host: 192.168.2.10
+          environment: staging
+      vars:
+        environment: staging
+        log_level: debug
+
+    # Group for become settings
+    privileged:
+      hosts:
+        web1:
+        db1:
+        app1:
+      vars:
+        ansible_become: true
+        ansible_become_method: sudo
+        ansible_become_user: root

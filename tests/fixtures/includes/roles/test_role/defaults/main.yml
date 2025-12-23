@@ -1,0 +1,8 @@
+---
+# Default variables for test_role
+role_var: "default_value"
+role_port: 8080
+role_enabled: true
+role_list:
+  - default_item1
+  - default_item2

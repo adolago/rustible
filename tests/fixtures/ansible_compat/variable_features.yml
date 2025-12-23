@@ -1,0 +1,205 @@
+---
+# Variable Features Playbook Compatibility Test
+# Tests: variable precedence, filters, tests, complex structures
+
+- name: Test variable features
+  hosts: all
+  gather_facts: false
+
+  vars:
+    # Simple types
+    string_var: "hello world"
+    integer_var: 42
+    float_var: 3.14
+    boolean_true: true
+    boolean_false: false
+    null_var: null
+
+    # Lists/Arrays
+    simple_list:
+      - item1
+      - item2
+      - item3
+
+    mixed_list:
+      - "string"
+      - 123
+      - true
+      - null
+
+    # Dictionaries/Maps
+    simple_dict:
+      key1: value1
+      key2: value2
+      key3: value3
+
+    nested_dict:
+      level1:
+        level2:
+          level3:
+            deep_value: "found it"
+        sibling: "sibling value"
+
+    # Complex structures
+    users:
+      - name: alice
+        uid: 1001
+        groups:
+          - wheel
+          - developers
+        home: /home/alice
+      - name: bob
+        uid: 1002
+        groups:
+          - developers
+        home: /home/bob
+      - name: charlie
+        uid: 1003
+        groups:
+          - users
+        home: /home/charlie
+
+    # Variables for filter tests
+    padded_string: "  trimme me  "
+    mixed_case: "HeLLo WoRLd"
+    comma_list: "one,two,three,four"
+    template_string: "{{ string_var }} - {{ integer_var }}"
+    undefined_default_test: "{{ undefined_var | default('default_value') }}"
+
+  tasks:
+    # Test simple variable access
+    - name: Access simple variables
+      debug:
+        msg: "String: {{ string_var }}, Int: {{ integer_var }}, Bool: {{ boolean_true }}"
+
+    # Test list access
+    - name: Access list by index
+      debug:
+        msg: "First item: {{ simple_list[0] }}, Last item: {{ simple_list[-1] }}"
+
+    # Test dictionary access
+    - name: Access dictionary values
+      debug:
+        msg: "Key1: {{ simple_dict.key1 }}, Key2: {{ simple_dict['key2'] }}"
+
+    # Test nested access
+    - name: Access nested values
+      debug:
+        msg: "Deep: {{ nested_dict.level1.level2.level3.deep_value }}"
+
+    # Test filter: upper
+    - name: Test upper filter
+      debug:
+        msg: "{{ string_var | upper }}"
+      register: upper_result
+
+    # Test filter: lower
+    - name: Test lower filter
+      debug:
+        msg: "{{ mixed_case | lower }}"
+
+    # Test filter: default
+    - name: Test default filter with undefined
+      debug:
+        msg: "{{ undefined_variable | default('fallback') }}"
+
+    - name: Test default filter with defined
+      debug:
+        msg: "{{ string_var | default('fallback') }}"
+
+    # Test filter: trim
+    - name: Test trim filter
+      debug:
+        msg: "'{{ padded_string | trim }}'"
+
+    # Test filter: length (count in Ansible)
+    - name: Test length filter
+      debug:
+        msg: "List has {{ simple_list | length }} items"
+
+    # Test filter: join
+    - name: Test join filter
+      debug:
+        msg: "{{ simple_list | join(', ') }}"
+
+    # Test filter: first/last
+    - name: Test first filter
+      debug:
+        msg: "First: {{ simple_list | first }}"
+
+    - name: Test last filter
+      debug:
+        msg: "Last: {{ simple_list | last }}"
+
+    # Test conditional: is defined
+    - name: Test 'is defined' condition
+      debug:
+        msg: "string_var is defined"
+      when: string_var is defined
+
+    # Test conditional: is undefined
+    - name: Test 'is not defined' condition
+      debug:
+        msg: "nonexistent_var is not defined"
+      when: nonexistent_var is not defined
+
+    # Test conditional: boolean
+    - name: Test boolean condition true
+      debug:
+        msg: "boolean_true is true"
+      when: boolean_true
+
+    - name: Test boolean condition false (should skip)
+      debug:
+        msg: "This should be skipped"
+      when: boolean_false
+
+    # Test conditional: comparison
+    - name: Test numeric comparison
+      debug:
+        msg: "integer_var > 40"
+      when: integer_var > 40
+
+    - name: Test string comparison
+      debug:
+        msg: "string_var equals 'hello world'"
+      when: string_var == "hello world"
+
+    # Test conditional: in list
+    - name: Test 'in' operator
+      debug:
+        msg: "item1 is in simple_list"
+      when: "'item1' in simple_list"
+
+    # Test loop with complex items
+    - name: Loop over list of dicts
+      debug:
+        msg: "User: {{ item.name }}, UID: {{ item.uid }}, Home: {{ item.home }}"
+      loop: "{{ users }}"
+
+    # Test loop with index
+    - name: Loop with index
+      debug:
+        msg: "Index {{ ansible_loop.index }}: {{ item }}"
+      loop: "{{ simple_list }}"
+      loop_control:
+        extended: true
+
+    # Test register and access result
+    - name: Run command and register
+      command: echo "test output"
+      register: cmd_result
+
+    - name: Access registered variable
+      debug:
+        msg: "stdout: {{ cmd_result.stdout }}, rc: {{ cmd_result.rc }}"
+
+    # Test set_fact
+    - name: Set a new fact
+      set_fact:
+        computed_value: "{{ integer_var * 2 }}"
+        combined_list: "{{ simple_list + ['item4'] }}"
+
+    - name: Use set_fact value
+      debug:
+        msg: "Computed: {{ computed_value }}"

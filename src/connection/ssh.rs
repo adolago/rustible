@@ -15,7 +15,9 @@ use std::time::Duration;
 use tokio::task;
 use tracing::{debug, trace, warn};
 
-use super::config::{default_identity_files, expand_path, ConnectionConfig, HostConfig, RetryConfig};
+use super::config::{
+    default_identity_files, expand_path, ConnectionConfig, HostConfig, RetryConfig,
+};
 use super::{
     CommandResult, Connection, ConnectionError, ConnectionResult, ExecuteOptions, FileStat,
     TransferOptions,
@@ -363,12 +365,9 @@ impl SshConnection {
 
         // Read stderr
         let mut stderr = String::new();
-        channel
-            .stderr()
-            .read_to_string(&mut stderr)
-            .map_err(|e| {
-                ConnectionError::ExecutionFailed(format!("Failed to read stderr: {}", e))
-            })?;
+        channel.stderr().read_to_string(&mut stderr).map_err(|e| {
+            ConnectionError::ExecutionFailed(format!("Failed to read stderr: {}", e))
+        })?;
 
         // Wait for exit and get exit status
         channel.wait_close().ok();
@@ -524,15 +523,13 @@ impl Connection for SshConnection {
 
             // Write to remote file
             let mode = options.mode.unwrap_or(0o644);
-            let mut remote_file = sftp
-                .create(&remote_path)
-                .map_err(|e| {
-                    ConnectionError::TransferFailed(format!(
-                        "Failed to create remote file {}: {}",
-                        remote_path.display(),
-                        e
-                    ))
-                })?;
+            let mut remote_file = sftp.create(&remote_path).map_err(|e| {
+                ConnectionError::TransferFailed(format!(
+                    "Failed to create remote file {}: {}",
+                    remote_path.display(),
+                    e
+                ))
+            })?;
 
             remote_file.write_all(&content).map_err(|e| {
                 ConnectionError::TransferFailed(format!("Failed to write to remote file: {}", e))
@@ -604,15 +601,13 @@ impl Connection for SshConnection {
 
             // Write to remote file
             let mode = options.mode.unwrap_or(0o644);
-            let mut remote_file = sftp
-                .create(&remote_path)
-                .map_err(|e| {
-                    ConnectionError::TransferFailed(format!(
-                        "Failed to create remote file {}: {}",
-                        remote_path.display(),
-                        e
-                    ))
-                })?;
+            let mut remote_file = sftp.create(&remote_path).map_err(|e| {
+                ConnectionError::TransferFailed(format!(
+                    "Failed to create remote file {}: {}",
+                    remote_path.display(),
+                    e
+                ))
+            })?;
 
             remote_file.write_all(&content).map_err(|e| {
                 ConnectionError::TransferFailed(format!("Failed to write to remote file: {}", e))
@@ -778,11 +773,7 @@ impl Connection for SshConnection {
             let sftp = Self::get_sftp(&session)?;
 
             let stat = sftp.stat(&path).map_err(|e| {
-                ConnectionError::TransferFailed(format!(
-                    "Failed to stat {}: {}",
-                    path.display(),
-                    e
-                ))
+                ConnectionError::TransferFailed(format!("Failed to stat {}: {}", path.display(), e))
             })?;
 
             Ok(FileStat {
@@ -926,7 +917,14 @@ impl SshConnectionBuilder {
         };
 
         let config = ConnectionConfig::default();
-        SshConnection::connect(&self.host, self.port, &self.user, Some(host_config), &config).await
+        SshConnection::connect(
+            &self.host,
+            self.port,
+            &self.user,
+            Some(host_config),
+            &config,
+        )
+        .await
     }
 }
 

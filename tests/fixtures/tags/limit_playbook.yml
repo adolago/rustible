@@ -1,0 +1,20 @@
+---
+- name: Play for limit testing
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Debug host
+      debug:
+        msg: "Running on {{ inventory_hostname }}"
+
+    - name: Install task
+      debug:
+        msg: "Installing on {{ inventory_hostname }}"
+      tags:
+        - install
+
+    - name: Configure task
+      debug:
+        msg: "Configuring on {{ inventory_hostname }}"
+      tags:
+        - configure

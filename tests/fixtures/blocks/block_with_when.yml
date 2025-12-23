@@ -1,0 +1,30 @@
+---
+# Block with conditional execution
+- name: Block with when condition test
+  hosts: localhost
+  gather_facts: false
+  vars:
+    execute_block: true
+    skip_block: false
+  tasks:
+    - name: Conditional block - should run
+      when: execute_block
+      block:
+        - name: Task in conditional block
+          debug:
+            msg: "Block executed because condition was true"
+      always:
+        - name: Always in conditional block
+          debug:
+            msg: "Always section runs"
+
+    - name: Conditional block - should skip
+      when: skip_block
+      block:
+        - name: Task in skipped block
+          debug:
+            msg: "This should not appear"
+      always:
+        - name: Always in skipped block
+          debug:
+            msg: "This should not appear either"

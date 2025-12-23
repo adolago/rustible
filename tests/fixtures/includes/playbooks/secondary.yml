@@ -1,0 +1,15 @@
+---
+# Secondary playbook for import_playbook testing
+- name: Secondary playbook
+  hosts: all
+  gather_facts: false
+  vars:
+    secondary_var: "from_secondary"
+  tasks:
+    - name: Secondary playbook task
+      debug:
+        msg: "Running secondary playbook with var={{ secondary_var }}"
+
+    - name: Set secondary fact
+      set_fact:
+        secondary_playbook_run: true

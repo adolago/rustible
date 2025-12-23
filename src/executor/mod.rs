@@ -619,6 +619,8 @@ impl DependencyGraph {
             .entry(task.to_string())
             .or_default()
             .push(dependency.to_string());
+        // Also ensure the dependency exists as a node (with no dependencies of its own)
+        self.nodes.entry(dependency.to_string()).or_default();
     }
 
     /// Get topologically sorted task order
@@ -633,7 +635,7 @@ impl DependencyGraph {
             }
         }
 
-        result.reverse();
+        // Don't reverse - the order is already correct (dependencies come before dependents)
         Ok(result)
     }
 
@@ -691,7 +693,13 @@ mod tests {
         graph.add_dependency("task2", "task1");
 
         let order = graph.topological_sort().unwrap();
-        assert_eq!(order, vec!["task1", "task2", "task3"]);
+        // The order should respect dependencies: task1 before task2 before task3
+        assert_eq!(order.len(), 3);
+        let t1_pos = order.iter().position(|x| *x == "task1").unwrap();
+        let t2_pos = order.iter().position(|x| *x == "task2").unwrap();
+        let t3_pos = order.iter().position(|x| *x == "task3").unwrap();
+        assert!(t1_pos < t2_pos, "task1 should come before task2");
+        assert!(t2_pos < t3_pos, "task2 should come before task3");
     }
 
     #[test]

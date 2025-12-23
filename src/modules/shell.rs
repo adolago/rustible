@@ -2,17 +2,24 @@
 //!
 //! This module executes commands through a shell, enabling shell features
 //! like pipes, redirects, environment variable expansion, etc.
+//!
+//! Supports both local execution (using std::process::Command) and remote
+//! execution via async connections (SSH, Docker, etc.).
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
+use crate::connection::{Connection, ExecuteOptions};
+use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 
 /// Module for executing shell commands
 pub struct ShellModule;
 
 impl ShellModule {
+    /// Get shell executable and flag for local execution
     fn get_shell(&self, params: &ModuleParams) -> ModuleResult<(String, String)> {
         // Get shell executable
         let executable = params
@@ -31,10 +38,75 @@ impl ShellModule {
         Ok((executable, flag))
     }
 
-    fn check_creates_removes(&self, params: &ModuleParams) -> ModuleResult<Option<ModuleOutput>> {
+    /// Build the full shell command for remote execution
+    fn build_shell_command(&self, cmd: &str, params: &ModuleParams) -> ModuleResult<String> {
+        let executable = params
+            .get_string("executable")?
+            .unwrap_or_else(|| "/bin/sh".to_string());
+
+        // Different shells have different syntax for running commands
+        let flag = if executable.ends_with("fish") {
+            "-c"
+        } else if executable.ends_with("cmd.exe") || executable.ends_with("cmd") {
+            "/c"
+        } else {
+            "-c"
+        };
+
+        // Escape the command for shell execution
+        let escaped_cmd = cmd.replace('\'', "'\\''");
+        Ok(format!("{} {} '{}'", executable, flag, escaped_cmd))
+    }
+
+    /// Build ExecuteOptions from params for remote execution
+    fn build_execute_options(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+    ) -> ModuleResult<ExecuteOptions> {
+        let mut options = ExecuteOptions::new();
+
+        // Set working directory
+        if let Some(chdir) = params.get_string("chdir")? {
+            options = options.with_cwd(chdir);
+        } else if let Some(ref work_dir) = context.work_dir {
+            options = options.with_cwd(work_dir.clone());
+        }
+
+        // Set environment variables
+        if let Some(serde_json::Value::Object(env)) = params.get("env") {
+            for (key, value) in env {
+                if let serde_json::Value::String(v) = value {
+                    options = options.with_env(key, v);
+                }
+            }
+        }
+
+        // Set timeout
+        if let Some(timeout) = params.get_i64("timeout")? {
+            if timeout > 0 {
+                options = options.with_timeout(timeout as u64);
+            }
+        }
+
+        // Handle privilege escalation from context
+        if context.r#become {
+            options.escalate = true;
+            options.escalate_user = context.become_user.clone();
+            options.escalate_method = context.become_method.clone();
+        }
+
+        Ok(options)
+    }
+
+    /// Check creates/removes conditions locally
+    fn check_creates_removes_local(
+        &self,
+        params: &ModuleParams,
+    ) -> ModuleResult<Option<ModuleOutput>> {
         // Check 'creates' - skip if file exists
         if let Some(creates) = params.get_string("creates")? {
-            if std::path::Path::new(&creates).exists() {
+            if Path::new(&creates).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' exists",
                     creates
@@ -44,7 +116,7 @@ impl ShellModule {
 
         // Check 'removes' - skip if file doesn't exist
         if let Some(removes) = params.get_string("removes")? {
-            if !std::path::Path::new(&removes).exists() {
+            if !Path::new(&removes).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' does not exist",
                     removes
@@ -54,32 +126,52 @@ impl ShellModule {
 
         Ok(None)
     }
-}
 
-impl Module for ShellModule {
-    fn name(&self) -> &'static str {
-        "shell"
+    /// Check creates/removes conditions on remote host
+    async fn check_creates_removes_remote(
+        &self,
+        params: &ModuleParams,
+        connection: &Arc<dyn Connection + Send + Sync>,
+    ) -> ModuleResult<Option<ModuleOutput>> {
+        // Check 'creates' - skip if file exists
+        if let Some(creates) = params.get_string("creates")? {
+            let exists = connection
+                .path_exists(Path::new(&creates))
+                .await
+                .unwrap_or(false);
+            if exists {
+                return Ok(Some(ModuleOutput::ok(format!(
+                    "Skipped, '{}' exists",
+                    creates
+                ))));
+            }
+        }
+
+        // Check 'removes' - skip if file doesn't exist
+        if let Some(removes) = params.get_string("removes")? {
+            let exists = connection
+                .path_exists(Path::new(&removes))
+                .await
+                .unwrap_or(false);
+            if !exists {
+                return Ok(Some(ModuleOutput::ok(format!(
+                    "Skipped, '{}' does not exist",
+                    removes
+                ))));
+            }
+        }
+
+        Ok(None)
     }
 
-    fn description(&self) -> &'static str {
-        "Execute shell commands with full shell features"
-    }
-
-    fn classification(&self) -> ModuleClassification {
-        ModuleClassification::RemoteCommand
-    }
-
-    fn required_params(&self) -> &[&'static str] {
-        &["cmd"]
-    }
-
-    fn execute(
+    /// Execute shell command locally using std::process::Command
+    fn execute_local(
         &self,
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
         // Check creates/removes conditions
-        if let Some(output) = self.check_creates_removes(params)? {
+        if let Some(output) = self.check_creates_removes_local(params)? {
             return Ok(output);
         }
 
@@ -143,7 +235,7 @@ impl Module for ShellModule {
 
             if output.status.success() {
                 return Ok(
-                    ModuleOutput::changed(format!("Shell command executed successfully"))
+                    ModuleOutput::changed("Shell command executed successfully".to_string())
                         .with_command_output(Some(stdout), Some(stderr), Some(rc)),
                 );
             } else {
@@ -185,19 +277,124 @@ impl Module for ShellModule {
         }
     }
 
-    fn check(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<ModuleOutput> {
-        // Check creates/removes conditions
-        if let Some(output) = self.check_creates_removes(params)? {
-            return Ok(output);
-        }
+    /// Execute shell command on remote host using async connection
+    fn execute_remote(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+        connection: Arc<dyn Connection + Send + Sync>,
+    ) -> ModuleResult<ModuleOutput> {
+        // Use tokio runtime to execute async operations
+        let rt = tokio::runtime::Runtime::new().map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to create runtime: {}", e))
+        })?;
 
+        let params_clone = params.clone();
+        let check_mode = context.check_mode;
         let cmd = params.get_string_required("cmd")?;
-        let _ = context;
+        let shell_cmd = self.build_shell_command(&cmd, params)?;
+        let options = self.build_execute_options(params, context)?;
+        let warn_on_stderr = params.get_bool_or("warn", true);
 
-        Ok(
-            ModuleOutput::changed(format!("Would execute shell command: {}", cmd))
-                .with_diff(Diff::new("(none)", format!("Execute: {}", cmd))),
-        )
+        rt.block_on(async {
+            // Check creates/removes conditions on remote
+            if let Some(output) = self
+                .check_creates_removes_remote(&params_clone, &connection)
+                .await?
+            {
+                return Ok(output);
+            }
+
+            // In check mode, return what would happen
+            if check_mode {
+                return Ok(ModuleOutput::changed(format!(
+                    "Would execute shell command: {}",
+                    cmd
+                )));
+            }
+
+            // Execute via connection
+            // Note: The connection.execute() runs through a shell anyway,
+            // but we wrap with explicit shell call for consistency and to
+            // support custom shell executables
+            let result = connection
+                .execute(&shell_cmd, Some(options))
+                .await
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!(
+                        "Failed to execute shell command '{}': {}",
+                        cmd, e
+                    ))
+                })?;
+
+            if result.success {
+                let mut output =
+                    ModuleOutput::changed("Shell command executed successfully".to_string())
+                        .with_command_output(
+                            Some(result.stdout.clone()),
+                            Some(result.stderr.clone()),
+                            Some(result.exit_code),
+                        );
+
+                if warn_on_stderr && !result.stderr.is_empty() {
+                    output
+                        .data
+                        .insert("warnings".to_string(), serde_json::json!([result.stderr]));
+                }
+
+                Ok(output)
+            } else {
+                Err(ModuleError::CommandFailed {
+                    code: result.exit_code,
+                    message: if result.stderr.is_empty() {
+                        result.stdout
+                    } else {
+                        result.stderr
+                    },
+                })
+            }
+        })
+    }
+}
+
+impl Module for ShellModule {
+    fn name(&self) -> &'static str {
+        "shell"
+    }
+
+    fn description(&self) -> &'static str {
+        "Execute shell commands with full shell features"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::RemoteCommand
+    }
+
+    fn required_params(&self) -> &[&'static str] {
+        &["cmd"]
+    }
+
+    fn execute(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+    ) -> ModuleResult<ModuleOutput> {
+        // Dispatch to local or remote execution based on connection
+        if let Some(ref connection) = context.connection {
+            self.execute_remote(params, context, connection.clone())
+        } else {
+            self.execute_local(params, context)
+        }
+    }
+
+    fn check(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<ModuleOutput> {
+        // For check mode, we run execute with check_mode=true in context
+        // The execute methods already handle check_mode internally
+        let check_context = ModuleContext {
+            check_mode: true,
+            ..context.clone()
+        };
+        self.execute(params, &check_context)
     }
 
     fn diff(&self, params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<Option<Diff>> {

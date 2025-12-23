@@ -1,0 +1,19 @@
+# Test playbook for basic delegate_to functionality
+---
+- name: Basic delegate_to test
+  hosts: webservers
+  gather_facts: false
+  tasks:
+    - name: Delegate to specific host
+      debug:
+        msg: "Running on {{ inventory_hostname }} but delegated to db1"
+      delegate_to: db1
+
+    - name: Delegate to localhost
+      debug:
+        msg: "Local execution from {{ inventory_hostname }}"
+      delegate_to: localhost
+
+    - name: Normal task (no delegation)
+      debug:
+        msg: "Normal task on {{ inventory_hostname }}"

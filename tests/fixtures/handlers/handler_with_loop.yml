@@ -1,0 +1,22 @@
+---
+# Test handler with loop
+- name: Test handler with loop
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Deploy services
+      copy:
+        src: services.conf
+        dest: /etc/services.conf
+      notify: restart all services
+
+  handlers:
+    - name: restart all services
+      debug:
+        msg: "Restarting {{ item }}"
+      loop:
+        - nginx
+        - php-fpm
+        - redis
+        - memcached

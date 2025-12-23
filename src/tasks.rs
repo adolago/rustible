@@ -18,21 +18,41 @@ pub struct TaskResult {
 impl TaskResult {
     /// Create a successful result
     pub fn ok() -> Self {
-        Self { changed: false, failed: false, skipped: false, msg: None }
+        Self {
+            changed: false,
+            failed: false,
+            skipped: false,
+            msg: None,
+        }
     }
 
     /// Create a changed result
     pub fn changed() -> Self {
-        Self { changed: true, failed: false, skipped: false, msg: None }
+        Self {
+            changed: true,
+            failed: false,
+            skipped: false,
+            msg: None,
+        }
     }
 
     /// Create a failed result
     pub fn failed(msg: impl Into<String>) -> Self {
-        Self { changed: false, failed: true, skipped: false, msg: Some(msg.into()) }
+        Self {
+            changed: false,
+            failed: true,
+            skipped: false,
+            msg: Some(msg.into()),
+        }
     }
 
     /// Create a skipped result
     pub fn skipped(msg: impl Into<String>) -> Self {
-        Self { changed: false, failed: false, skipped: true, msg: Some(msg.into()) }
+        Self {
+            changed: false,
+            failed: false,
+            skipped: true,
+            msg: Some(msg.into()),
+        }
     }
 }

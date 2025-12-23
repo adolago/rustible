@@ -1,0 +1,13 @@
+---
+# Tasks that notify handlers
+- name: Task that notifies handler
+  debug:
+    msg: "This task will notify a handler"
+  notify: included_handler
+  changed_when: true
+
+- name: Another notifying task
+  debug:
+    msg: "Another task that notifies"
+  notify: second_included_handler
+  changed_when: true

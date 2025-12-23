@@ -65,8 +65,7 @@ fn init_logging(verbosity: u8) {
         _ => "trace",
     };
 
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(filter));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(verbosity >= 3))
@@ -307,28 +306,22 @@ Thumbs.db
     }
 
     ctx.output.section("Project initialized successfully!");
-    ctx.output.info(&format!(
-        "Template: '{}'",
-        template
-    ));
-    ctx.output.info("Run 'rustible run playbooks/site.yml' to test your setup.");
+    ctx.output.info(&format!("Template: '{}'", template));
+    ctx.output
+        .info("Run 'rustible run playbooks/site.yml' to test your setup.");
 
     Ok(0)
 }
 
 /// Validate a playbook
-async fn validate_playbook(
-    playbook: &std::path::Path,
-    ctx: &mut CommandContext,
-) -> Result<i32> {
+async fn validate_playbook(playbook: &std::path::Path, ctx: &mut CommandContext) -> Result<i32> {
     ctx.output.banner("PLAYBOOK VALIDATION");
-    ctx.output.info(&format!("Validating: {}", playbook.display()));
+    ctx.output
+        .info(&format!("Validating: {}", playbook.display()));
 
     if !playbook.exists() {
-        ctx.output.error(&format!(
-            "Playbook not found: {}",
-            playbook.display()
-        ));
+        ctx.output
+            .error(&format!("Playbook not found: {}", playbook.display()));
         return Ok(1);
     }
 
@@ -349,10 +342,8 @@ async fn validate_playbook(
                         .and_then(|n| n.as_str())
                         .unwrap_or("unnamed");
 
-                    ctx.output.debug(&format!(
-                        "Validating play {}: {}",
-                        play_num, play_name
-                    ));
+                    ctx.output
+                        .debug(&format!("Validating play {}: {}", play_num, play_name));
 
                     // Check required 'hosts' field
                     if play.get("hosts").is_none() {
@@ -438,13 +429,12 @@ async fn validate_playbook(
                 ctx.output.section("Validation Results");
 
                 if errors == 0 && warnings == 0 {
-                    ctx.output.info("Playbook syntax is valid. No issues found.");
+                    ctx.output
+                        .info("Playbook syntax is valid. No issues found.");
                     Ok(0)
                 } else if errors == 0 {
-                    ctx.output.warning(&format!(
-                        "Playbook is valid with {} warning(s)",
-                        warnings
-                    ));
+                    ctx.output
+                        .warning(&format!("Playbook is valid with {} warning(s)", warnings));
                     Ok(0)
                 } else {
                     ctx.output.error(&format!(

@@ -1,0 +1,29 @@
+---
+# Test conditional handlers
+- name: Test conditional handlers
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    restart_enabled: true
+    skip_handler: false
+
+  tasks:
+    - name: Update configuration
+      copy:
+        src: config.conf
+        dest: /etc/app/config.conf
+      notify:
+        - conditional restart
+        - skipped handler
+
+  handlers:
+    - name: conditional restart
+      debug:
+        msg: "Conditional restart executed"
+      when: restart_enabled
+
+    - name: skipped handler
+      debug:
+        msg: "This should be skipped"
+      when: not skip_handler == false

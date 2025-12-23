@@ -1,0 +1,31 @@
+---
+# Multiple async tasks running in parallel
+- name: Parallel async operations
+  hosts: all
+  gather_facts: false
+  vars:
+    services:
+      - nginx
+      - mysql
+      - redis
+  tasks:
+    - name: Start multiple async jobs
+      command: "/usr/bin/install-{{ item }}.sh"
+      async: 600
+      poll: 0
+      register: install_jobs
+      loop: "{{ services }}"
+
+    - name: Wait for all jobs to complete
+      async_status:
+        jid: "{{ item.ansible_job_id }}"
+      register: job_results
+      until: job_results.finished
+      retries: 60
+      delay: 5
+      loop: "{{ install_jobs.results }}"
+
+    - name: Report results
+      debug:
+        msg: "Installation of {{ item.item }} completed with rc={{ item.rc }}"
+      loop: "{{ job_results.results }}"

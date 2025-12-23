@@ -43,8 +43,8 @@ impl DockerTestConfig {
         let test_container = env::var("RUSTIBLE_TEST_DOCKER_CONTAINER")
             .unwrap_or_else(|_| "rustible-test-container".to_string());
 
-        let test_image = env::var("RUSTIBLE_TEST_DOCKER_IMAGE")
-            .unwrap_or_else(|_| "ubuntu:24.04".to_string());
+        let test_image =
+            env::var("RUSTIBLE_TEST_DOCKER_IMAGE").unwrap_or_else(|_| "ubuntu:24.04".to_string());
 
         Self {
             enabled,
@@ -100,7 +100,11 @@ async fn ensure_test_container(config: &DockerTestConfig) -> Result<(), String> 
             .arg("-c")
             .arg(format!(
                 "{} rm -f {} 2>/dev/null; {} run -d --name {} {} sleep infinity",
-                docker_cmd, config.test_container, docker_cmd, config.test_container, config.test_image
+                docker_cmd,
+                config.test_container,
+                docker_cmd,
+                config.test_container,
+                config.test_image
             ))
             .output()
             .await
@@ -468,10 +472,7 @@ async fn test_docker_cp_from_container() {
     let test_content = "Content from docker container";
     connection
         .execute(
-            &format!(
-                "echo '{}' > /tmp/docker_download_test.txt",
-                test_content
-            ),
+            &format!("echo '{}' > /tmp/docker_download_test.txt", test_content),
             None,
         )
         .await
@@ -520,9 +521,7 @@ async fn test_docker_upload_content_directly() {
     // Upload content directly
     let content = b"Direct content upload to docker";
     let remote_path = PathBuf::from("/tmp/docker_direct_upload.txt");
-    let result = connection
-        .upload_content(content, &remote_path, None)
-        .await;
+    let result = connection.upload_content(content, &remote_path, None).await;
     assert!(result.is_ok(), "Direct upload failed: {:?}", result);
 
     // Verify
@@ -531,10 +530,7 @@ async fn test_docker_upload_content_directly() {
         .await
         .unwrap();
     assert!(verify.success);
-    assert_eq!(
-        verify.stdout.trim(),
-        std::str::from_utf8(content).unwrap()
-    );
+    assert_eq!(verify.stdout.trim(), std::str::from_utf8(content).unwrap());
 
     // Cleanup
     connection
@@ -782,12 +778,9 @@ async fn test_docker_module_execution() {
 
     // Test command module
     let module = rustible::modules::CommandModule;
-    let params = common::make_params(vec![
-        ("cmd", serde_json::json!("echo 'module test'")),
-    ]);
+    let params = common::make_params(vec![("cmd", serde_json::json!("echo 'module test'"))]);
 
-    let context = rustible::modules::ModuleContext::new(&connection)
-        .with_check_mode(false);
+    let context = rustible::modules::ModuleContext::new(&connection).with_check_mode(false);
 
     let result = module.execute(&params, &context);
     assert!(result.is_ok(), "Module execution failed: {:?}", result);
@@ -831,8 +824,7 @@ async fn test_docker_copy_module() {
         ("dest", serde_json::json!("/tmp/copy_module_dest.txt")),
     ]);
 
-    let context = rustible::modules::ModuleContext::new(&connection)
-        .with_check_mode(false);
+    let context = rustible::modules::ModuleContext::new(&connection).with_check_mode(false);
 
     let result = module.execute(&params, &context);
     assert!(result.is_ok(), "Copy module failed: {:?}", result);

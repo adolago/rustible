@@ -1,0 +1,121 @@
+# Performance Playbook - Designed for benchmarking
+#
+# This playbook is optimized for performance testing and benchmarking:
+# - Many small tasks for measuring task overhead
+# - Loop iterations for parallel execution testing
+# - Various module types to benchmark different code paths
+# - Minimal I/O to focus on executor performance
+#
+# Use with different --forks values to test parallelism.
+---
+- name: Performance Benchmark - Sequential Tasks
+  hosts: all
+  gather_facts: false
+  tasks:
+    # 50 simple debug tasks for baseline measurement
+    - name: Debug task 1
+      debug:
+        msg: "Task 1"
+
+    - name: Debug task 2
+      debug:
+        msg: "Task 2"
+
+    - name: Debug task 3
+      debug:
+        msg: "Task 3"
+
+    - name: Debug task 4
+      debug:
+        msg: "Task 4"
+
+    - name: Debug task 5
+      debug:
+        msg: "Task 5"
+
+    - name: Debug task 6
+      debug:
+        msg: "Task 6"
+
+    - name: Debug task 7
+      debug:
+        msg: "Task 7"
+
+    - name: Debug task 8
+      debug:
+        msg: "Task 8"
+
+    - name: Debug task 9
+      debug:
+        msg: "Task 9"
+
+    - name: Debug task 10
+      debug:
+        msg: "Task 10"
+
+- name: Performance Benchmark - Loop Tasks
+  hosts: all
+  gather_facts: false
+  vars:
+    items_small:
+      - item1
+      - item2
+      - item3
+      - item4
+      - item5
+    items_medium: "{{ range(1, 21) | list }}"
+    items_large: "{{ range(1, 101) | list }}"
+
+  tasks:
+    - name: Small loop iteration
+      debug:
+        msg: "Processing {{ item }}"
+      loop: "{{ items_small }}"
+
+    - name: Medium loop iteration
+      debug:
+        msg: "Item {{ item }}"
+      loop: "{{ items_medium }}"
+
+    - name: Variable access performance
+      debug:
+        msg: "Host: {{ inventory_hostname }}, Index: {{ item }}"
+      loop: "{{ items_small }}"
+
+- name: Performance Benchmark - Mixed Operations
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Set fact operation
+      set_fact:
+        perf_var_1: "value1"
+        perf_var_2: "value2"
+        perf_var_3: "{{ 'computed' + '_value' }}"
+
+    - name: Access facts
+      debug:
+        msg: "{{ perf_var_1 }} {{ perf_var_2 }} {{ perf_var_3 }}"
+
+    - name: Conditional task - true
+      debug:
+        msg: "Condition was true"
+      when: true
+
+    - name: Conditional task - false
+      debug:
+        msg: "This should be skipped"
+      when: false
+
+    - name: Conditional with variable
+      debug:
+        msg: "Variable check passed"
+      when: perf_var_1 == "value1"
+
+    - name: Register and use
+      debug:
+        msg: "Registration test"
+      register: reg_result
+
+    - name: Use registered variable
+      debug:
+        msg: "Previous changed: {{ reg_result.changed }}"

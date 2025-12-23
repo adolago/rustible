@@ -1,0 +1,11 @@
+---
+# Handlers for test_role
+- name: test_role_handler
+  debug:
+    msg: "Test role handler executed"
+
+- name: restart_test_service
+  debug:
+    msg: "Test service restarted"
+  listen:
+    - test service changed

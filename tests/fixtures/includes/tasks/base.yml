@@ -1,0 +1,13 @@
+---
+# Base tasks for import_tasks
+- name: Base task one
+  debug:
+    msg: "Base task 1 executed"
+
+- name: Base task two
+  debug:
+    msg: "Base task 2 executed"
+
+- name: Set base fact
+  set_fact:
+    base_imported: true

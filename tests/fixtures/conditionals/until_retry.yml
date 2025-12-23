@@ -1,0 +1,29 @@
+# Test playbook for until/retries/delay
+---
+- name: Test until/retries/delay
+  hosts: all
+  gather_facts: false
+  vars:
+    max_retries: 3
+    retry_delay: 1
+
+  tasks:
+    - name: Retry until success (simulated)
+      debug:
+        msg: "Attempting connection"
+      register: connection_result
+      until: connection_result is defined
+      retries: 3
+      delay: 1
+
+    - name: Another retry example
+      set_fact:
+        attempt_count: "{{ attempt_count | default(0) | int + 1 }}"
+      register: attempt_result
+      until: attempt_count | default(0) | int >= 2
+      retries: 5
+      delay: 0
+
+    - name: Check final attempt count
+      debug:
+        msg: "Final attempt count: {{ attempt_count | default('unknown') }}"

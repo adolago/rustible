@@ -1,0 +1,14 @@
+# Simulated system config (/etc/rustible/rustible.cfg)
+[defaults]
+forks = 3
+timeout = 60
+remote_user = "system_user"
+strategy = "linear"
+
+[privilege_escalation]
+become = false
+become_method = "sudo"
+become_user = "root"
+
+[colors]
+enabled = true

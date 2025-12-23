@@ -1,0 +1,6 @@
+# Partial config - only privilege escalation section
+[privilege_escalation]
+become = true
+become_method = "su"
+become_user = "dbadmin"
+become_flags = "-l"

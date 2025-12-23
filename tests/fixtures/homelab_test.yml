@@ -1,0 +1,58 @@
+---
+# Integration test playbook for russh
+- name: Test SSH connectivity and basic operations
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: Test basic command execution
+      command: hostname
+      register: hostname_result
+
+    - name: Debug hostname
+      debug:
+        msg: "Host {{ inventory_hostname }} reports hostname: {{ hostname_result.stdout }}"
+
+    - name: Test command with environment
+      shell: echo "USER=$USER HOME=$HOME"
+      register: env_result
+
+    - name: Test privilege escalation
+      command: whoami
+      become: yes
+      register: whoami_result
+
+    - name: Verify root execution
+      debug:
+        msg: "Running as: {{ whoami_result.stdout }}"
+
+    - name: Create temp file
+      copy:
+        content: "Test content from rustible at {{ ansible_date_time.iso8601 | default('now') }}"
+        dest: /tmp/rustible_test.txt
+        mode: '0644'
+
+    - name: Read temp file
+      command: cat /tmp/rustible_test.txt
+      register: file_content
+
+    - name: Verify file content
+      debug:
+        msg: "File content: {{ file_content.stdout }}"
+
+    - name: Check file exists
+      stat:
+        path: /tmp/rustible_test.txt
+      register: file_stat
+
+    - name: Verify stat result
+      debug:
+        msg: "File exists: {{ file_stat.stat.exists }}, size: {{ file_stat.stat.size }}"
+
+    - name: Cleanup temp file
+      file:
+        path: /tmp/rustible_test.txt
+        state: absent
+
+    - name: Test completed
+      debug:
+        msg: "All tests passed on {{ inventory_hostname }}"

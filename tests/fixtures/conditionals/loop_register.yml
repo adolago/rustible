@@ -1,0 +1,41 @@
+# Test playbook for loop with register
+---
+- name: Test loop with register
+  hosts: all
+  gather_facts: false
+  vars:
+    items_to_check:
+      - one
+      - two
+      - three
+
+  tasks:
+    - name: Loop and register results
+      debug:
+        msg: "Checking item: {{ item }}"
+      loop: "{{ items_to_check }}"
+      register: check_results
+
+    - name: Display registered results
+      debug:
+        msg: "Loop results registered"
+      when: check_results is defined
+
+    - name: Use results from registered loop
+      debug:
+        msg: "Previous loop had {{ check_results.results | length }} items"
+      when: check_results is defined and check_results.results is defined
+
+    - name: Another loop with register
+      set_fact:
+        collected_values: "{{ item }}"
+      loop:
+        - alpha
+        - beta
+        - gamma
+      register: collect_results
+
+    - name: Check collect_results
+      debug:
+        var: collect_results
+      when: collect_results is defined

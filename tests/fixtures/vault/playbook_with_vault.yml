@@ -1,0 +1,14 @@
+---
+- name: Test playbook with vault integration
+  hosts: all
+  vars_files:
+    - vault_encrypted_vars.yml
+
+  tasks:
+    - name: Use vault variable
+      debug:
+        msg: "Database password is {{ db_password }}"
+
+    - name: Use inline vault variable
+      debug:
+        msg: "API key is {{ api_key }}"

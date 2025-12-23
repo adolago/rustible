@@ -1,0 +1,4 @@
+# Invalid type - forks should be a number, not a string
+[defaults]
+forks = "not_a_number"
+timeout = 30

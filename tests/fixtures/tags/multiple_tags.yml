@@ -1,0 +1,25 @@
+---
+- name: Play with multiple tagged tasks
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Task with multiple tags
+      debug:
+        msg: "Setup task"
+      tags:
+        - install
+        - setup
+        - common
+
+    - name: Another multi-tagged task
+      debug:
+        msg: "Config task"
+      tags:
+        - configure
+        - setup
+
+    - name: Deploy only task
+      debug:
+        msg: "Deploy task"
+      tags:
+        - deploy

@@ -1,0 +1,102 @@
+---
+# Various variable types and structures
+
+# Simple key-value
+app_name: myapp
+app_port: 8080
+debug_enabled: true
+timeout_seconds: 30.5
+
+# String with special characters
+message: "Hello, World!"
+path: /usr/local/bin
+command_line: 'echo "hello" | grep -o "ell"'
+
+# Jinja2 template expressions
+template_var: "{{ app_name }}-{{ app_port }}"
+conditional_var: "{{ 'production' if env == 'prod' else 'development' }}"
+filtered_var: "{{ items | join(', ') }}"
+
+# Nested structures
+database:
+  host: localhost
+  port: 5432
+  name: mydb
+  credentials:
+    username: admin
+    password: "{{ vault_db_password }}"
+  options:
+    ssl: true
+    pool_size: 10
+
+# Lists
+packages:
+  - nginx
+  - python3
+  - git
+  - curl
+
+# List of dictionaries
+users:
+  - name: alice
+    uid: 1001
+    groups:
+      - wheel
+      - developers
+  - name: bob
+    uid: 1002
+    groups:
+      - developers
+
+# Complex nested structure
+environments:
+  production:
+    servers:
+      web:
+        count: 3
+        type: c5.large
+      db:
+        count: 2
+        type: r5.xlarge
+    settings:
+      debug: false
+      log_level: warn
+  staging:
+    servers:
+      web:
+        count: 1
+        type: t3.medium
+      db:
+        count: 1
+        type: t3.medium
+    settings:
+      debug: true
+      log_level: debug
+
+# YAML anchors and aliases
+defaults: &defaults
+  adapter: postgres
+  pool: 5
+
+production:
+  <<: *defaults
+  database: myapp_production
+
+# Multi-line strings
+shell_script: |
+  #!/bin/bash
+  echo "Hello"
+  for i in 1 2 3; do
+    echo $i
+  done
+
+inline_script: >
+  This is a long line that will be
+  folded into a single line with
+  spaces between the parts.
+
+# Null and empty values
+empty_string: ""
+null_value: null
+empty_list: []
+empty_dict: {}

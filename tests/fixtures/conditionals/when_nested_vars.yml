@@ -1,0 +1,52 @@
+# Test playbook for when conditions with nested variable access
+---
+- name: Test nested variable access in when conditions
+  hosts: all
+  gather_facts: false
+  vars:
+    user:
+      name: alice
+      role: admin
+      active: true
+    database:
+      host: localhost
+      port: 5432
+      settings:
+        max_connections: 100
+        ssl_enabled: true
+    servers:
+      - name: web1
+        ip: 192.168.1.10
+      - name: web2
+        ip: 192.168.1.11
+
+  tasks:
+    - name: Should run - nested dict access
+      debug:
+        msg: "User is {{ user.name }}"
+      when: user.name == 'alice'
+
+    - name: Should run - deeply nested access
+      debug:
+        msg: "Max connections: {{ database.settings.max_connections }}"
+      when: database.settings.max_connections >= 100
+
+    - name: Should run - nested boolean
+      debug:
+        msg: "User is active"
+      when: user.active
+
+    - name: Should run - nested boolean in settings
+      debug:
+        msg: "SSL is enabled"
+      when: database.settings.ssl_enabled
+
+    - name: Should skip - nested value mismatch
+      debug:
+        msg: "User is bob"
+      when: user.name == 'bob'
+
+    - name: Should run - check port value
+      debug:
+        msg: "Database port is 5432"
+      when: database.port == 5432

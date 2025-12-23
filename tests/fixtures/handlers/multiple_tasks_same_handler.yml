@@ -1,0 +1,29 @@
+---
+# Multiple tasks notify the same handler (should run only once)
+- name: Test handler deduplication
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Update main config
+      copy:
+        src: main.conf
+        dest: /etc/app/main.conf
+      notify: restart service
+
+    - name: Update database config
+      copy:
+        src: db.conf
+        dest: /etc/app/db.conf
+      notify: restart service
+
+    - name: Update cache config
+      copy:
+        src: cache.conf
+        dest: /etc/app/cache.conf
+      notify: restart service
+
+  handlers:
+    - name: restart service
+      debug:
+        msg: "Service restarted (should only appear once)"

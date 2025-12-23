@@ -1,0 +1,27 @@
+---
+# Test handler chaining (handler notifies another handler)
+- name: Test handler chaining
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Update configuration
+      copy:
+        src: config.conf
+        dest: /etc/app/config.conf
+      notify: step 1
+
+  handlers:
+    - name: step 1
+      debug:
+        msg: "Step 1 executed"
+      notify: step 2
+
+    - name: step 2
+      debug:
+        msg: "Step 2 executed"
+      notify: step 3
+
+    - name: step 3
+      debug:
+        msg: "Step 3 executed (final)"

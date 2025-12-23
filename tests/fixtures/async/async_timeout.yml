@@ -1,0 +1,28 @@
+---
+# Async task timeout scenarios
+- name: Async timeout handling
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Task that will timeout
+      command: sleep 60
+      async: 5
+      poll: 1
+      register: timeout_result
+      ignore_errors: yes
+
+    - name: Check if task timed out
+      debug:
+        msg: "Task status: {{ timeout_result }}"
+
+    - name: Task with adequate timeout
+      command: sleep 2
+      async: 10
+      poll: 1
+      register: success_result
+
+    - name: Verify successful completion
+      assert:
+        that:
+          - success_result.finished
+          - success_result.rc == 0

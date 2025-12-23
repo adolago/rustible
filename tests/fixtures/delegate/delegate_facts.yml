@@ -1,0 +1,20 @@
+# Test playbook for delegate_facts functionality
+---
+- name: Delegate facts test
+  hosts: webservers
+  gather_facts: false
+  tasks:
+    - name: Set fact on delegate with delegate_facts true
+      set_fact:
+        delegated_fact: "from_delegate"
+      delegate_to: db1
+      delegate_facts: true
+
+    - name: Set fact without delegate_facts (default to inventory_hostname)
+      set_fact:
+        normal_fact: "from_original"
+      delegate_to: db1
+
+    - name: Verify facts
+      debug:
+        msg: "Normal fact: {{ normal_fact | default('undefined') }}"

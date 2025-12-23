@@ -1,0 +1,39 @@
+[package]
+name = "ssh_comparison"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ssh_bench"
+path = "src/main.rs"
+
+[dependencies]
+# Current library (libssh2 wrapper)
+ssh2 = "0.9"
+
+# New library (pure Rust, async-native)
+async-ssh2-tokio = "0.12"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Home dir expansion
+dirs = "5"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Statistics
+hdrhistogram = "7.5"
+
+# Formatting
+tabled = "0.15"
+
+# Random data generation
+rand = "0.8"
+
+# Temporary files
+tempfile = "3"
+
+# Base64 encoding for file transfer via commands
+base64 = "0.21"

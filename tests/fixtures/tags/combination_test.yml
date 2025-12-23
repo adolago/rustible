@@ -1,0 +1,51 @@
+---
+- name: Play for combination testing
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Always runs
+      debug:
+        msg: "Always task"
+      tags:
+        - always
+
+    - name: Install web
+      debug:
+        msg: "Installing web"
+      tags:
+        - install
+        - web
+
+    - name: Install db
+      debug:
+        msg: "Installing db"
+      tags:
+        - install
+        - db
+
+    - name: Configure web
+      debug:
+        msg: "Configuring web"
+      tags:
+        - configure
+        - web
+
+    - name: Configure db
+      debug:
+        msg: "Configuring db"
+      tags:
+        - configure
+        - db
+
+    - name: Slow task
+      debug:
+        msg: "Slow operation"
+      tags:
+        - slow
+        - optional
+
+    - name: Cleanup
+      debug:
+        msg: "Cleanup"
+      tags:
+        - cleanup

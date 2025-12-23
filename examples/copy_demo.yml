@@ -1,0 +1,61 @@
+---
+# Example playbook demonstrating the copy module with real SSH file transfers
+
+- name: Copy Module Demo - Real SSH File Transfers
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    # Example 1: Copy content directly to a file
+    - name: Copy content to remote file
+      copy:
+        content: |
+          Hello from Rustible!
+          This is a test file created via the copy module.
+          Timestamp: {{ ansible_date_time.iso8601 | default('now') }}
+        dest: /tmp/rustible_test.txt
+        mode: '0644'
+
+    # Example 2: Copy a local file to remote host
+    - name: Copy local file to remote
+      copy:
+        src: /etc/hostname
+        dest: /tmp/hostname_backup.txt
+        mode: '0644'
+        backup: true
+
+    # Example 3: Copy with specific ownership
+    - name: Copy file with ownership
+      copy:
+        content: "Root owned file"
+        dest: /tmp/root_file.txt
+        mode: '0600'
+        owner: root
+        group: root
+      become: true
+
+    # Example 4: Copy to a directory (auto-determine filename)
+    - name: Copy to directory
+      copy:
+        src: /etc/hosts
+        dest: /tmp/
+        mode: '0644'
+
+    # Example 5: Idempotent copy - won't change if already correct
+    - name: Copy file (idempotent)
+      copy:
+        content: "Unchanged content"
+        dest: /tmp/idempotent_test.txt
+        mode: '0644'
+      register: first_run
+
+    - name: Copy same file again (should not report changed)
+      copy:
+        content: "Unchanged content"
+        dest: /tmp/idempotent_test.txt
+        mode: '0644'
+      register: second_run
+
+    - name: Verify idempotency
+      debug:
+        msg: "First run changed: {{ first_run.changed }}, Second run changed: {{ second_run.changed }}"

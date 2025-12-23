@@ -1,0 +1,60 @@
+---
+all:
+  vars:
+    global_ntp_server: ntp.example.com
+    environment: default
+  children:
+    production:
+      vars:
+        environment: production
+        monitoring_enabled: true
+      children:
+        prod_webservers:
+          hosts:
+            prod-web1:
+              ansible_host: 10.0.1.1
+              ansible_port: 22
+              http_port: 80
+            prod-web2:
+              ansible_host: 10.0.1.2
+              ansible_port: 22
+              http_port: 8080
+          vars:
+            server_type: web
+            load_balanced: true
+        prod_databases:
+          hosts:
+            prod-db1:
+              ansible_host: 10.0.2.1
+              db_role: primary
+            prod-db2:
+              ansible_host: 10.0.2.2
+              db_role: replica
+          vars:
+            server_type: database
+            db_port: 5432
+    staging:
+      vars:
+        environment: staging
+        monitoring_enabled: false
+      children:
+        staging_webservers:
+          hosts:
+            staging-web1:
+              ansible_host: 10.1.1.1
+          vars:
+            server_type: web
+        staging_databases:
+          hosts:
+            staging-db1:
+              ansible_host: 10.1.2.1
+          vars:
+            server_type: database
+    development:
+      vars:
+        environment: development
+        debug_mode: true
+      hosts:
+        dev-all-in-one:
+          ansible_host: 10.2.0.1
+          ansible_connection: local

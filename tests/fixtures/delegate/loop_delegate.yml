@@ -1,0 +1,32 @@
+# Test playbook for loops with delegate_to
+---
+- name: Loop with delegate test
+  hosts: webservers
+  gather_facts: false
+  vars:
+    delegate_hosts:
+      - db1
+      - db2
+  tasks:
+    - name: Delegate in loop
+      debug:
+        msg: "Task {{ item }} delegated"
+      loop:
+        - task1
+        - task2
+        - task3
+      delegate_to: localhost
+
+    - name: Different delegate per iteration
+      debug:
+        msg: "Delegating to {{ item }}"
+      loop: "{{ delegate_hosts }}"
+      delegate_to: "{{ item }}"
+
+    - name: Loop with item as delegate target
+      debug:
+        msg: "Processing on {{ item }}"
+      loop:
+        - localhost
+        - db1
+      delegate_to: "{{ item }}"

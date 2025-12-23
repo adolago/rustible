@@ -1,0 +1,60 @@
+# Test playbook for loop with dictionaries
+---
+- name: Test loop with dictionaries
+  hosts: all
+  gather_facts: false
+  vars:
+    users:
+      - name: alice
+        role: admin
+        uid: 1000
+      - name: bob
+        role: developer
+        uid: 1001
+      - name: charlie
+        role: tester
+        uid: 1002
+
+    services:
+      - name: nginx
+        port: 80
+        enabled: true
+      - name: postgresql
+        port: 5432
+        enabled: true
+      - name: redis
+        port: 6379
+        enabled: false
+
+    config:
+      database:
+        host: localhost
+        port: 5432
+      cache:
+        host: localhost
+        port: 6379
+
+  tasks:
+    - name: Loop over list of user dicts
+      debug:
+        msg: "User {{ item.name }} has role {{ item.role }}"
+      loop: "{{ users }}"
+
+    - name: Loop over services and check enabled
+      debug:
+        msg: "Service {{ item.name }} on port {{ item.port }}"
+      loop: "{{ services }}"
+      when: item.enabled
+
+    - name: Create users from dict list
+      debug:
+        msg: "Creating user {{ item.name }} with UID {{ item.uid }}"
+      loop: "{{ users }}"
+
+    - name: Inline list of dicts
+      debug:
+        msg: "Setting {{ item.key }} to {{ item.value }}"
+      loop:
+        - { key: 'setting1', value: 'value1' }
+        - { key: 'setting2', value: 'value2' }
+        - { key: 'setting3', value: 'value3' }

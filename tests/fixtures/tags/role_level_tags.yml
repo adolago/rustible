@@ -1,0 +1,19 @@
+---
+- name: Play with role-level tags
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: common
+      tags:
+        - common
+        - base
+    - role: webserver
+      tags:
+        - web
+        - nginx
+  tasks:
+    - name: Post-role task
+      debug:
+        msg: "After roles"
+      tags:
+        - final

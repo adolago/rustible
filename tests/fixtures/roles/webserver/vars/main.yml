@@ -1,0 +1,6 @@
+# Role-specific variables (higher precedence than defaults)
+---
+# These variables override defaults when this vars file is included
+nginx_config_dir: /etc/nginx
+nginx_sites_available: /etc/nginx/sites-available
+nginx_sites_enabled: /etc/nginx/sites-enabled

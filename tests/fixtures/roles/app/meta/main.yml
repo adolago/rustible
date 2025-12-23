@@ -1,0 +1,5 @@
+---
+# App role has multiple dependencies (diamond dependency pattern)
+dependencies:
+  - webserver
+  - database

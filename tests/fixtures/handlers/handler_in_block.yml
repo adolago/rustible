@@ -1,0 +1,49 @@
+---
+# Test handlers triggered from within blocks
+- name: Test handlers in blocks
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Block with handler notification
+      block:
+        - name: Task in block
+          copy:
+            src: config.conf
+            dest: /etc/app/config.conf
+          notify: restart service
+
+        - name: Another task in block
+          copy:
+            src: extra.conf
+            dest: /etc/app/extra.conf
+          notify: reload config
+
+      rescue:
+        - name: Rescue task with handler
+          debug:
+            msg: "Rescue executed"
+          notify: cleanup handler
+
+      always:
+        - name: Always task with handler
+          debug:
+            msg: "Always executed"
+          notify: final handler
+
+  handlers:
+    - name: restart service
+      debug:
+        msg: "Service restarted"
+
+    - name: reload config
+      debug:
+        msg: "Config reloaded"
+
+    - name: cleanup handler
+      debug:
+        msg: "Cleanup executed"
+
+    - name: final handler
+      debug:
+        msg: "Final handler executed"

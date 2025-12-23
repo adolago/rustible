@@ -1,0 +1,32 @@
+---
+# Block with vars scope
+- name: Block with vars test
+  hosts: localhost
+  gather_facts: false
+  vars:
+    global_var: "global"
+  tasks:
+    - name: Block with local vars
+      vars:
+        block_var: "block_level"
+        override_var: "from_block"
+      block:
+        - name: Use block var
+          debug:
+            msg: "block_var={{ block_var }}"
+        - name: Use global var
+          debug:
+            msg: "global_var={{ global_var }}"
+        - name: Task with own vars
+          vars:
+            task_var: "task_level"
+          debug:
+            msg: "task_var={{ task_var }}, block_var={{ block_var }}"
+      rescue:
+        - name: Rescue uses block vars
+          debug:
+            msg: "In rescue: block_var={{ block_var }}"
+      always:
+        - name: Always uses block vars
+          debug:
+            msg: "In always: block_var={{ block_var }}"

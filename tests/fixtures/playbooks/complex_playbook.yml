@@ -1,0 +1,190 @@
+# Complex Playbook - Demonstrates all major features
+#
+# This playbook uses most Rustible features for comprehensive testing:
+# - Multiple plays targeting different host groups
+# - Variables at play and task levels
+# - Conditionals (when)
+# - Loops
+# - Handlers and notifications
+# - Privilege escalation (become)
+# - Task registration
+# - ignore_errors
+# - Tags (when supported)
+# - Includes/imports (when supported)
+---
+- name: Configure Web Servers
+  hosts: webservers
+  gather_facts: false
+  become: true
+  become_user: root
+  vars:
+    http_port: 80
+    https_port: 443
+    server_name: "{{ inventory_hostname }}.example.com"
+    packages:
+      - nginx
+      - certbot
+      - python3-certbot-nginx
+
+  tasks:
+    - name: Install web server packages
+      package:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ packages }}"
+      register: package_install_result
+
+    - name: Display package installation result
+      debug:
+        msg: "Package installation changed: {{ package_install_result.changed }}"
+      when: package_install_result is defined
+
+    - name: Create web root directory
+      file:
+        path: /var/www/html
+        state: directory
+        mode: "0755"
+        owner: www-data
+        group: www-data
+
+    - name: Deploy nginx configuration
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        mode: "0644"
+      notify:
+        - Validate nginx config
+        - Restart nginx
+
+    - name: Deploy site configuration
+      template:
+        src: site.conf.j2
+        dest: "/etc/nginx/sites-available/{{ server_name }}"
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Enable site
+      file:
+        src: "/etc/nginx/sites-available/{{ server_name }}"
+        dest: "/etc/nginx/sites-enabled/{{ server_name }}"
+        state: link
+      notify: Reload nginx
+
+    - name: Start and enable nginx
+      service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Allow HTTP through firewall
+      command: ufw allow http
+      register: firewall_result
+      ignore_errors: true
+
+    - name: Allow HTTPS through firewall
+      command: ufw allow https
+      ignore_errors: true
+
+  handlers:
+    - name: Validate nginx config
+      command: nginx -t
+      listen: "nginx config changed"
+
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted
+      listen: "nginx config changed"
+
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
+- name: Configure Database Servers
+  hosts: databases
+  gather_facts: false
+  become: true
+  vars:
+    db_port: 5432
+    db_user: postgres
+    max_connections: 100
+    shared_buffers: "256MB"
+
+  tasks:
+    - name: Install PostgreSQL
+      package:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - python3-psycopg2
+        state: present
+
+    - name: Configure PostgreSQL
+      template:
+        src: postgresql.conf.j2
+        dest: /etc/postgresql/14/main/postgresql.conf
+      notify: Restart PostgreSQL
+
+    - name: Configure client authentication
+      template:
+        src: pg_hba.conf.j2
+        dest: /etc/postgresql/14/main/pg_hba.conf
+      notify: Reload PostgreSQL
+
+    - name: Ensure PostgreSQL is running
+      service:
+        name: postgresql
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart PostgreSQL
+      service:
+        name: postgresql
+        state: restarted
+
+    - name: Reload PostgreSQL
+      service:
+        name: postgresql
+        state: reloaded
+
+- name: Common Configuration for All Hosts
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    ntp_servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+    timezone: UTC
+
+  tasks:
+    - name: Set timezone
+      command: "timedatectl set-timezone {{ timezone }}"
+      register: timezone_result
+      when: timezone is defined
+
+    - name: Install common utilities
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - curl
+        - wget
+        - vim
+        - htop
+        - tmux
+
+    - name: Create admin user
+      user:
+        name: admin
+        groups: sudo
+        shell: /bin/bash
+        state: present
+      register: user_result
+
+    - name: Display user creation result
+      debug:
+        var: user_result
+      when: user_result.changed

@@ -1,0 +1,4 @@
+---
+- name: Level 2 task
+  debug:
+    msg: "Level 2 task executed"

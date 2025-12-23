@@ -1,0 +1,61 @@
+---
+# Multi-Play Playbook Compatibility Test
+# Tests: multiple plays, different host patterns, play-level vars
+
+- name: Configure webservers
+  hosts: webservers
+  gather_facts: true
+  become: true
+
+  vars:
+    http_port: 80
+    server_name: "{{ inventory_hostname }}"
+
+  tasks:
+    - name: Install nginx
+      package:
+        name: nginx
+        state: present
+
+    - name: Configure nginx port
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+      notify: restart nginx
+
+  handlers:
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+
+- name: Configure database servers
+  hosts: databases
+  gather_facts: true
+  become: true
+
+  vars:
+    db_port: 5432
+    db_name: production
+
+  tasks:
+    - name: Install postgresql
+      package:
+        name: postgresql
+        state: present
+
+    - name: Start postgresql service
+      service:
+        name: postgresql
+        state: started
+        enabled: true
+
+- name: Run global cleanup
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Clear temp files
+      file:
+        path: /tmp/deploy_cache
+        state: absent

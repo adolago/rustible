@@ -1,0 +1,9 @@
+---
+# Debian-specific tasks
+- name: Debian-specific task
+  debug:
+    msg: "Running Debian-specific configuration"
+
+- name: Set Debian fact
+  set_fact:
+    debian_tasks_run: true

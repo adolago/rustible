@@ -1,0 +1,48 @@
+---
+# Handlers with all features
+
+- name: restart nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: reload nginx
+  service:
+    name: nginx
+    state: reloaded
+
+- name: restart php-fpm
+  service:
+    name: php-fpm
+    state: restarted
+  become: true
+
+- name: restart web services
+  debug:
+    msg: "Web services restarted"
+  listen:
+    - restart nginx
+    - restart php-fpm
+    - web stack changed
+
+- name: flush handlers
+  meta: flush_handlers
+
+- name: conditional handler
+  service:
+    name: mysql
+    state: restarted
+  when: mysql_installed | default(false)
+  listen:
+    - database changed
+    - restart database
+
+- name: handler with loop
+  service:
+    name: "{{ item }}"
+    state: restarted
+  loop:
+    - nginx
+    - php-fpm
+    - redis
+  listen: restart all services

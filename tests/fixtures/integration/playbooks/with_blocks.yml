@@ -1,0 +1,54 @@
+---
+# Playbook with blocks, rescue, and always for integration testing
+- name: Block error handling
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    force_failure: false
+
+  tasks:
+    - name: Setup block
+      block:
+        - name: Block task 1 - Initial action
+          debug:
+            msg: "Block: Executing initial action"
+
+        - name: Block task 2 - Main operation
+          debug:
+            msg: "Block: Main operation"
+
+        - name: Block task 3 - Potentially failing task
+          fail:
+            msg: "Simulated failure for testing"
+          when: force_failure
+
+        - name: Block task 4 - Completion
+          debug:
+            msg: "Block: Completed successfully"
+
+      rescue:
+        - name: Rescue task 1 - Log failure
+          debug:
+            msg: "Rescue: Handling failure"
+
+        - name: Rescue task 2 - Cleanup
+          debug:
+            msg: "Rescue: Cleaning up after failure"
+
+        - name: Rescue task 3 - Recovery
+          debug:
+            msg: "Rescue: Attempting recovery"
+
+      always:
+        - name: Always task 1 - Finalize
+          debug:
+            msg: "Always: Finalizing regardless of outcome"
+
+        - name: Always task 2 - Report
+          debug:
+            msg: "Always: Generating execution report"
+
+    - name: Post-block verification
+      debug:
+        msg: "Post-block: Continuing after block execution"

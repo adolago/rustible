@@ -7,7 +7,9 @@ use crate::cli::output::{RecapStats, TaskStatus};
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::Mutex;
 
 /// Arguments for the run command
 #[derive(Parser, Debug, Clone)]
@@ -125,13 +127,13 @@ impl RunArgs {
                 .warning("Running in CHECK MODE - no changes will be made");
         }
 
-        // Initialize stats
-        let mut stats = RecapStats::new();
+        // Initialize stats (wrapped in Arc<Mutex<>> for thread-safe parallel execution)
+        let stats = Arc::new(Mutex::new(RecapStats::new()));
 
         // Process playbook plays
         if let Some(plays) = playbook.as_sequence() {
             for play in plays {
-                self.execute_play(ctx, play, &mut stats).await?;
+                self.execute_play(ctx, play, &stats).await?;
             }
         } else {
             ctx.output.error("Playbook must be a list of plays");
@@ -142,7 +144,8 @@ impl RunArgs {
         ctx.close_connections().await;
 
         // Print recap
-        ctx.output.recap(&stats);
+        let stats_guard = stats.lock().await;
+        ctx.output.recap(&stats_guard);
 
         // Print timing
         let duration = start_time.elapsed();
@@ -152,7 +155,7 @@ impl RunArgs {
         ));
 
         // Return exit code
-        if stats.has_failures() {
+        if stats_guard.has_failures() {
             Ok(2)
         } else {
             Ok(0)
@@ -164,7 +167,7 @@ impl RunArgs {
         &self,
         ctx: &mut CommandContext,
         play: &serde_yaml::Value,
-        stats: &mut RecapStats,
+        stats: &Arc<Mutex<RecapStats>>,
     ) -> Result<()> {
         // Get play name
         let play_name = play
@@ -258,7 +261,7 @@ impl RunArgs {
         ctx: &mut CommandContext,
         task: &serde_yaml::Value,
         hosts: &[String],
-        stats: &mut RecapStats,
+        stats: &Arc<Mutex<RecapStats>>,
     ) -> Result<()> {
         // Get task name
         let task_name = task
@@ -268,8 +271,9 @@ impl RunArgs {
 
         // Check tags
         if !self.should_run_task(task) {
+            let mut stats_guard = stats.lock().await;
             for host in hosts {
-                stats.record(host, TaskStatus::Skipped);
+                stats_guard.record(host, TaskStatus::Skipped);
             }
             return Ok(());
         }
@@ -290,7 +294,7 @@ impl RunArgs {
                         TaskStatus::Skipped,
                         Some("conditional check failed"),
                     );
-                    stats.record(host, TaskStatus::Skipped);
+                    stats.lock().await.record(host, TaskStatus::Skipped);
                     continue;
                 }
             }
@@ -305,7 +309,7 @@ impl RunArgs {
                     TaskStatus::Changed,
                     Some(&format!("[check mode] would run: {}", module)),
                 );
-                stats.record(host, TaskStatus::Changed);
+                stats.lock().await.record(host, TaskStatus::Changed);
                 continue;
             }
 
@@ -320,7 +324,7 @@ impl RunArgs {
                         TaskStatus::Ok
                     };
                     ctx.output.task_result(host, status, None);
-                    stats.record(host, status);
+                    stats.lock().await.record(host, status);
                 }
                 Err(e) => {
                     // Check for ignore_errors
@@ -335,11 +339,11 @@ impl RunArgs {
                             TaskStatus::Ignored,
                             Some(&format!("ignored error: {}", e)),
                         );
-                        stats.record(host, TaskStatus::Ignored);
+                        stats.lock().await.record(host, TaskStatus::Ignored);
                     } else {
                         ctx.output
                             .task_result(host, TaskStatus::Failed, Some(&e.to_string()));
-                        stats.record(host, TaskStatus::Failed);
+                        stats.lock().await.record(host, TaskStatus::Failed);
                     }
                 }
             }

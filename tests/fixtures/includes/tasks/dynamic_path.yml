@@ -1,0 +1,9 @@
+---
+# Tasks for dynamic path testing
+- name: Dynamic path task
+  debug:
+    msg: "Included from dynamic path"
+
+- name: Set dynamic path fact
+  set_fact:
+    dynamic_path_included: true

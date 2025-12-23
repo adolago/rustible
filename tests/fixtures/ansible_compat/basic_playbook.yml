@@ -1,0 +1,37 @@
+---
+# Basic Ansible Playbook Compatibility Test
+# Tests: play name, hosts, gather_facts, simple tasks, vars
+
+- name: Basic playbook test
+  hosts: all
+  gather_facts: false
+
+  vars:
+    app_name: myapp
+    app_version: "1.0.0"
+    debug_mode: true
+    max_connections: 100
+
+  tasks:
+    - name: Debug message
+      debug:
+        msg: "Deploying {{ app_name }} version {{ app_version }}"
+
+    - name: Echo simple command
+      command: echo hello
+
+    - name: Shell command with pipes
+      shell: echo "test" | cat
+
+    - name: Create file with content
+      copy:
+        content: |
+          Application: {{ app_name }}
+          Version: {{ app_version }}
+        dest: /tmp/app_info.txt
+        mode: "0644"
+
+    - name: Conditional task
+      debug:
+        msg: "Debug mode is enabled"
+      when: debug_mode

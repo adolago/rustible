@@ -1,0 +1,4 @@
+# Invalid TOML syntax - missing closing bracket
+[defaults
+forks = 10
+timeout = 30

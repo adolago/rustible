@@ -1,0 +1,28 @@
+---
+# Single task notifies multiple handlers
+- name: Test multiple notifications
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Deploy application
+      copy:
+        src: app.zip
+        dest: /opt/app/app.zip
+      notify:
+        - restart app
+        - reload nginx
+        - clear cache
+
+  handlers:
+    - name: restart app
+      debug:
+        msg: "Application restarted"
+
+    - name: reload nginx
+      debug:
+        msg: "Nginx reloaded"
+
+    - name: clear cache
+      debug:
+        msg: "Cache cleared"

@@ -1,0 +1,49 @@
+---
+# Error scenario playbook for integration testing
+- name: Error handling scenarios
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Successful setup task
+      debug:
+        msg: "Setup completed"
+
+    - name: Task with ignore_errors (will fail but continue)
+      command: /nonexistent/command/that/fails
+      ignore_errors: true
+      register: failed_result
+
+    - name: Check failure was captured
+      debug:
+        msg: "Previous task failed: {{ failed_result.failed | default(false) }}"
+
+    - name: Another successful task
+      debug:
+        msg: "Continuing after ignored failure"
+
+- name: Block with rescue execution
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Block that will fail
+      block:
+        - name: Simulate failure in block
+          fail:
+            msg: "Intentional failure for rescue testing"
+
+      rescue:
+        - name: Rescue executed
+          debug:
+            msg: "Rescue block was triggered"
+          register: rescue_ran
+
+      always:
+        - name: Always runs
+          debug:
+            msg: "Always block executed"
+
+    - name: Verify rescue ran
+      debug:
+        msg: "Rescue block ran: {{ rescue_ran is defined }}"

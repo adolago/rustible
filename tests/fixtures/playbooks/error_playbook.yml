@@ -1,0 +1,70 @@
+# Error Playbook - Known to produce failures for testing error handling
+#
+# This playbook contains tasks that are designed to fail in various ways:
+# - Commands that exit with non-zero status
+# - Missing required parameters
+# - Invalid module parameters
+# - Non-existent files
+# - Permission issues
+#
+# Use this playbook to test:
+# - Error detection and reporting
+# - ignore_errors behavior
+# - Task failure propagation
+# - Handler behavior on failure
+---
+- name: Error Handling Test Play
+  hosts: all
+  gather_facts: false
+  vars:
+    nonexistent_var_check: "{{ undefined_variable | default('fallback') }}"
+
+  tasks:
+    - name: Command that always fails
+      command: "false"
+      register: always_fails
+      ignore_errors: true
+
+    - name: Check failure was captured
+      debug:
+        msg: "Previous task failed as expected: {{ always_fails.rc }}"
+      when: always_fails is failed
+
+    - name: Command with non-zero exit code
+      command: "exit 42"
+      register: exit_42
+      ignore_errors: true
+
+    - name: Verify exit code 42
+      debug:
+        msg: "Exit code was: {{ exit_42.rc }}"
+      when: exit_42.rc == 42
+
+    - name: Try to read non-existent file
+      copy:
+        src: /nonexistent/path/to/file.txt
+        dest: /tmp/should_not_exist.txt
+      register: copy_fail
+      ignore_errors: true
+
+    - name: Try to write to read-only location
+      copy:
+        content: "This should fail"
+        dest: /proc/test_file
+      register: write_fail
+      ignore_errors: true
+
+    - name: Run command that produces stderr
+      shell: "echo 'This is stderr' >&2 && exit 1"
+      register: stderr_test
+      ignore_errors: true
+
+    - name: Verify stderr was captured
+      debug:
+        msg: "Stderr output: {{ stderr_test.stderr }}"
+      when: stderr_test.stderr is defined
+
+    # This task should fail and stop execution (no ignore_errors)
+    - name: Final failing task
+      command: "false"
+      when: false  # Disabled by default to allow other tests to run

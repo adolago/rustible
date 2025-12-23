@@ -1,0 +1,37 @@
+---
+# Async tasks with loop iterations
+- name: Async loop patterns
+  hosts: all
+  gather_facts: false
+  vars:
+    packages:
+      - name: package1
+        timeout: 300
+      - name: package2
+        timeout: 600
+      - name: package3
+        timeout: 120
+  tasks:
+    - name: Install packages asynchronously
+      command: "/usr/bin/install-package {{ item.name }}"
+      async: "{{ item.timeout }}"
+      poll: 0
+      register: package_installs
+      loop: "{{ packages }}"
+
+    - name: Collect all job IDs
+      set_fact:
+        job_ids: "{{ package_installs.results | map(attribute='ansible_job_id') | list }}"
+
+    - name: Wait for each package installation
+      async_status:
+        jid: "{{ item }}"
+      register: install_result
+      until: install_result.finished
+      retries: 60
+      delay: 5
+      loop: "{{ job_ids }}"
+
+    - name: Report final status
+      debug:
+        msg: "All {{ packages | length }} packages installed"

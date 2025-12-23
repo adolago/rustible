@@ -1,0 +1,8 @@
+---
+# Variables specific to web1
+ansible_host: 10.0.0.1
+server_id: 1
+is_primary: true
+custom_config:
+  log_level: info
+  cache_size: 1024

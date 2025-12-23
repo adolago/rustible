@@ -1,0 +1,17 @@
+---
+# Simple block with tasks
+- name: Simple block test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Simple block
+      block:
+        - name: Block task 1
+          debug:
+            msg: "First task in block"
+        - name: Block task 2
+          debug:
+            msg: "Second task in block"
+        - name: Block task 3
+          debug:
+            msg: "Third task in block"

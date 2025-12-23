@@ -1,0 +1,227 @@
+---
+# Jinja2 Filter Compatibility Test
+# Tests: common Ansible/Jinja2 filters
+
+- name: Test Jinja2 filters
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    # Test data for filters
+    my_string: "  Hello World  "
+    my_list: ["apple", "banana", "cherry"]
+    my_dict:
+      name: "John"
+      age: 30
+      city: "NYC"
+    my_number: 42
+    my_float: 3.14159
+    my_path: "/etc/nginx/nginx.conf"
+    my_json: '{"key": "value", "number": 123}'
+    my_yaml: |
+      name: test
+      value: 42
+    my_base64: "SGVsbG8gV29ybGQ="
+    items_with_attrs:
+      - name: first
+        value: 100
+      - name: second
+        value: 200
+      - name: third
+        value: 150
+
+  tasks:
+    # String filters
+    - name: Test upper filter
+      debug:
+        msg: "{{ my_string | upper }}"
+
+    - name: Test lower filter
+      debug:
+        msg: "{{ my_string | lower }}"
+
+    - name: Test trim filter
+      debug:
+        msg: "'{{ my_string | trim }}'"
+
+    - name: Test replace filter
+      debug:
+        msg: "{{ my_string | replace('World', 'Universe') }}"
+
+    - name: Test regex_replace filter
+      debug:
+        msg: "{{ my_string | regex_replace('\\s+', '_') }}"
+
+    - name: Test split filter
+      debug:
+        msg: "{{ 'a,b,c,d' | split(',') }}"
+
+    # List filters
+    - name: Test join filter
+      debug:
+        msg: "{{ my_list | join(', ') }}"
+
+    - name: Test first filter
+      debug:
+        msg: "{{ my_list | first }}"
+
+    - name: Test last filter
+      debug:
+        msg: "{{ my_list | last }}"
+
+    - name: Test length filter
+      debug:
+        msg: "{{ my_list | length }}"
+
+    - name: Test sort filter
+      debug:
+        msg: "{{ my_list | sort }}"
+
+    - name: Test reverse filter
+      debug:
+        msg: "{{ my_list | reverse | list }}"
+
+    - name: Test unique filter
+      debug:
+        msg: "{{ ['a', 'b', 'a', 'c', 'b'] | unique }}"
+
+    - name: Test flatten filter
+      debug:
+        msg: "{{ [[1, 2], [3, 4], [5]] | flatten }}"
+
+    # Dict filters
+    - name: Test dict2items filter
+      debug:
+        msg: "{{ my_dict | dict2items }}"
+
+    - name: Test items2dict filter
+      debug:
+        msg: "{{ [{'key': 'a', 'value': 1}, {'key': 'b', 'value': 2}] | items2dict }}"
+
+    - name: Test combine filter
+      debug:
+        msg: "{{ my_dict | combine({'country': 'USA'}) }}"
+
+    # Number filters
+    - name: Test int filter
+      debug:
+        msg: "{{ '42' | int }}"
+
+    - name: Test float filter
+      debug:
+        msg: "{{ '3.14' | float }}"
+
+    - name: Test abs filter
+      debug:
+        msg: "{{ -42 | abs }}"
+
+    - name: Test round filter
+      debug:
+        msg: "{{ my_float | round(2) }}"
+
+    # Path filters
+    - name: Test basename filter
+      debug:
+        msg: "{{ my_path | basename }}"
+
+    - name: Test dirname filter
+      debug:
+        msg: "{{ my_path | dirname }}"
+
+    - name: Test splitext filter
+      debug:
+        msg: "{{ 'file.txt' | splitext }}"
+
+    # Data format filters
+    - name: Test to_json filter
+      debug:
+        msg: "{{ my_dict | to_json }}"
+
+    - name: Test to_yaml filter
+      debug:
+        msg: "{{ my_dict | to_yaml }}"
+
+    - name: Test from_json filter
+      debug:
+        msg: "{{ my_json | from_json }}"
+
+    - name: Test from_yaml filter
+      debug:
+        msg: "{{ my_yaml | from_yaml }}"
+
+    # Encoding filters
+    - name: Test b64encode filter
+      debug:
+        msg: "{{ 'Hello World' | b64encode }}"
+
+    - name: Test b64decode filter
+      debug:
+        msg: "{{ my_base64 | b64decode }}"
+
+    # Default filter variations
+    - name: Test default filter
+      debug:
+        msg: "{{ undefined_var | default('fallback') }}"
+
+    - name: Test default with omit
+      debug:
+        msg: "{{ undefined_var | default(omit) }}"
+
+    - name: Test mandatory filter (will fail if undefined)
+      debug:
+        msg: "{{ my_string | mandatory }}"
+
+    # Type conversion
+    - name: Test bool filter
+      debug:
+        msg: "{{ 'yes' | bool }}, {{ 'no' | bool }}, {{ '1' | bool }}"
+
+    - name: Test string filter
+      debug:
+        msg: "{{ my_number | string }}"
+
+    - name: Test list filter
+      debug:
+        msg: "{{ my_dict | list }}"
+
+    # Attribute access
+    - name: Test map filter
+      debug:
+        msg: "{{ items_with_attrs | map(attribute='name') | list }}"
+
+    - name: Test selectattr filter
+      debug:
+        msg: "{{ items_with_attrs | selectattr('value', 'gt', 100) | list }}"
+
+    - name: Test rejectattr filter
+      debug:
+        msg: "{{ items_with_attrs | rejectattr('value', 'eq', 100) | list }}"
+
+    # Hash filters
+    - name: Test hash filter (md5)
+      debug:
+        msg: "{{ 'hello' | hash('md5') }}"
+
+    - name: Test hash filter (sha256)
+      debug:
+        msg: "{{ 'hello' | hash('sha256') }}"
+
+    # Regex filters
+    - name: Test regex_search filter
+      debug:
+        msg: "{{ 'hello123world' | regex_search('[0-9]+') }}"
+
+    - name: Test regex_findall filter
+      debug:
+        msg: "{{ 'a1b2c3' | regex_findall('[0-9]') }}"
+
+    # Random
+    - name: Test random filter
+      debug:
+        msg: "{{ ['a', 'b', 'c', 'd'] | random }}"
+
+    # Ternary
+    - name: Test ternary filter
+      debug:
+        msg: "{{ true | ternary('yes', 'no') }}"

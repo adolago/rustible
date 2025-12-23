@@ -1,0 +1,10 @@
+---
+# Simple single-task playbook for integration testing
+- name: Simple single task playbook
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Print hello message
+      debug:
+        msg: "Hello from Rustible integration test!"

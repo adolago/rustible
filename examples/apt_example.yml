@@ -1,0 +1,47 @@
+---
+# Example playbook showing the apt module usage
+
+- name: APT Module Examples
+  hosts: localhost
+  become: true
+  tasks:
+    # Install a single package
+    - name: Install vim
+      apt:
+        name: vim
+        state: present
+
+    # Install multiple packages
+    - name: Install development tools
+      apt:
+        name:
+          - git
+          - curl
+          - wget
+        state: present
+
+    # Update cache and install package
+    - name: Update cache and install nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: true
+
+    # Ensure package is at latest version
+    - name: Ensure git is latest
+      apt:
+        name: git
+        state: latest
+
+    # Remove a package
+    - name: Remove apache2
+      apt:
+        name: apache2
+        state: absent
+
+    # Install with check mode (dry-run)
+    - name: Check what would be installed
+      apt:
+        name: docker.io
+        state: present
+      check_mode: true

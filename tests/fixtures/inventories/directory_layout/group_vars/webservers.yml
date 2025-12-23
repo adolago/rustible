@@ -1,0 +1,6 @@
+---
+# Variables for webservers group
+http_port: 80
+https_port: 443
+max_connections: 10000
+document_root: /var/www/html

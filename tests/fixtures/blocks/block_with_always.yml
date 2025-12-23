@@ -1,0 +1,32 @@
+---
+# Block with always section
+- name: Block with always test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Block with always - success path
+      block:
+        - name: Successful task
+          debug:
+            msg: "Task succeeds"
+      always:
+        - name: Always task 1
+          debug:
+            msg: "Always runs after success"
+        - name: Always task 2
+          debug:
+            msg: "Cleanup complete"
+
+    - name: Block with always - failure path
+      block:
+        - name: Failing task
+          fail:
+            msg: "Intentional failure"
+      rescue:
+        - name: Handle failure
+          debug:
+            msg: "Handling failure"
+      always:
+        - name: Always runs
+          debug:
+            msg: "Always runs after failure and rescue"

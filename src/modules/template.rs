@@ -1,18 +1,20 @@
 //! Template module - Render templates with Tera
 //!
 //! This module renders Tera templates (similar to Jinja2) and copies the result
-//! to a destination file.
+//! to a destination file. Supports both local and remote execution via async connections.
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
+use crate::connection::TransferOptions;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use tera::{Context as TeraContext, Tera};
+use tokio::runtime::Handle;
 
 /// Module for rendering templates
 pub struct TemplateModule;
@@ -155,55 +157,20 @@ impl TemplateModule {
         }
         Ok(false)
     }
-}
 
-impl Module for TemplateModule {
-    fn name(&self) -> &'static str {
-        "template"
-    }
-
-    fn description(&self) -> &'static str {
-        "Render Tera/Jinja2 templates to a destination"
-    }
-
-    fn classification(&self) -> ModuleClassification {
-        ModuleClassification::NativeTransport
-    }
-
-    fn required_params(&self) -> &[&'static str] {
-        &["src", "dest"]
-    }
-
-    fn execute(
-        &self,
+    /// Execute template rendering locally (when no connection is present)
+    fn execute_local(
         params: &ModuleParams,
         context: &ModuleContext,
+        rendered: &str,
+        src_path: &Path,
+        dest_path: &Path,
+        backup: bool,
+        backup_suffix: &str,
+        mode: Option<u32>,
     ) -> ModuleResult<ModuleOutput> {
         let src = params.get_string_required("src")?;
         let dest = params.get_string_required("dest")?;
-        let src_path = Path::new(&src);
-        let dest_path = Path::new(&dest);
-        let backup = params.get_bool_or("backup", false);
-        let backup_suffix = params
-            .get_string("backup_suffix")?
-            .unwrap_or_else(|| "~".to_string());
-        let mode = params.get_u32("mode")?;
-        let extra_vars = params.get("vars");
-
-        // Check source exists
-        if !src_path.exists() {
-            return Err(ModuleError::ExecutionFailed(format!(
-                "Template source '{}' does not exist",
-                src
-            )));
-        }
-
-        // Read template content
-        let template_content = fs::read_to_string(src_path).map_err(|e| ModuleError::Io(e))?;
-
-        // Build context and render
-        let tera_ctx = Self::build_tera_context(context, extra_vars);
-        let rendered = Self::render_template(&template_content, &tera_ctx)?;
 
         // Check if dest needs updating
         let needs_update = if dest_path.exists() {
@@ -254,7 +221,7 @@ impl Module for TemplateModule {
                 } else {
                     String::new()
                 };
-                Some(Diff::new(before, rendered.clone()))
+                Some(Diff::new(before, rendered.to_string()))
             } else {
                 None
             };
@@ -271,7 +238,7 @@ impl Module for TemplateModule {
 
         // Create backup if requested
         let backup_file = if backup {
-            Self::create_backup(dest_path, &backup_suffix)?
+            Self::create_backup(dest_path, backup_suffix)?
         } else {
             None
         };
@@ -284,7 +251,7 @@ impl Module for TemplateModule {
         }
 
         // Write rendered content
-        fs::write(dest_path, &rendered)?;
+        fs::write(dest_path, rendered)?;
 
         // Set permissions
         let perm_changed = Self::set_permissions(dest_path, mode)?;
@@ -313,7 +280,194 @@ impl Module for TemplateModule {
             .with_data("uid", serde_json::json!(meta.uid()))
             .with_data("gid", serde_json::json!(meta.gid()));
 
+        let _ = src_path; // Suppress unused warning
         Ok(output)
+    }
+}
+
+impl Module for TemplateModule {
+    fn name(&self) -> &'static str {
+        "template"
+    }
+
+    fn description(&self) -> &'static str {
+        "Render Tera/Jinja2 templates to a destination"
+    }
+
+    fn classification(&self) -> ModuleClassification {
+        ModuleClassification::NativeTransport
+    }
+
+    fn required_params(&self) -> &[&'static str] {
+        &["src", "dest"]
+    }
+
+    fn execute(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+    ) -> ModuleResult<ModuleOutput> {
+        let src = params.get_string_required("src")?;
+        let dest = params.get_string_required("dest")?;
+        let src_path = Path::new(&src);
+        let dest_path = Path::new(&dest);
+        let backup = params.get_bool_or("backup", false);
+        let backup_suffix = params
+            .get_string("backup_suffix")?
+            .unwrap_or_else(|| "~".to_string());
+        let mode = params.get_u32("mode")?;
+        let extra_vars = params.get("vars");
+
+        // Check source exists (template source is always on control node)
+        if !src_path.exists() {
+            return Err(ModuleError::ExecutionFailed(format!(
+                "Template source '{}' does not exist",
+                src
+            )));
+        }
+
+        // Read template content from control node
+        let template_content = fs::read_to_string(src_path).map_err(ModuleError::Io)?;
+
+        // Build context and render
+        let tera_ctx = Self::build_tera_context(context, extra_vars);
+        let rendered = Self::render_template(&template_content, &tera_ctx)?;
+
+        // Check if we have a connection for remote execution
+        if let Some(ref conn) = context.connection {
+            // Remote execution via async connection
+            let handle = Handle::try_current().map_err(|e| {
+                ModuleError::ExecutionFailed(format!("No tokio runtime available: {}", e))
+            })?;
+
+            // Get current content from remote to check if update is needed
+            let current_content = handle.block_on(async {
+                if conn.path_exists(dest_path).await.unwrap_or(false) {
+                    conn.download_content(dest_path)
+                        .await
+                        .ok()
+                        .and_then(|bytes| String::from_utf8(bytes).ok())
+                } else {
+                    None
+                }
+            });
+
+            let needs_update = match &current_content {
+                Some(content) => content != &rendered,
+                None => true,
+            };
+
+            if !needs_update {
+                // Check if only permissions need updating
+                let perm_changed = if let Some(m) = mode {
+                    let stat_result = handle.block_on(async { conn.stat(dest_path).await });
+                    if let Ok(stat) = stat_result {
+                        (stat.mode & 0o7777) != m
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if perm_changed {
+                    if context.check_mode {
+                        return Ok(ModuleOutput::changed(format!(
+                            "Would change permissions on '{}'",
+                            dest
+                        )));
+                    }
+                    // Set permissions via chmod command on remote
+                    let chmod_cmd = format!("chmod {:o} {}", mode.unwrap(), dest);
+                    handle.block_on(async { conn.execute(&chmod_cmd, None).await }).map_err(
+                        |e| ModuleError::ExecutionFailed(format!("Failed to set permissions: {}", e)),
+                    )?;
+                    return Ok(ModuleOutput::changed(format!(
+                        "Changed permissions on '{}'",
+                        dest
+                    )));
+                }
+
+                return Ok(ModuleOutput::ok(format!(
+                    "Template '{}' is already up to date",
+                    dest
+                )));
+            }
+
+            // In check mode, return what would happen
+            if context.check_mode {
+                let diff = if context.diff_mode {
+                    let before = current_content.unwrap_or_default();
+                    Some(Diff::new(before, rendered.clone()))
+                } else {
+                    None
+                };
+
+                let mut output =
+                    ModuleOutput::changed(format!("Would render template '{}' to '{}'", src, dest));
+
+                if let Some(d) = diff {
+                    output = output.with_diff(d);
+                }
+
+                return Ok(output);
+            }
+
+            // Create backup if requested (via remote command)
+            let backup_file = if backup && current_content.is_some() {
+                let backup_path = format!("{}{}", dest, backup_suffix);
+                let cp_cmd = format!("cp {} {}", dest, backup_path);
+                handle
+                    .block_on(async { conn.execute(&cp_cmd, None).await })
+                    .map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to create backup: {}", e))
+                    })?;
+                Some(backup_path)
+            } else {
+                None
+            };
+
+            // Build transfer options
+            let transfer_opts = TransferOptions {
+                mode,
+                create_dirs: true,
+                backup: false, // We already handled backup above
+                ..Default::default()
+            };
+
+            // Upload rendered content to remote
+            handle
+                .block_on(async {
+                    conn.upload_content(rendered.as_bytes(), dest_path, Some(transfer_opts))
+                        .await
+                })
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to upload template: {}", e))
+                })?;
+
+            let mut output =
+                ModuleOutput::changed(format!("Rendered template '{}' to '{}'", src, dest));
+
+            if let Some(backup_path) = backup_file {
+                output = output.with_data("backup_file", serde_json::json!(backup_path));
+            }
+
+            // Get file info from remote
+            if let Ok(stat) = handle.block_on(async { conn.stat(dest_path).await }) {
+                output = output
+                    .with_data("dest", serde_json::json!(dest))
+                    .with_data("src", serde_json::json!(src))
+                    .with_data("size", serde_json::json!(stat.size))
+                    .with_data("mode", serde_json::json!(format!("{:o}", stat.mode & 0o7777)))
+                    .with_data("uid", serde_json::json!(stat.uid))
+                    .with_data("gid", serde_json::json!(stat.gid));
+            }
+
+            Ok(output)
+        } else {
+            // Local execution (no connection)
+            Self::execute_local(params, context, &rendered, src_path, dest_path, backup, &backup_suffix, mode)
+        }
     }
 
     fn check(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<ModuleOutput> {
@@ -342,13 +496,35 @@ impl Module for TemplateModule {
         let tera_ctx = Self::build_tera_context(context, extra_vars);
         let rendered = Self::render_template(&template_content, &tera_ctx)?;
 
-        let before = if dest_path.exists() {
-            fs::read_to_string(dest_path).unwrap_or_default()
-        } else {
-            String::new()
-        };
+        // Check if we have a connection for remote diff
+        if let Some(ref conn) = context.connection {
+            let handle = Handle::try_current().map_err(|e| {
+                ModuleError::ExecutionFailed(format!("No tokio runtime available: {}", e))
+            })?;
 
-        Ok(Some(Diff::new(before, rendered)))
+            let before = handle.block_on(async {
+                if conn.path_exists(dest_path).await.unwrap_or(false) {
+                    conn.download_content(dest_path)
+                        .await
+                        .ok()
+                        .and_then(|bytes| String::from_utf8(bytes).ok())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            });
+
+            Ok(Some(Diff::new(before, rendered)))
+        } else {
+            // Local diff
+            let before = if dest_path.exists() {
+                fs::read_to_string(dest_path).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            Ok(Some(Diff::new(before, rendered)))
+        }
     }
 }
 

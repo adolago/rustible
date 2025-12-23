@@ -1,0 +1,21 @@
+# Test playbook for local_action functionality
+---
+- name: Local action test
+  hosts: webservers
+  gather_facts: false
+  tasks:
+    - name: Local action using local_action syntax
+      local_action:
+        module: debug
+        msg: "Local action from {{ inventory_hostname }}"
+
+    - name: Equivalent delegate_to localhost
+      debug:
+        msg: "Delegate to localhost from {{ inventory_hostname }}"
+      delegate_to: localhost
+
+    - name: Local command execution
+      local_action:
+        module: command
+        cmd: echo "Hello from local"
+      register: local_result

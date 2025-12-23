@@ -1,0 +1,6 @@
+---
+# Database defaults
+db_name: app
+db_user: app_user
+db_port: 5432
+db_max_connections: 100

@@ -1,0 +1,29 @@
+---
+# Webserver role tasks
+- name: Install web server package
+  debug:
+    msg: "Would install: {{ webserver_package }}"
+
+- name: Create document root
+  file:
+    path: "{{ webserver_document_root }}"
+    state: directory
+    mode: "0755"
+
+- name: Deploy web server configuration
+  template:
+    src: nginx.conf.j2
+    dest: "{{ webserver_config_path }}/nginx.conf"
+  notify:
+    - restart webserver
+    - reload webserver
+
+- name: Enable web server service
+  debug:
+    msg: "Would enable and start {{ webserver_package }}"
+
+- name: Configure virtual hosts
+  debug:
+    msg: "Configuring vhost: {{ item.name }}"
+  loop: "{{ webserver_vhosts }}"
+  when: webserver_vhosts is defined

@@ -72,9 +72,8 @@ impl ConnectionConfig {
 
     /// Parse configuration from TOML string
     pub fn from_toml(content: &str) -> Result<Self, ConnectionError> {
-        toml::from_str(content).map_err(|e| {
-            ConnectionError::InvalidConfig(format!("Failed to parse config: {}", e))
-        })
+        toml::from_str(content)
+            .map_err(|e| ConnectionError::InvalidConfig(format!("Failed to parse config: {}", e)))
     }
 
     /// Load and merge SSH config
@@ -404,7 +403,9 @@ pub struct SshConfigParser;
 
 impl SshConfigParser {
     /// Parse an SSH config file
-    pub fn parse_file(path: impl AsRef<Path>) -> Result<HashMap<String, HostConfig>, ConnectionError> {
+    pub fn parse_file(
+        path: impl AsRef<Path>,
+    ) -> Result<HashMap<String, HostConfig>, ConnectionError> {
         let content = fs::read_to_string(path.as_ref()).map_err(|e| {
             ConnectionError::InvalidConfig(format!("Failed to read SSH config: {}", e))
         })?;
@@ -482,11 +483,12 @@ impl SshConfigParser {
                         current_config.server_alive_count_max = value.parse().ok();
                     }
                     "stricthostkeychecking" => {
-                        current_config.strict_host_key_checking = match value.to_lowercase().as_str() {
-                            "yes" => Some(true),
-                            "no" => Some(false),
-                            _ => None,
-                        };
+                        current_config.strict_host_key_checking =
+                            match value.to_lowercase().as_str() {
+                                "yes" => Some(true),
+                                "no" => Some(false),
+                                _ => None,
+                            };
                     }
                     "userknownhostsfile" => {
                         current_config.user_known_hosts_file = Some(value);

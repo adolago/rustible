@@ -1,0 +1,17 @@
+---
+# Homelab inventory for integration testing
+all:
+  hosts:
+    svr-host:
+      ansible_host: 192.168.178.88
+      ansible_user: artur
+    svr-core:
+      ansible_host: 192.168.178.102
+      ansible_user: artur
+    svr-nas:
+      ansible_host: 192.168.178.101
+      ansible_user: artur
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    ansible_become: yes
+    ansible_become_method: sudo

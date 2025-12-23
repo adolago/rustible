@@ -1,0 +1,37 @@
+---
+# Test listen directive
+- name: Test listen directive
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Update web configuration
+      copy:
+        src: web.conf
+        dest: /etc/app/web.conf
+      notify: web config changed
+
+    - name: Update app configuration
+      copy:
+        src: app.conf
+        dest: /etc/app/app.conf
+      notify: app config changed
+
+  handlers:
+    # Multiple handlers listening to the same topic
+    - name: restart nginx
+      debug:
+        msg: "Nginx restarted"
+      listen:
+        - web config changed
+        - app config changed
+
+    - name: restart php-fpm
+      debug:
+        msg: "PHP-FPM restarted"
+      listen: web config changed
+
+    - name: clear opcache
+      debug:
+        msg: "Opcache cleared"
+      listen: app config changed

@@ -125,7 +125,10 @@ async fn test_ssh_connect_with_key_authentication() {
 
     assert!(connection.is_alive().await);
 
-    connection.close().await.expect("Failed to close connection");
+    connection
+        .close()
+        .await
+        .expect("Failed to close connection");
 }
 
 #[tokio::test]
@@ -593,9 +596,7 @@ async fn test_ssh_upload_content_directly() {
     // Upload content directly without local file
     let content = b"Direct content upload test";
     let remote_path = PathBuf::from("/tmp/rustible_direct_upload.txt");
-    let result = connection
-        .upload_content(content, &remote_path, None)
-        .await;
+    let result = connection.upload_content(content, &remote_path, None).await;
     assert!(result.is_ok(), "Direct upload failed: {:?}", result);
 
     // Verify
@@ -604,10 +605,7 @@ async fn test_ssh_upload_content_directly() {
         .await
         .unwrap();
     assert!(verify.success);
-    assert_eq!(
-        verify.stdout.trim(),
-        std::str::from_utf8(content).unwrap()
-    );
+    assert_eq!(verify.stdout.trim(), std::str::from_utf8(content).unwrap());
 
     // Cleanup
     connection
@@ -644,7 +642,9 @@ async fn test_ssh_connection_pool_reuse() {
     // Get connection from pool
     let conn1 = pool
         .get_or_create(&format!("ssh://{}@{}:22", config.user, host), || {
-            Box::pin(async { rustible::connection::SshConnection::connect(ssh_config.clone()).await })
+            Box::pin(async {
+                rustible::connection::SshConnection::connect(ssh_config.clone()).await
+            })
         })
         .await
         .expect("Failed to get connection");
@@ -661,7 +661,9 @@ async fn test_ssh_connection_pool_reuse() {
     // Get connection again - should reuse
     let conn2 = pool
         .get_or_create(&format!("ssh://{}@{}:22", config.user, host), || {
-            Box::pin(async { rustible::connection::SshConnection::connect(ssh_config.clone()).await })
+            Box::pin(async {
+                rustible::connection::SshConnection::connect(ssh_config.clone()).await
+            })
         })
         .await
         .expect("Failed to get connection");
@@ -779,7 +781,11 @@ async fn test_ssh_privilege_escalation_sudo() {
         .execute("sudo cat /etc/shadow | head -1", None)
         .await
         .unwrap();
-    assert!(result.success, "Reading shadow file failed: {}", result.stderr);
+    assert!(
+        result.success,
+        "Reading shadow file failed: {}",
+        result.stderr
+    );
 
     connection.close().await.ok();
 }

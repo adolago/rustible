@@ -1,0 +1,68 @@
+# Test playbook for conditionals with blocks
+---
+- name: Test conditionals with blocks
+  hosts: all
+  gather_facts: false
+  vars:
+    run_web_tasks: true
+    run_db_tasks: false
+    is_production: false
+
+  tasks:
+    - name: Web server configuration block
+      block:
+        - name: Install nginx
+          debug:
+            msg: "Installing nginx"
+
+        - name: Configure nginx
+          debug:
+            msg: "Configuring nginx"
+
+        - name: Start nginx
+          debug:
+            msg: "Starting nginx"
+      when: run_web_tasks
+
+    - name: Database configuration block (should skip)
+      block:
+        - name: Install PostgreSQL
+          debug:
+            msg: "Installing PostgreSQL"
+
+        - name: Configure PostgreSQL
+          debug:
+            msg: "Configuring PostgreSQL"
+      when: run_db_tasks
+
+    - name: Block with rescue
+      block:
+        - name: Attempt risky operation
+          debug:
+            msg: "Attempting operation"
+
+        - name: Another operation
+          debug:
+            msg: "Another operation"
+      rescue:
+        - name: Handle failure
+          debug:
+            msg: "Handling failure"
+      always:
+        - name: Cleanup
+          debug:
+            msg: "Cleaning up"
+      when: run_web_tasks
+
+    - name: Nested conditionals in block
+      block:
+        - name: Production-only task
+          debug:
+            msg: "This is production"
+          when: is_production
+
+        - name: Non-production task
+          debug:
+            msg: "This is not production"
+          when: not is_production
+      when: run_web_tasks

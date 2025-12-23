@@ -1,0 +1,12 @@
+---
+# App role tasks - depends on webserver and database
+- name: Deploy application
+  copy:
+    src: app.tar.gz
+    dest: /opt/app/
+
+- name: Start application
+  service:
+    name: "{{ app_name }}"
+    state: started
+    enabled: true

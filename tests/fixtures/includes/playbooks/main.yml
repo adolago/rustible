@@ -1,0 +1,13 @@
+---
+# Main playbook that imports other playbooks
+- name: Main playbook - first play
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Main playbook task
+      debug:
+        msg: "Running main playbook"
+
+    - name: Set main fact
+      set_fact:
+        main_playbook_run: true

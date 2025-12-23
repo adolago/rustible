@@ -1,0 +1,36 @@
+# Benchmark: Connection Pooling Test
+# Runs 10 sequential commands - shows improvement from connection reuse
+---
+- name: Connection pooling benchmark
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Command 1
+      command: echo "cmd1"
+
+    - name: Command 2
+      command: echo "cmd2"
+
+    - name: Command 3
+      command: echo "cmd3"
+
+    - name: Command 4
+      command: echo "cmd4"
+
+    - name: Command 5
+      command: echo "cmd5"
+
+    - name: Command 6
+      command: echo "cmd6"
+
+    - name: Command 7
+      command: echo "cmd7"
+
+    - name: Command 8
+      command: echo "cmd8"
+
+    - name: Command 9
+      command: echo "cmd9"
+
+    - name: Command 10
+      command: echo "cmd10"

@@ -1,0 +1,14 @@
+# Verification test - leaves a traceable file
+---
+- name: Verification test
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Create verification file with timestamp
+      copy:
+        content: "Rustible verification: {{ ansible_date_time.iso8601 | default('timestamp_not_available') }}\n"
+        dest: /tmp/rustible_verification.txt
+        mode: '0644'
+
+    - name: Create additional marker
+      command: "echo 'Executed at: $(date)' > /tmp/rustible_marker.txt"

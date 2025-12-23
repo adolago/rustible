@@ -1,0 +1,39 @@
+---
+# Handlers run in definition order, not notification order
+- name: Test handler execution order
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Trigger handlers in reverse order
+      copy:
+        src: config.conf
+        dest: /etc/app/config.conf
+      notify:
+        - zulu handler
+        - yankee handler
+        - xray handler
+        - alpha handler
+        - bravo handler
+
+  handlers:
+    # Definition order should be the execution order
+    - name: alpha handler
+      debug:
+        msg: "Alpha executed (should be first)"
+
+    - name: bravo handler
+      debug:
+        msg: "Bravo executed (should be second)"
+
+    - name: xray handler
+      debug:
+        msg: "Xray executed (should be third)"
+
+    - name: yankee handler
+      debug:
+        msg: "Yankee executed (should be fourth)"
+
+    - name: zulu handler
+      debug:
+        msg: "Zulu executed (should be fifth)"

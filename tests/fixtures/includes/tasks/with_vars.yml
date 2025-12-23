@@ -1,0 +1,10 @@
+---
+# Tasks that use passed variables
+- name: Use passed variables
+  debug:
+    msg: "var1={{ var1 | default('unset') }}, var2={{ var2 | default('unset') }}"
+
+- name: Register variables for verification
+  set_fact:
+    passed_var1: "{{ var1 | default('unset') }}"
+    passed_var2: "{{ var2 | default('unset') }}"

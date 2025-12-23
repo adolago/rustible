@@ -1,0 +1,4 @@
+# Invalid YAML syntax - unclosed list
+defaults:
+  forks: [10, 20
+  timeout: 30

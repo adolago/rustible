@@ -1,0 +1,51 @@
+# Test playbook for changed_when and failed_when
+---
+- name: Test changed_when and failed_when
+  hosts: all
+  gather_facts: false
+  vars:
+    force_change: true
+    force_no_change: false
+    allow_empty_result: true
+
+  tasks:
+    - name: Task with changed_when false
+      debug:
+        msg: "This task will report as unchanged"
+      changed_when: false
+
+    - name: Task with changed_when true
+      debug:
+        msg: "This task will report as changed"
+      changed_when: true
+
+    - name: Task with conditional changed_when
+      debug:
+        msg: "Change status depends on variable"
+      changed_when: force_change
+
+    - name: Command with changed_when based on output
+      debug:
+        msg: "Checking state"
+      register: state_result
+      changed_when: false
+
+    - name: Task that should fail with failed_when
+      debug:
+        msg: "This task will fail"
+      register: fail_result
+      failed_when: false
+      ignore_errors: true
+
+    - name: Task with complex failed_when
+      debug:
+        msg: "Complex failure check"
+      register: complex_result
+      failed_when: complex_result is not defined
+
+    - name: Task with combined changed_when and failed_when
+      debug:
+        msg: "Combined conditions"
+      register: combined_result
+      changed_when: force_change
+      failed_when: false

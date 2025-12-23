@@ -1,0 +1,96 @@
+# Complex Inventory - Advanced inventory features
+#
+# This inventory demonstrates advanced features:
+# - Nested groups
+# - Group variables
+# - Host variables
+# - Multiple inheritance
+# - SSH connection settings
+---
+all:
+  vars:
+    # Global variables for all hosts
+    ansible_user: admin
+    ansible_ssh_private_key_file: ~/.ssh/id_rsa
+    environment: production
+    ntp_server: time.example.com
+
+  children:
+    # Geographic grouping
+    datacenter_us:
+      vars:
+        datacenter: us-east-1
+        timezone: America/New_York
+      children:
+        webservers_us:
+          hosts:
+            web-us-01:
+              ansible_host: 10.0.1.10
+              priority: 1
+            web-us-02:
+              ansible_host: 10.0.1.11
+              priority: 2
+        databases_us:
+          hosts:
+            db-us-01:
+              ansible_host: 10.0.1.20
+              db_role: primary
+            db-us-02:
+              ansible_host: 10.0.1.21
+              db_role: replica
+
+    datacenter_eu:
+      vars:
+        datacenter: eu-west-1
+        timezone: Europe/London
+      children:
+        webservers_eu:
+          hosts:
+            web-eu-01:
+              ansible_host: 10.1.1.10
+              priority: 1
+            web-eu-02:
+              ansible_host: 10.1.1.11
+              priority: 2
+        databases_eu:
+          hosts:
+            db-eu-01:
+              ansible_host: 10.1.1.20
+              db_role: primary
+
+    # Functional grouping (aggregates from geographic groups)
+    webservers:
+      vars:
+        http_port: 80
+        https_port: 443
+        max_connections: 10000
+      children:
+        webservers_us:
+        webservers_eu:
+
+    databases:
+      vars:
+        db_port: 5432
+        max_connections: 500
+        shared_buffers: 256MB
+      children:
+        databases_us:
+        databases_eu:
+
+    # Role-based grouping
+    primary_databases:
+      hosts:
+        db-us-01:
+        db-eu-01:
+
+    replica_databases:
+      hosts:
+        db-us-02:
+
+    # Maintenance grouping
+    maintenance:
+      vars:
+        maintenance_mode: false
+      hosts:
+        web-us-02:
+        web-eu-02:

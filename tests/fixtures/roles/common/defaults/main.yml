@@ -1,0 +1,10 @@
+---
+# Default values for common role
+timezone: UTC
+common_packages:
+  - vim
+  - curl
+  - git
+  - htop
+enable_monitoring: false
+log_level: info

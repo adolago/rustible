@@ -1,0 +1,9 @@
+---
+# Configure tasks with variables
+- name: Configure with passed variable
+  debug:
+    msg: "Configuring with config_file={{ config_file | default('default.conf') }} and mode={{ config_mode | default('0644') }}"
+
+- name: Set configuration fact
+  set_fact:
+    configuration_done: true

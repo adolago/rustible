@@ -1,0 +1,17 @@
+---
+# Test handler not found error
+- name: Test handler not found
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Update configuration
+      copy:
+        src: config.conf
+        dest: /etc/app/config.conf
+      notify: nonexistent handler
+
+  handlers:
+    - name: existing handler
+      debug:
+        msg: "This handler exists but should not be called"

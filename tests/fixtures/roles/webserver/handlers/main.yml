@@ -1,0 +1,14 @@
+# Handlers for webserver role
+---
+- name: Restart nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: Reload nginx
+  service:
+    name: nginx
+    state: reloaded
+
+- name: Validate nginx config
+  command: nginx -t

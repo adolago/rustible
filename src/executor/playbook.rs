@@ -42,8 +42,7 @@ impl Playbook {
     /// Load a playbook from a YAML file
     pub fn load<P: AsRef<Path>>(path: P) -> ExecutorResult<Self> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ExecutorError::IoError(e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| ExecutorError::IoError(e))?;
 
         Self::parse(&content, Some(path.to_path_buf()))
     }
@@ -58,7 +57,8 @@ impl Playbook {
         playbook.path = path.clone();
 
         if let Some(ref p) = path {
-            playbook.name = p.file_stem()
+            playbook.name = p
+                .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("Untitled")
                 .to_string();
@@ -84,7 +84,9 @@ impl Playbook {
 
     /// Get the playbook directory
     pub fn get_playbook_dir(&self) -> Option<PathBuf> {
-        self.path.as_ref().and_then(|p| p.parent().map(PathBuf::from))
+        self.path
+            .as_ref()
+            .and_then(|p| p.parent().map(PathBuf::from))
     }
 }
 
@@ -510,7 +512,10 @@ impl Play {
     }
 
     /// Create a Play from a PlayDefinition
-    pub fn from_definition(def: PlayDefinition, playbook_path: Option<&PathBuf>) -> ExecutorResult<Self> {
+    pub fn from_definition(
+        def: PlayDefinition,
+        playbook_path: Option<&PathBuf>,
+    ) -> ExecutorResult<Self> {
         let mut play = Play::new(&def.name, &def.hosts);
 
         play.gather_facts = def.gather_facts;
@@ -532,9 +537,7 @@ impl Play {
                 SerialValue::Number(n) => Some(n),
                 SerialValue::Percentage(p) => {
                     // Parse percentage like "50%" - for now just treat as a fixed number
-                    p.trim_end_matches('%')
-                        .parse::<usize>()
-                        .ok()
+                    p.trim_end_matches('%').parse::<usize>().ok()
                 }
                 SerialValue::List(list) => {
                     // Use first value for simplicity
@@ -641,12 +644,21 @@ impl Role {
     }
 
     /// Create a Role from a RoleDefinition
-    pub fn from_definition(def: RoleDefinition, playbook_path: Option<&PathBuf>) -> ExecutorResult<Self> {
+    pub fn from_definition(
+        def: RoleDefinition,
+        playbook_path: Option<&PathBuf>,
+    ) -> ExecutorResult<Self> {
         let mut role = Role::new(def.name());
         role.vars = def.vars();
         role.when = def.when().map(String::from);
 
-        if let RoleDefinition::Full { tags, r#become: become_opt, tasks_from, .. } = &def {
+        if let RoleDefinition::Full {
+            tags,
+            r#become: become_opt,
+            tasks_from,
+            ..
+        } = &def
+        {
             role.tags = tags.clone();
             role.r#become = *become_opt;
             role.tasks_from = tasks_from.clone();
@@ -666,7 +678,9 @@ impl Role {
                 let defaults_file = role_path.join("defaults").join("main.yml");
                 if defaults_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&defaults_file) {
-                        if let Ok(defaults) = serde_yaml::from_str::<IndexMap<String, JsonValue>>(&content) {
+                        if let Ok(defaults) =
+                            serde_yaml::from_str::<IndexMap<String, JsonValue>>(&content)
+                        {
                             role.defaults = defaults;
                         }
                     }
@@ -681,9 +695,12 @@ impl Role {
 
                 if tasks_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&tasks_file) {
-                        if let Ok(task_defs) = serde_yaml::from_str::<Vec<TaskDefinition>>(&content) {
+                        if let Ok(task_defs) = serde_yaml::from_str::<Vec<TaskDefinition>>(&content)
+                        {
                             for task_def in task_defs {
-                                if let Ok(tasks) = parse_task_definition(task_def, Some(&tasks_file)) {
+                                if let Ok(tasks) =
+                                    parse_task_definition(task_def, Some(&tasks_file))
+                                {
                                     role.tasks.extend(tasks);
                                 }
                             }
@@ -695,7 +712,9 @@ impl Role {
                 let handlers_file = role_path.join("handlers").join("main.yml");
                 if handlers_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&handlers_file) {
-                        if let Ok(handler_defs) = serde_yaml::from_str::<Vec<HandlerDefinition>>(&content) {
+                        if let Ok(handler_defs) =
+                            serde_yaml::from_str::<Vec<HandlerDefinition>>(&content)
+                        {
                             for handler_def in handler_defs {
                                 if let Ok(handler) = parse_handler_definition(handler_def) {
                                     role.handlers.push(handler);
@@ -711,7 +730,9 @@ impl Role {
                     if let Ok(content) = std::fs::read_to_string(&meta_file) {
                         if let Ok(meta) = serde_yaml::from_str::<RoleMeta>(&content) {
                             for dep in meta.dependencies {
-                                if let Ok(dep_role) = Role::from_definition(dep, Some(playbook_path)) {
+                                if let Ok(dep_role) =
+                                    Role::from_definition(dep, Some(playbook_path))
+                                {
                                     role.dependencies.push(dep_role);
                                 }
                             }
@@ -782,7 +803,10 @@ struct Platform {
 }
 
 /// Parse a task definition into Task(s)
-fn parse_task_definition(def: TaskDefinition, playbook_path: Option<&PathBuf>) -> ExecutorResult<Vec<Task>> {
+fn parse_task_definition(
+    def: TaskDefinition,
+    playbook_path: Option<&PathBuf>,
+) -> ExecutorResult<Vec<Task>> {
     let mut tasks = Vec::new();
 
     // Handle block/rescue/always
@@ -872,9 +896,15 @@ fn parse_task_definition(def: TaskDefinition, playbook_path: Option<&PathBuf>) -
             module: "include_role".to_string(),
             args: {
                 let mut args = IndexMap::new();
-                args.insert("name".to_string(), JsonValue::String(include_role.name.clone()));
+                args.insert(
+                    "name".to_string(),
+                    JsonValue::String(include_role.name.clone()),
+                );
                 if let Some(ref tasks_from) = include_role.tasks_from {
-                    args.insert("tasks_from".to_string(), JsonValue::String(tasks_from.clone()));
+                    args.insert(
+                        "tasks_from".to_string(),
+                        JsonValue::String(tasks_from.clone()),
+                    );
                 }
                 args
             },
@@ -895,7 +925,10 @@ fn parse_task_definition(def: TaskDefinition, playbook_path: Option<&PathBuf>) -
             module: "import_role".to_string(),
             args: {
                 let mut args = IndexMap::new();
-                args.insert("name".to_string(), JsonValue::String(import_role.name.clone()));
+                args.insert(
+                    "name".to_string(),
+                    JsonValue::String(import_role.name.clone()),
+                );
                 args
             },
             when: def.when.as_ref().map(|w| w.to_condition()),
@@ -920,7 +953,8 @@ fn parse_task_definition(def: TaskDefinition, playbook_path: Option<&PathBuf>) -
             Some(LoopValue::Variable(_)) => None, // Would need runtime resolution
             None => None,
         },
-        loop_var: def.loop_control
+        loop_var: def
+            .loop_control
             .as_ref()
             .map(|lc| lc.loop_var.clone())
             .unwrap_or_else(|| "item".to_string()),
@@ -939,16 +973,50 @@ fn parse_task_definition(def: TaskDefinition, playbook_path: Option<&PathBuf>) -
 }
 
 /// Find the module name and args in a task definition
-fn find_module_in_definition(def: &TaskDefinition) -> ExecutorResult<(String, IndexMap<String, JsonValue>)> {
+fn find_module_in_definition(
+    def: &TaskDefinition,
+) -> ExecutorResult<(String, IndexMap<String, JsonValue>)> {
     // Known non-module keys
     let non_module_keys = [
-        "name", "when", "register", "notify", "loop", "loop_items", "with_items",
-        "with_list", "loop_control", "ignore_errors", "changed_when", "failed_when",
-        "delegate_to", "run_once", "tags", "become", "become_user", "block",
-        "rescue", "always", "include_tasks", "import_tasks", "include_role",
-        "import_role", "environment", "retries", "delay", "until", "vars",
-        "module_args", "args", "no_log", "throttle", "any_errors_fatal",
-        "check_mode", "diff", "connection", "async", "poll",
+        "name",
+        "when",
+        "register",
+        "notify",
+        "loop",
+        "loop_items",
+        "with_items",
+        "with_list",
+        "loop_control",
+        "ignore_errors",
+        "changed_when",
+        "failed_when",
+        "delegate_to",
+        "run_once",
+        "tags",
+        "become",
+        "become_user",
+        "block",
+        "rescue",
+        "always",
+        "include_tasks",
+        "import_tasks",
+        "include_role",
+        "import_role",
+        "environment",
+        "retries",
+        "delay",
+        "until",
+        "vars",
+        "module_args",
+        "args",
+        "no_log",
+        "throttle",
+        "any_errors_fatal",
+        "check_mode",
+        "diff",
+        "connection",
+        "async",
+        "poll",
     ];
 
     // Check explicit args first
@@ -978,11 +1046,7 @@ fn find_module_in_definition(def: &TaskDefinition) -> ExecutorResult<(String, In
     for (key, value) in &def.module {
         if !non_module_keys.contains(&key.as_str()) {
             let args = match value {
-                JsonValue::Object(obj) => {
-                    obj.iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect()
-                }
+                JsonValue::Object(obj) => obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
                 JsonValue::String(s) => {
                     let mut args = IndexMap::new();
                     args.insert("_raw_params".to_string(), JsonValue::String(s.clone()));
@@ -1017,9 +1081,7 @@ fn parse_handler_definition(def: HandlerDefinition) -> ExecutorResult<Handler> {
                 module_name = key.clone();
                 module_args = match value {
                     JsonValue::Object(obj) => {
-                        obj.iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect()
+                        obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
                     }
                     JsonValue::String(s) => {
                         let mut args = IndexMap::new();

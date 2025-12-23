@@ -1,0 +1,34 @@
+---
+# Block inside always section
+- name: Block inside always test
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Outer block with inner block in always
+      block:
+        - name: Normal task
+          debug:
+            msg: "Normal block task"
+      always:
+        - name: Pre-inner-block always task
+          debug:
+            msg: "Before inner block in always"
+        - name: Inner block in always
+          block:
+            - name: Inner always block task 1
+              debug:
+                msg: "Inner block task 1"
+            - name: Inner always block task 2
+              debug:
+                msg: "Inner block task 2"
+          rescue:
+            - name: Inner block rescue
+              debug:
+                msg: "Inner block rescue in always"
+          always:
+            - name: Inner block always
+              debug:
+                msg: "Inner block always in always"
+        - name: Post-inner-block always task
+          debug:
+            msg: "After inner block in always"

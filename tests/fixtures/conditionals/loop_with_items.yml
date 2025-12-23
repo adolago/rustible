@@ -1,0 +1,31 @@
+# Test playbook for with_items (deprecated but supported)
+---
+- name: Test with_items loop
+  hosts: all
+  gather_facts: false
+  vars:
+    packages:
+      - vim
+      - git
+      - curl
+
+  tasks:
+    - name: Install packages with with_items
+      debug:
+        msg: "Installing: {{ item }}"
+      with_items:
+        - nginx
+        - php
+        - mysql
+
+    - name: Install from variable with with_items
+      debug:
+        msg: "Installing: {{ item }}"
+      with_items: "{{ packages }}"
+
+    - name: with_items with dicts
+      debug:
+        msg: "{{ item.name }}: {{ item.value }}"
+      with_items:
+        - { name: 'setting1', value: 'value1' }
+        - { name: 'setting2', value: 'value2' }

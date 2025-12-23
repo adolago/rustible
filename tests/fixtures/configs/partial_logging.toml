@@ -1,0 +1,5 @@
+# Partial config - only logging section
+[logging]
+log_path = "/tmp/rustible.log"
+log_level = "trace"
+log_timestamp = false

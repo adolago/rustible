@@ -694,14 +694,25 @@ impl Task {
     ) -> ExecutorResult<TaskResult> {
         let mut rt = runtime.write().await;
 
+        let mut facts_set = Vec::new();
+
         for (key, value) in args {
             if key != "cacheable" {
-                rt.set_host_var(&ctx.host, key.clone(), value.clone());
-                debug!("Set fact: {} = {:?}", key, value);
+                // Use set_host_fact instead of set_host_var for proper precedence
+                // Facts set by set_fact should have SetFact precedence level
+                rt.set_host_fact(&ctx.host, key.clone(), value.clone());
+                debug!("Set fact '{}' = {:?} for host '{}'", key, value, ctx.host);
+                facts_set.push(key.clone());
             }
         }
 
-        Ok(TaskResult::ok().with_msg("Facts set"))
+        let message = if facts_set.len() == 1 {
+            format!("Set fact: {}", facts_set[0])
+        } else {
+            format!("Set {} facts: {}", facts_set.len(), facts_set.join(", "))
+        };
+
+        Ok(TaskResult::ok().with_msg(message))
     }
 
     async fn execute_command(

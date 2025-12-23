@@ -1,0 +1,12 @@
+---
+# Unencrypted vault variables file for testing
+db_host: localhost
+db_port: 5432
+db_name: myapp
+db_user: admin
+db_password: plaintext_for_encryption_test
+api_endpoint: https://api.example.com
+api_key: secret_api_key_value
+nested:
+  level1:
+    level2: deep_secret

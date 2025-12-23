@@ -6,6 +6,13 @@
 pub mod config;
 pub mod docker;
 pub mod local;
+#[cfg(feature = "russh")]
+pub mod russh;
+// TODO: russh_auth needs updating for russh 0.45 API changes
+// #[cfg(feature = "russh")]
+// pub mod russh_auth;
+#[cfg(feature = "russh")]
+pub mod russh_pool;
 pub mod ssh;
 
 use async_trait::async_trait;
@@ -17,6 +24,58 @@ use thiserror::Error;
 
 // Re-export config types at module level for convenience
 pub use config::{ConnectionConfig, HostConfig};
+pub use crate::config::SshConfig;
+pub use ssh::SshConnection;
+
+// Re-export russh types when the feature is enabled
+#[cfg(feature = "russh")]
+pub use russh::{PendingCommand, PipelinedExecutor, RusshConnection, RusshConnectionBuilder};
+// TODO: russh_auth needs updating for russh 0.45 API changes
+// #[cfg(feature = "russh")]
+// pub use russh_auth::{
+//     AuthConfig, AuthMethod, AuthResult, RusshAuthenticator, RusshClientHandler,
+//     KeyLoader, KeyType, KeyError, KeyInfo,
+//     connect_to_agent, load_private_key, load_private_key_from_string,
+//     default_identity_files, standard_key_locations, is_key_encrypted,
+// };
+#[cfg(feature = "russh")]
+pub use russh_pool::{PoolConfig, PoolStats as RusshPoolStats, PooledConnectionHandle, RusshConnectionPool, RusshConnectionPoolBuilder};
+
+/// Russh-related error type - wraps russh::Error for compatibility with the Handler trait
+#[cfg(feature = "russh")]
+#[derive(Debug)]
+pub struct RusshError(pub ::russh::Error);
+
+#[cfg(feature = "russh")]
+impl From<::russh::Error> for RusshError {
+    fn from(err: ::russh::Error) -> Self {
+        RusshError(err)
+    }
+}
+
+#[cfg(feature = "russh")]
+impl std::fmt::Display for RusshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Russh error: {}", self.0)
+    }
+}
+
+#[cfg(feature = "russh")]
+impl std::error::Error for RusshError {}
+
+#[cfg(feature = "russh")]
+impl From<::russh::Error> for ConnectionError {
+    fn from(err: ::russh::Error) -> Self {
+        ConnectionError::SshError(format!("Russh error: {}", err))
+    }
+}
+
+#[cfg(feature = "russh")]
+impl From<russh_sftp::client::error::Error> for ConnectionError {
+    fn from(e: russh_sftp::client::error::Error) -> Self {
+        ConnectionError::TransferFailed(format!("SFTP error: {}", e))
+    }
+}
 
 /// Errors that can occur during connection operations
 #[derive(Error, Debug)]
@@ -256,6 +315,24 @@ pub trait Connection: Send + Sync {
 
     /// Close the connection
     async fn close(&self) -> ConnectionResult<()>;
+
+    /// Execute multiple commands in batch (default: sequential)
+    ///
+    /// This method executes multiple commands and returns results in the same
+    /// order as input commands. The default implementation runs commands
+    /// sequentially. Transport implementations (like Russh) may override this
+    /// to provide parallel execution using channel multiplexing.
+    async fn execute_batch(
+        &self,
+        commands: &[&str],
+        options: Option<ExecuteOptions>,
+    ) -> Vec<ConnectionResult<CommandResult>> {
+        let mut results = Vec::with_capacity(commands.len());
+        for cmd in commands {
+            results.push(self.execute(cmd, options.clone()).await);
+        }
+        results
+    }
 }
 
 /// File statistics
@@ -387,11 +464,7 @@ impl ConnectionFactory {
                     .unwrap_or_else(|| self.config.defaults.user.clone()),
             )
         } else {
-            (
-                host.to_string(),
-                22,
-                self.config.defaults.user.clone(),
-            )
+            (host.to_string(), 22, self.config.defaults.user.clone())
         };
 
         Ok(ConnectionType::Ssh {

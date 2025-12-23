@@ -1,0 +1,22 @@
+---
+- name: Play with single tagged task
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Task with install tag
+      debug:
+        msg: "Installing..."
+      tags:
+        - install
+
+    - name: Task with configure tag
+      debug:
+        msg: "Configuring..."
+      tags:
+        - configure
+
+    - name: Task with deploy tag
+      debug:
+        msg: "Deploying..."
+      tags:
+        - deploy

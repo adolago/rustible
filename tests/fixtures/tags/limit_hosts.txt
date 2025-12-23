@@ -1,0 +1,9 @@
+# Hosts file for --limit @hosts.txt testing
+# Comments should be ignored
+
+web01
+web02
+# This is a comment
+db01
+
+# Another comment at end

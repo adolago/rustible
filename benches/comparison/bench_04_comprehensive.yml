@@ -1,0 +1,63 @@
+# Benchmark 04: Comprehensive Playbook
+# Tests: Mixed operations, handlers, multiple plays
+---
+- name: Setup phase
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ensure clean state
+      file:
+        path: /tmp/comprehensive_bench
+        state: absent
+
+    - name: Create benchmark directory
+      file:
+        path: /tmp/comprehensive_bench
+        state: directory
+        mode: '0755'
+
+- name: Main operations
+  hosts: all
+  gather_facts: false
+  vars:
+    files_to_create:
+      - name: config.txt
+        content: "# Configuration file\nkey1=value1\nkey2=value2\n"
+      - name: data.txt
+        content: "Data file content\nLine 2\nLine 3\n"
+      - name: script.sh
+        content: "#!/bin/bash\necho 'Hello from script'\n"
+  tasks:
+    - name: Create multiple files
+      copy:
+        content: "{{ item.content }}"
+        dest: "/tmp/comprehensive_bench/{{ item.name }}"
+        mode: '0644'
+      loop: "{{ files_to_create }}"
+
+    - name: Make script executable
+      file:
+        path: /tmp/comprehensive_bench/script.sh
+        mode: '0755'
+
+    - name: Run script
+      command: /tmp/comprehensive_bench/script.sh
+      changed_when: false
+
+    - name: Get file listing
+      command: ls -la /tmp/comprehensive_bench/
+      changed_when: false
+      register: listing
+
+    - name: Count files
+      command: find /tmp/comprehensive_bench -type f | wc -l
+      changed_when: false
+
+- name: Cleanup phase
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Remove benchmark directory
+      file:
+        path: /tmp/comprehensive_bench
+        state: absent

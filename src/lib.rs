@@ -87,15 +87,15 @@
 pub mod prelude {
     //! Convenient re-exports of commonly used types and traits.
 
-    pub use crate::connection::{
-        CommandResult, Connection, ConnectionBuilder, ConnectionConfig, ConnectionError,
-        ConnectionFactory, ConnectionResult, ConnectionType, ExecuteOptions, FileStat,
-        HostConfig, TransferOptions,
-    };
     pub use crate::connection::config::RetryConfig;
     pub use crate::connection::docker::DockerConnection;
     pub use crate::connection::local::LocalConnection;
     pub use crate::connection::ssh::SshConnection;
+    pub use crate::connection::{
+        CommandResult, Connection, ConnectionBuilder, ConnectionConfig, ConnectionError,
+        ConnectionFactory, ConnectionResult, ConnectionType, ExecuteOptions, FileStat, HostConfig,
+        TransferOptions,
+    };
     pub use crate::error::{Error, Result};
     pub use crate::executor::{PlaybookExecutor, TaskExecutor};
     pub use crate::facts::Facts;
@@ -120,18 +120,18 @@ pub mod vars;
 // Playbook Components
 // ============================================================================
 
-pub mod playbook;
-pub mod tasks;
 pub mod handlers;
+pub mod playbook;
 pub mod roles;
+pub mod tasks;
 
 // ============================================================================
 // Infrastructure
 // ============================================================================
 
-pub mod inventory;
 pub mod connection;
 pub mod facts;
+pub mod inventory;
 
 // ============================================================================
 // Execution Engine
@@ -185,7 +185,11 @@ pub fn version_info() -> VersionInfo {
         version: env!("CARGO_PKG_VERSION"),
         rust_version: option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown"),
         target: std::env::consts::ARCH,
-        profile: if cfg!(debug_assertions) { "debug" } else { "release" },
+        profile: if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
     }
 }
 

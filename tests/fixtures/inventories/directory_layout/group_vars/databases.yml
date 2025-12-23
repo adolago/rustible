@@ -1,0 +1,5 @@
+---
+# Variables for databases group
+db_port: 5432
+max_connections: 100
+backup_enabled: true

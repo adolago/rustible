@@ -1,0 +1,6 @@
+# Partial config - only SSH section
+[ssh]
+retries = 10
+private_key_file = "/home/test/.ssh/id_ed25519"
+pipelining = false
+ssh_args = ["-o", "ServerAliveInterval=30"]
