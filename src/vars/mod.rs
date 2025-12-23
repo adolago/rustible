@@ -566,7 +566,9 @@ impl Vault {
             .map_err(|e| VarsError::EncryptionError(e.to_string()))?;
 
         // Generate random nonce
-        let nonce_bytes: [u8; 12] = rand::random();
+        use rand::RngCore;
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         // Encrypt

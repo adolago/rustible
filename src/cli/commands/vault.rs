@@ -12,6 +12,7 @@ use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use clap::{Parser, Subcommand};
+use rand::rngs::OsRng;
 use rand::RngCore;
 use std::fs;
 use std::io::{self, Write};
@@ -205,8 +206,8 @@ impl VaultEngine {
         // Generate random salt and nonce
         let mut salt = [0u8; 16];
         let mut nonce_bytes = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut salt);
-        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        OsRng.fill_bytes(&mut salt);
+        OsRng.fill_bytes(&mut nonce_bytes);
 
         // Derive key
         let key = self.derive_key(&salt)?;
