@@ -1,6 +1,6 @@
 # Rustible
 
-An async-first automation engine for infrastructure deployment and configuration management. Rustible is designed optimizing for safety and performance, offering type safety, and speed with parallel execution by default and backwards compatibily.
+An async-first automation engine for infrastructure deployment and configuration management. Rustible is designed to optimize for safety and performance, offering type safety and speed with parallel execution by default and backwards compatibility.
 
 ## Acknowledgments
 
