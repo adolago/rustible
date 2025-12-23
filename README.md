@@ -1,12 +1,12 @@
 # Rustible
 
-A async-first configuration management and automation tool. Rustible is designed optimizing for safety and performance, offering speed, type safety, and parallel execution by default and backwards compatibily.
+A async-first automation engine for infrastructure deployment and configuration management. Rustible is designed optimizing for safety and performance, offering type safety, and speed with parallel execution by default and backwards compatibily.
 
 ## Acknowledgments
 
 - The Ansible project for pioneering declarative configuration management
 - The Rust community for excellent libraries and tooling
-- Contributors and early adopters who help shape Rustible
+- Users and contributors who help shape Rustible and give it a _raison d'être_
 
 ## Why Rustible?
 
