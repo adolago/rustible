@@ -590,8 +590,3 @@ See `tests/infrastructure/README.md` for detailed setup instructions.
 Rustible is licensed under:
 
 - MIT License ([LICENSE-MIT](LICENSE-MIT))
-
-## Links
-
-- [GitHub Repository](https://github.com/rustible/rustible)
-- [Issue Tracker](https://github.com/rustible/rustible/issues)
