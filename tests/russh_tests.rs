@@ -44,6 +44,9 @@ use rustible::connection::{
     TransferOptions,
 };
 
+#[cfg(feature = "russh")]
+use rustible::connection::RusshConnection;
+
 // ============================================================================
 // TEST FIXTURES DIRECTORY SETUP
 // ============================================================================
@@ -1232,6 +1235,7 @@ mod integration_tests {
     /// Test executing a command on a real SSH server
     #[tokio::test]
     #[ignore = "Requires real SSH infrastructure - set RUSTIBLE_SSH_TEST_HOST env var"]
+    #[cfg(feature = "russh")]
     async fn test_russh_execute() {
         if !has_ssh_infrastructure() {
             eprintln!("Skipping: No SSH infrastructure available");
@@ -1240,25 +1244,25 @@ mod integration_tests {
 
         let (host, port, user) = get_ssh_test_config().expect("SSH test config required");
 
-        // TODO: Replace with actual RusshConnection when russh feature is enabled
-        // let conn = RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
-        //     .await
-        //     .expect("Failed to connect");
-        //
-        // let result = conn.execute("echo 'Hello, World!'", None).await.unwrap();
-        // assert!(result.success);
-        // assert!(result.stdout.contains("Hello, World!"));
-        //
-        // let whoami = conn.execute("whoami", None).await.unwrap();
-        // assert!(whoami.success);
-        // assert!(whoami.stdout.contains(&user));
-        //
-        // conn.close().await.unwrap();
+        let conn = RusshConnection::connect(
+            &host,
+            port,
+            &user,
+            None,
+            &ConnectionConfig::default(),
+        )
+        .await
+        .expect("Failed to connect");
 
-        eprintln!(
-            "Would execute commands on {}@{}:{}",
-            user, host, port
-        );
+        let result = conn.execute("echo 'Hello, World!'", None).await.unwrap();
+        assert!(result.success);
+        assert!(result.stdout.contains("Hello, World!"));
+
+        let whoami = conn.execute("whoami", None).await.unwrap();
+        assert!(whoami.success);
+        assert!(whoami.stdout.contains(&user));
+
+        conn.close().await.unwrap();
     }
 
     /// Test uploading a file via SFTP to a real SSH server
