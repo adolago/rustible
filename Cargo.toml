@@ -1,5 +1,5 @@
 [features]
-default = ["ssh2-backend", "local"]
+default = ["russh", "local"]
 # SSH backend using ssh2 crate (C/libssh2 wrapper) - legacy default
 ssh2-backend = ["dep:ssh2"]
 # SSH backend using russh crate (pure Rust) - recommended
@@ -8,7 +8,7 @@ local = []
 docker = ["dep:bollard"]
 kubernetes = ["dep:kube", "dep:k8s-openapi"]
 # Full feature set with ssh2 backend
-full = ["ssh2-backend", "local", "russh", "docker", "kubernetes"]
+full = ["russh", "local", "ssh2-backend", "docker", "kubernetes"]
 # Pure Rust build (no C dependencies)
 pure-rust = ["russh", "local"]
 
