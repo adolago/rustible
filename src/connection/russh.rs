@@ -9,6 +9,7 @@ use russh::client::{Handle, Handler};
 use russh::keys::key::PublicKey;
 use russh::keys::load_secret_key;
 use russh::ChannelMsg;
+use russh_keys::agent::client::AgentClient;
 use russh_sftp::client::SftpSession;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,8 +41,221 @@ fn escape_shell_arg(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Client handler for russh
-struct ClientHandler;
+/// Result of host key verification
+#[derive(Debug, Clone, PartialEq)]
+enum HostKeyStatus {
+    /// Key matches known_hosts entry
+    Verified,
+    /// Host not found in known_hosts (first connection)
+    Unknown,
+    /// Key doesn't match known_hosts entry (potential MITM attack)
+    Mismatch,
+}
+
+/// Client handler for russh with host key verification
+struct ClientHandler {
+    /// The hostname we're connecting to (for known_hosts lookup)
+    host: String,
+    /// The port we're connecting to
+    port: u16,
+    /// Known hosts entries loaded from ~/.ssh/known_hosts
+    known_hosts: Vec<KnownHostEntry>,
+    /// Whether to accept unknown hosts (first connection)
+    accept_unknown: bool,
+}
+
+/// A parsed entry from known_hosts file
+#[derive(Debug, Clone)]
+struct KnownHostEntry {
+    /// Hostnames/patterns this entry applies to
+    patterns: Vec<String>,
+    /// The public key
+    key: PublicKey,
+}
+
+impl ClientHandler {
+    /// Create a new client handler with host key verification
+    fn new(host: &str, port: u16, accept_unknown: bool) -> Self {
+        let known_hosts = Self::load_known_hosts();
+        Self {
+            host: host.to_string(),
+            port,
+            known_hosts,
+            accept_unknown,
+        }
+    }
+
+    /// Load and parse ~/.ssh/known_hosts file
+    fn load_known_hosts() -> Vec<KnownHostEntry> {
+        let mut entries = Vec::new();
+
+        // Get path to known_hosts
+        let known_hosts_path = dirs::home_dir()
+            .map(|h| h.join(".ssh").join("known_hosts"));
+
+        let path = match known_hosts_path {
+            Some(p) if p.exists() => p,
+            _ => return entries,
+        };
+
+        // Read and parse the file
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                debug!(error = %e, "Failed to read known_hosts file");
+                return entries;
+            }
+        };
+
+        for line in content.lines() {
+            let line = line.trim();
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            // Parse the line: hostname[,hostname...] keytype base64key [comment]
+            if let Some(entry) = Self::parse_known_hosts_line(line) {
+                entries.push(entry);
+            }
+        }
+
+        debug!(entry_count = %entries.len(), "Loaded known_hosts entries");
+        entries
+    }
+
+    /// Parse a single line from known_hosts
+    fn parse_known_hosts_line(line: &str) -> Option<KnownHostEntry> {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            return None;
+        }
+
+        // First part is comma-separated hostnames/patterns
+        let patterns: Vec<String> = parts[0].split(',').map(|s| s.to_string()).collect();
+
+        // Second and third parts are key type and base64 key
+        let key_type = parts[1];
+        let key_data = parts[2];
+
+        // Decode the base64 key
+        let key_bytes = match base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            key_data,
+        ) {
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+
+        // Parse the public key
+        // The key format is: 4-byte length + key type string + key data
+        let key = match russh::keys::key::parse_public_key(&key_bytes, None) {
+            Ok(k) => k,
+            Err(_) => {
+                // Try alternative parsing based on key type
+                trace!(key_type = %key_type, "Failed to parse key, skipping entry");
+                return None;
+            }
+        };
+
+        Some(KnownHostEntry { patterns, key })
+    }
+
+    /// Check if a pattern matches the host
+    fn pattern_matches(pattern: &str, host: &str, port: u16) -> bool {
+        // Handle [host]:port format
+        if pattern.starts_with('[') {
+            if let Some(end_bracket) = pattern.find(']') {
+                let pattern_host = &pattern[1..end_bracket];
+                let pattern_port = pattern.get(end_bracket + 2..)
+                    .and_then(|p| p.parse::<u16>().ok())
+                    .unwrap_or(22);
+                return pattern_host == host && pattern_port == port;
+            }
+        }
+
+        // Simple hostname match (port 22 implied)
+        if port == 22 && pattern == host {
+            return true;
+        }
+
+        // Wildcard matching
+        if pattern.contains('*') || pattern.contains('?') {
+            return Self::wildcard_match(pattern, host);
+        }
+
+        false
+    }
+
+    /// Simple wildcard matching for known_hosts patterns
+    fn wildcard_match(pattern: &str, text: &str) -> bool {
+        let mut pattern_chars = pattern.chars().peekable();
+        let mut text_chars = text.chars().peekable();
+
+        while let Some(pc) = pattern_chars.next() {
+            match pc {
+                '*' => {
+                    // * matches zero or more characters
+                    if pattern_chars.peek().is_none() {
+                        return true; // trailing * matches everything
+                    }
+                    // Try matching rest of pattern at each position
+                    let rest_pattern: String = pattern_chars.collect();
+                    let rest_text: String = text_chars.collect();
+                    for i in 0..=rest_text.len() {
+                        if Self::wildcard_match(&rest_pattern, &rest_text[i..]) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                '?' => {
+                    // ? matches exactly one character
+                    if text_chars.next().is_none() {
+                        return false;
+                    }
+                }
+                c => {
+                    if text_chars.next() != Some(c) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        text_chars.next().is_none()
+    }
+
+    /// Verify a server key against known_hosts
+    fn verify_host_key(&self, server_key: &PublicKey) -> HostKeyStatus {
+        for entry in &self.known_hosts {
+            for pattern in &entry.patterns {
+                if Self::pattern_matches(pattern, &self.host, self.port) {
+                    // Found a matching host entry - compare keys
+                    if Self::keys_equal(&entry.key, server_key) {
+                        return HostKeyStatus::Verified;
+                    } else {
+                        // Key mismatch - potential MITM attack
+                        warn!(
+                            host = %self.host,
+                            "Host key mismatch! The server's key differs from known_hosts"
+                        );
+                        return HostKeyStatus::Mismatch;
+                    }
+                }
+            }
+        }
+
+        // Host not found in known_hosts
+        HostKeyStatus::Unknown
+    }
+
+    /// Compare two public keys for equality
+    fn keys_equal(a: &PublicKey, b: &PublicKey) -> bool {
+        // Compare the key fingerprints
+        a.fingerprint() == b.fingerprint()
+    }
+}
 
 #[async_trait]
 impl Handler for ClientHandler {
@@ -49,11 +263,38 @@ impl Handler for ClientHandler {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
-        // TODO: Implement proper host key verification
-        // For now, accept all keys (similar to StrictHostKeyChecking=no)
-        Ok(true)
+        match self.verify_host_key(server_public_key) {
+            HostKeyStatus::Verified => {
+                debug!(host = %self.host, "Host key verified against known_hosts");
+                Ok(true)
+            }
+            HostKeyStatus::Unknown => {
+                if self.accept_unknown {
+                    warn!(
+                        host = %self.host,
+                        "Host not found in known_hosts, accepting (first connection)"
+                    );
+                    // TODO: Optionally add to known_hosts file
+                    Ok(true)
+                } else {
+                    warn!(
+                        host = %self.host,
+                        "Host not found in known_hosts, rejecting"
+                    );
+                    Ok(false)
+                }
+            }
+            HostKeyStatus::Mismatch => {
+                // This is a security issue - key has changed
+                warn!(
+                    host = %self.host,
+                    "HOST KEY VERIFICATION FAILED! Server key does not match known_hosts entry."
+                );
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -303,7 +544,11 @@ impl RusshConnection {
             ConnectionError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
         })?;
 
-        let mut session = russh::client::connect_stream(config, socket, ClientHandler)
+        // Create client handler with host key verification
+        // Accept unknown hosts by default (like StrictHostKeyChecking=accept-new)
+        let handler = ClientHandler::new(host, port, true);
+
+        let mut session = russh::client::connect_stream(config, socket, handler)
             .await
             .map_err(|e| {
                 ConnectionError::ConnectionFailed(format!("SSH handshake failed: {}", e))
@@ -391,15 +636,61 @@ impl RusshConnection {
     }
 
     /// Try SSH agent authentication
+    ///
+    /// Connects to the SSH agent via SSH_AUTH_SOCK environment variable,
+    /// retrieves available identities, and attempts authentication with each.
     async fn try_agent_auth(
-        _session: &mut Handle<ClientHandler>,
-        _user: &str,
+        session: &mut Handle<ClientHandler>,
+        user: &str,
     ) -> ConnectionResult<()> {
-        // russh's agent support requires the russh-agent crate
-        // For now, we'll skip agent support and rely on key files
-        // TODO: Add russh-agent dependency and implement agent support
+        // Connect to SSH agent using SSH_AUTH_SOCK environment variable
+        let mut agent = AgentClient::connect_env()
+            .await
+            .map_err(|e| ConnectionError::AuthenticationFailed(format!("Failed to connect to SSH agent: {}", e)))?;
+
+        // Get available identities from the agent
+        let identities = agent
+            .request_identities()
+            .await
+            .map_err(|e| ConnectionError::AuthenticationFailed(format!("Failed to get agent identities: {}", e)))?;
+
+        if identities.is_empty() {
+            return Err(ConnectionError::AuthenticationFailed(
+                "SSH agent has no identities".to_string(),
+            ));
+        }
+
+        debug!(identity_count = %identities.len(), "Found SSH agent identities");
+
+        // Try each identity until one works
+        for identity in identities {
+            trace!("Trying SSH agent identity");
+
+            // Use authenticate_future which accepts a Signer trait (russh 0.45 API)
+            // AgentClient implements Signer
+            let (returned_agent, result) = session
+                .authenticate_future(user, identity.clone(), agent)
+                .await;
+            agent = returned_agent;
+
+            match result {
+                Ok(true) => {
+                    debug!("SSH agent authentication successful");
+                    return Ok(());
+                }
+                Ok(false) => {
+                    // Key was rejected, try the next one
+                    trace!("Identity rejected, trying next");
+                }
+                Err(e) => {
+                    // Log the error but continue trying other keys
+                    trace!(error = %e, "Agent authentication attempt failed");
+                }
+            }
+        }
+
         Err(ConnectionError::AuthenticationFailed(
-            "SSH agent authentication not yet implemented".to_string(),
+            "All SSH agent identities rejected".to_string(),
         ))
     }
 

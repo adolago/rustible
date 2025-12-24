@@ -108,19 +108,40 @@ impl CommandContext {
             host_config.identity_file = Some(expanded_path);
         }
 
-        // Create SSH connection
+        // Create SSH connection - prefer russh (pure Rust) when available
         let conn_config = rustible::connection::ConnectionConfig::default();
-        let conn = rustible::connection::ssh::SshConnection::connect(
-            ansible_host,
-            ansible_port,
-            ansible_user,
-            Some(host_config),
-            &conn_config,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", host, e))?;
-
-        let conn: Arc<dyn Connection + Send + Sync> = Arc::new(conn);
+        #[cfg(feature = "russh")]
+        let conn: Arc<dyn Connection + Send + Sync> = {
+            let conn = rustible::connection::russh::RusshConnection::connect(
+                ansible_host,
+                ansible_port,
+                ansible_user,
+                Some(host_config),
+                &conn_config,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", host, e))?;
+            Arc::new(conn)
+        };
+        #[cfg(all(feature = "ssh2-backend", not(feature = "russh")))]
+        let conn: Arc<dyn Connection + Send + Sync> = {
+            let conn = rustible::connection::ssh::SshConnection::connect(
+                ansible_host,
+                ansible_port,
+                ansible_user,
+                Some(host_config),
+                &conn_config,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", host, e))?;
+            Arc::new(conn)
+        };
+        #[cfg(not(any(feature = "russh", feature = "ssh2-backend")))]
+        let conn: Arc<dyn Connection + Send + Sync> = {
+            return Err(anyhow::anyhow!(
+                "No SSH backend available. Enable 'russh' or 'ssh2-backend' feature."
+            ));
+        };
 
         // Cache the connection
         {

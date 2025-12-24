@@ -8,11 +8,16 @@ pub mod docker;
 pub mod local;
 #[cfg(feature = "russh")]
 pub mod russh;
-// TODO: russh_auth needs updating for russh 0.45 API changes
+// russh_auth: Advanced authentication module (currently disabled)
+// The russh_auth module was designed for advanced authentication scenarios but
+// needs updating for russh 0.45 API changes (Signer trait, AuthResult enum).
+// Core authentication (agent, key, password) is implemented directly in russh.rs.
+// If advanced features are needed, this module can be updated later.
 // #[cfg(feature = "russh")]
 // pub mod russh_auth;
 #[cfg(feature = "russh")]
 pub mod russh_pool;
+#[cfg(feature = "ssh2-backend")]
 pub mod ssh;
 
 use async_trait::async_trait;
@@ -25,6 +30,7 @@ use thiserror::Error;
 // Re-export config types at module level for convenience
 pub use crate::config::SshConfig;
 pub use config::{ConnectionConfig, HostConfig};
+#[cfg(feature = "ssh2-backend")]
 pub use ssh::{SshConnection, SshConnectionBuilder};
 
 // Re-export russh types when the feature is enabled
@@ -489,10 +495,33 @@ impl ConnectionFactory {
             }
             ConnectionType::Ssh { host, port, user } => {
                 let host_config = self.config.get_host(host).cloned();
-                let conn =
-                    ssh::SshConnection::connect(host, *port, user, host_config, &self.config)
-                        .await?;
-                Ok(Arc::new(conn))
+                // Prefer russh (pure Rust) when available, fall back to ssh2
+                #[cfg(feature = "russh")]
+                {
+                    let conn = russh::RusshConnection::connect(
+                        host,
+                        *port,
+                        user,
+                        host_config,
+                        &self.config,
+                    )
+                    .await?;
+                    Ok(Arc::new(conn))
+                }
+                #[cfg(all(feature = "ssh2-backend", not(feature = "russh")))]
+                {
+                    let conn =
+                        ssh::SshConnection::connect(host, *port, user, host_config, &self.config)
+                            .await?;
+                    Ok(Arc::new(conn))
+                }
+                #[cfg(not(any(feature = "russh", feature = "ssh2-backend")))]
+                {
+                    Err(ConnectionError::InvalidConfig(
+                        "No SSH backend available. Enable 'russh' or 'ssh2-backend' feature."
+                            .to_string(),
+                    ))
+                }
             }
             ConnectionType::Docker { container } => {
                 let conn = docker::DockerConnection::new(container.clone());
@@ -689,10 +718,34 @@ impl ConnectionBuilder {
                 };
 
                 let config = ConnectionConfig::default();
-                let conn =
-                    ssh::SshConnection::connect(&host, port, &user, Some(host_config), &config)
-                        .await?;
-                Ok(Arc::new(conn))
+                // Prefer russh (pure Rust) when available, fall back to ssh2
+                #[cfg(feature = "russh")]
+                {
+                    let conn = russh::RusshConnection::connect(
+                        &host,
+                        port,
+                        &user,
+                        Some(host_config),
+                        &config,
+                    )
+                    .await?;
+                    Ok(Arc::new(conn))
+                }
+                #[cfg(all(feature = "ssh2-backend", not(feature = "russh")))]
+                {
+                    let conn =
+                        ssh::SshConnection::connect(&host, port, &user, Some(host_config), &config)
+                            .await?;
+                    Ok(Arc::new(conn))
+                }
+                #[cfg(not(any(feature = "russh", feature = "ssh2-backend")))]
+                {
+                    let _ = (host, port, user, host_config, config); // silence unused warnings
+                    Err(ConnectionError::InvalidConfig(
+                        "No SSH backend available. Enable 'russh' or 'ssh2-backend' feature."
+                            .to_string(),
+                    ))
+                }
             }
             ConnectionType::Docker { container } => {
                 Ok(Arc::new(docker::DockerConnection::new(container)))

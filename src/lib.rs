@@ -90,7 +90,10 @@ pub mod prelude {
     pub use crate::connection::config::RetryConfig;
     pub use crate::connection::docker::DockerConnection;
     pub use crate::connection::local::LocalConnection;
+    #[cfg(feature = "ssh2-backend")]
     pub use crate::connection::ssh::{SshConnection, SshConnectionBuilder};
+    #[cfg(feature = "russh")]
+    pub use crate::connection::russh::{RusshConnection, RusshConnectionBuilder};
     pub use crate::connection::{
         CommandResult, Connection, ConnectionBuilder, ConnectionConfig, ConnectionError,
         ConnectionFactory, ConnectionResult, ConnectionType, ExecuteOptions, FileStat, HostConfig,

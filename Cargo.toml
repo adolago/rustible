@@ -1,11 +1,16 @@
 [features]
-default = ["ssh", "local"]
-ssh = []
-local = []
+default = ["ssh2-backend", "local"]
+# SSH backend using ssh2 crate (C/libssh2 wrapper) - legacy default
+ssh2-backend = ["dep:ssh2"]
+# SSH backend using russh crate (pure Rust) - recommended
 russh = ["dep:russh", "dep:russh-sftp", "dep:russh-keys"]
+local = []
 docker = ["dep:bollard"]
 kubernetes = ["dep:kube", "dep:k8s-openapi"]
-full = ["ssh", "local", "russh", "docker", "kubernetes"]
+# Full feature set with ssh2 backend
+full = ["ssh2-backend", "local", "russh", "docker", "kubernetes"]
+# Pure Rust build (no C dependencies)
+pure-rust = ["russh", "local"]
 
 [package]
 name = "rustible"
@@ -87,11 +92,12 @@ base64 = "0.21"
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
-# SSH connectivity
+# SSH connectivity - pure Rust (russh)
 russh = { version = "0.45", optional = true }
 russh-sftp = { version = "2.0", optional = true }
 russh-keys = { version = "0.45", optional = true }
-ssh2 = "0.9"
+# SSH connectivity - C wrapper (ssh2/libssh2) - optional, legacy
+ssh2 = { version = "0.9", optional = true }
 
 # Efficient synchronization primitives
 parking_lot = "0.12"
