@@ -264,7 +264,8 @@ impl PooledConnection {
     /// Release the connection back to the pool (lock-free)
     #[inline(always)]
     fn release(&self) {
-        self.last_used_nanos.store(nanos_since_start(), Ordering::Relaxed);
+        self.last_used_nanos
+            .store(nanos_since_start(), Ordering::Relaxed);
         self.in_use.store(false, Ordering::Release);
     }
 
@@ -403,7 +404,9 @@ impl RusshConnectionPool {
             return Ok(conn.connection());
         }
 
-        let handle = self.create_new_connection(host, port, user, host_config, false).await?;
+        let handle = self
+            .create_new_connection(host, port, user, host_config, false)
+            .await?;
         Ok(handle.connection())
     }
 
@@ -424,7 +427,8 @@ impl RusshConnectionPool {
             return Ok(conn);
         }
 
-        self.create_new_connection(host, port, user, host_config, false).await
+        self.create_new_connection(host, port, user, host_config, false)
+            .await
     }
 
     async fn try_get_existing(&self, key: &str) -> Option<PooledConnectionHandle> {
@@ -488,7 +492,8 @@ impl RusshConnectionPool {
             user,
             host_config.clone(),
             &self.connection_config,
-        ).await?;
+        )
+        .await?;
 
         let pooled = Arc::new(PooledConnection::with_prewarm_flag(
             connection,
@@ -503,7 +508,10 @@ impl RusshConnectionPool {
 
         {
             let mut connections = self.connections.write().await;
-            connections.entry(key.clone()).or_insert_with(Vec::new).push(Arc::clone(&pooled));
+            connections
+                .entry(key.clone())
+                .or_insert_with(Vec::new)
+                .push(Arc::clone(&pooled));
         }
 
         {
@@ -594,7 +602,8 @@ impl RusshConnectionPool {
             let mut connections = self.connections.write().await;
             if let Some(host_connections) = connections.get_mut(key) {
                 let before_len = host_connections.len();
-                host_connections.retain(|c| !dead_connections.iter().any(|dead| Arc::ptr_eq(c, dead)));
+                host_connections
+                    .retain(|c| !dead_connections.iter().any(|dead| Arc::ptr_eq(c, dead)));
                 let removed = before_len - host_connections.len();
 
                 if removed > 0 {
@@ -648,7 +657,8 @@ impl RusshConnectionPool {
                         if removed >= to_remove {
                             return true;
                         }
-                        let should_remove = idle_connections.iter().any(|idle| Arc::ptr_eq(c, idle));
+                        let should_remove =
+                            idle_connections.iter().any(|idle| Arc::ptr_eq(c, idle));
                         if should_remove {
                             removed += 1;
                         }
@@ -660,8 +670,10 @@ impl RusshConnectionPool {
                         debug!(key = %key, count = %actual_removed, "Cleaned up idle connections");
                         let mut stats = self.stats.write().await;
                         stats.idle_timeouts += actual_removed;
-                        stats.total_connections = stats.total_connections.saturating_sub(actual_removed);
-                        stats.idle_connections = stats.idle_connections.saturating_sub(actual_removed);
+                        stats.total_connections =
+                            stats.total_connections.saturating_sub(actual_removed);
+                        stats.idle_connections =
+                            stats.idle_connections.saturating_sub(actual_removed);
                     }
                 }
             }
@@ -727,17 +739,26 @@ impl RusshConnectionPool {
         host_config: Option<HostConfig>,
     ) -> PrewarmResult {
         if self.shutdown.load(Ordering::SeqCst) {
-            return PrewarmResult { success: 0, failures: count };
+            return PrewarmResult {
+                success: 0,
+                failures: count,
+            };
         }
 
         let key = Self::connection_key(host, port, user);
         let current_count = self.connections_for_host(host, port, user).await;
-        let max_allowed = self.config.max_connections_per_host.saturating_sub(current_count);
+        let max_allowed = self
+            .config
+            .max_connections_per_host
+            .saturating_sub(current_count);
         let to_create = count.min(max_allowed);
 
         if to_create == 0 {
             debug!(key = %key, current = %current_count, max = %self.config.max_connections_per_host, "Host already at maximum connections, skipping pre-warm");
-            return PrewarmResult { success: 0, failures: 0 };
+            return PrewarmResult {
+                success: 0,
+                failures: 0,
+            };
         }
 
         info!(key = %key, count = %to_create, "Pre-warming connections");
@@ -817,7 +838,15 @@ impl RusshConnectionPool {
                 }
             }
 
-            match RusshConnection::connect(host, port, user, host_config.clone(), &self.connection_config).await {
+            match RusshConnection::connect(
+                host,
+                port,
+                user,
+                host_config.clone(),
+                &self.connection_config,
+            )
+            .await
+            {
                 Ok(connection) => {
                     let pooled = Arc::new(PooledConnection::with_prewarm_flag(
                         connection,
@@ -830,7 +859,10 @@ impl RusshConnectionPool {
 
                     {
                         let mut connections = self.connections.write().await;
-                        connections.entry(key.clone()).or_insert_with(Vec::new).push(pooled);
+                        connections
+                            .entry(key.clone())
+                            .or_insert_with(Vec::new)
+                            .push(pooled);
                     }
 
                     {
@@ -849,7 +881,9 @@ impl RusshConnectionPool {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| ConnectionError::ConnectionFailed("Pre-warm failed after retries".to_string())))
+        Err(last_error.unwrap_or_else(|| {
+            ConnectionError::ConnectionFailed("Pre-warm failed after retries".to_string())
+        }))
     }
 
     /// Perform a health-check ping on idle connections for a host
@@ -881,7 +915,14 @@ impl RusshConnectionPool {
             connections
                 .values()
                 .filter_map(|conns| {
-                    conns.first().map(|c| (c.host.clone(), c.port, c.user.clone(), c.host_config.clone()))
+                    conns.first().map(|c| {
+                        (
+                            c.host.clone(),
+                            c.port,
+                            c.user.clone(),
+                            c.host_config.clone(),
+                        )
+                    })
                 })
                 .collect()
         };

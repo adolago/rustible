@@ -674,8 +674,8 @@ impl Module for CopyModule {
             if let Some(src_str) = src {
                 let src_path = Path::new(&src_str);
                 if src_path.exists() {
-                    let src_content =
-                        fs::read_to_string(src_path).unwrap_or_else(|_| "(binary file)".to_string());
+                    let src_content = fs::read_to_string(src_path)
+                        .unwrap_or_else(|_| "(binary file)".to_string());
                     let dest_content = handle.block_on(async {
                         match connection.download_content(dest_path).await {
                             Ok(data) => String::from_utf8_lossy(&data).to_string(),

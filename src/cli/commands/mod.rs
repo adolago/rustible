@@ -77,7 +77,8 @@ impl CommandContext {
             let connections = self.connections.read().await;
             if let Some(conn) = connections.get(host) {
                 if conn.is_alive().await {
-                    self.output.debug(&format!("Reusing connection for {}", host));
+                    self.output
+                        .debug(&format!("Reusing connection for {}", host));
                     return Ok(Arc::clone(conn));
                 }
             }

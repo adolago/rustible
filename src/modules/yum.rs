@@ -96,9 +96,10 @@ impl YumModule {
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<()> {
         let cmd = "yum makecache";
-        let result = conn.execute(cmd, options).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to update cache: {}", e))
-        })?;
+        let result = conn
+            .execute(cmd, options)
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to update cache: {}", e)))?;
 
         if result.success {
             Ok(())

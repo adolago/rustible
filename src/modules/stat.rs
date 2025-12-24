@@ -145,7 +145,10 @@ impl StatModule {
         if is_symlink && follow {
             if let Ok(target) = std::fs::read_link(path) {
                 if let Some(stat_obj) = stat_data.as_object_mut() {
-                    stat_obj.insert("lnk_source".to_string(), json!(target.display().to_string()));
+                    stat_obj.insert(
+                        "lnk_source".to_string(),
+                        json!(target.display().to_string()),
+                    );
                 }
             }
         }

@@ -35,7 +35,10 @@ impl InitSystem {
 
         // Check for systemctl
         let result = connection
-            .execute("which systemctl >/dev/null 2>&1 && echo yes || echo no", None)
+            .execute(
+                "which systemctl >/dev/null 2>&1 && echo yes || echo no",
+                None,
+            )
             .await;
         if let Ok(result) = result {
             if result.stdout.trim() == "yes" {
@@ -45,7 +48,10 @@ impl InitSystem {
 
         // Check for OpenRC
         let result = connection
-            .execute("which rc-service >/dev/null 2>&1 && echo yes || echo no", None)
+            .execute(
+                "which rc-service >/dev/null 2>&1 && echo yes || echo no",
+                None,
+            )
             .await;
         if let Ok(result) = result {
             if result.stdout.trim() == "yes" {
@@ -55,7 +61,10 @@ impl InitSystem {
 
         // Check for launchctl (macOS)
         let result = connection
-            .execute("which launchctl >/dev/null 2>&1 && echo yes || echo no", None)
+            .execute(
+                "which launchctl >/dev/null 2>&1 && echo yes || echo no",
+                None,
+            )
             .await;
         if let Ok(result) = result {
             if result.stdout.trim() == "yes" {
@@ -126,9 +135,10 @@ impl ServiceModule {
         context: &ModuleContext,
     ) -> ModuleResult<CommandResult> {
         let options = Self::build_execute_options(context);
-        connection.execute(command, options).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Connection execute failed: {}", e))
-        })
+        connection
+            .execute(command, options)
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Connection execute failed: {}", e)))
     }
 
     /// Check if service is active (systemd)
@@ -251,9 +261,7 @@ impl ServiceModule {
         context: &ModuleContext,
     ) -> ModuleResult<(bool, String, String)> {
         match init {
-            InitSystem::Systemd => {
-                Self::systemd_action(connection, service, action, context).await
-            }
+            InitSystem::Systemd => Self::systemd_action(connection, service, action, context).await,
             InitSystem::SysV => Self::sysv_action(connection, service, action, context).await,
             InitSystem::OpenRC => Self::openrc_action(connection, service, action, context).await,
             _ => Err(ModuleError::Unsupported(format!(
@@ -329,8 +337,7 @@ impl ServiceModule {
         // Handle state
         if let Some(state_str) = state {
             let desired_state = ServiceState::from_str(&state_str)?;
-            let is_active =
-                Self::is_active(connection.as_ref(), &init, &service, context).await?;
+            let is_active = Self::is_active(connection.as_ref(), &init, &service, context).await?;
 
             match desired_state {
                 ServiceState::Started => {
@@ -605,9 +612,8 @@ impl Module for ServiceModule {
         })?;
 
         // Use tokio runtime to execute async code
-        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-            ModuleError::ExecutionFailed("No tokio runtime available".to_string())
-        })?;
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| ModuleError::ExecutionFailed("No tokio runtime available".to_string()))?;
 
         handle.block_on(self.execute_async(params, context, connection))
     }

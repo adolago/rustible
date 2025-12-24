@@ -23,8 +23,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 // Re-export config types at module level for convenience
-pub use config::{ConnectionConfig, HostConfig};
 pub use crate::config::SshConfig;
+pub use config::{ConnectionConfig, HostConfig};
 pub use ssh::SshConnection;
 
 // Re-export russh types when the feature is enabled
@@ -39,7 +39,10 @@ pub use russh::{PendingCommand, PipelinedExecutor, RusshConnection, RusshConnect
 //     default_identity_files, standard_key_locations, is_key_encrypted,
 // };
 #[cfg(feature = "russh")]
-pub use russh_pool::{PoolConfig, PoolStats as RusshPoolStats, PooledConnectionHandle, RusshConnectionPool, RusshConnectionPoolBuilder};
+pub use russh_pool::{
+    PoolConfig, PoolStats as RusshPoolStats, PooledConnectionHandle, RusshConnectionPool,
+    RusshConnectionPoolBuilder,
+};
 
 /// Russh-related error type - wraps russh::Error for compatibility with the Handler trait
 #[cfg(feature = "russh")]

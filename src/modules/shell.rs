@@ -234,10 +234,10 @@ impl ShellModule {
             let rc = output.status.code().unwrap_or(-1);
 
             if output.status.success() {
-                return Ok(
-                    ModuleOutput::changed("Shell command executed successfully".to_string())
-                        .with_command_output(Some(stdout), Some(stderr), Some(rc)),
-                );
+                return Ok(ModuleOutput::changed(
+                    "Shell command executed successfully".to_string(),
+                )
+                .with_command_output(Some(stdout), Some(stderr), Some(rc)));
             } else {
                 return Err(ModuleError::CommandFailed {
                     code: rc,
