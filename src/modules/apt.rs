@@ -64,7 +64,7 @@ impl AptModule {
     ) -> ModuleResult<bool> {
         let cmd = format!(
             "dpkg -s {} 2>/dev/null | grep -q '^Status:.*installed'",
-            package
+            shell_escape(package)
         );
         match conn.execute(&cmd, options).await {
             Ok(result) => Ok(result.success),
@@ -78,7 +78,10 @@ impl AptModule {
         package: &str,
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<Option<String>> {
-        let cmd = format!("dpkg-query -W -f='${{Version}}' {} 2>/dev/null", package);
+        let cmd = format!(
+            "dpkg-query -W -f='${{Version}}' {} 2>/dev/null",
+            shell_escape(package)
+        );
         match conn.execute(&cmd, options).await {
             Ok(result) if result.success => {
                 let version = result.stdout.trim().to_string();
@@ -118,10 +121,10 @@ impl AptModule {
         packages: &[String],
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<()> {
-        let pkg_list = packages.join(" ");
+        let pkg_list: Vec<String> = packages.iter().map(|p| shell_escape(p)).collect();
         let cmd = format!(
             "DEBIAN_FRONTEND=noninteractive apt-get install -y {}",
-            pkg_list
+            pkg_list.join(" ")
         );
 
         let result = conn.execute(&cmd, options).await.map_err(|e| {
@@ -144,10 +147,10 @@ impl AptModule {
         packages: &[String],
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<()> {
-        let pkg_list = packages.join(" ");
+        let pkg_list: Vec<String> = packages.iter().map(|p| shell_escape(p)).collect();
         let cmd = format!(
             "DEBIAN_FRONTEND=noninteractive apt-get remove -y {}",
-            pkg_list
+            pkg_list.join(" ")
         );
 
         let result = conn.execute(&cmd, options).await.map_err(|e| {
@@ -170,10 +173,10 @@ impl AptModule {
         packages: &[String],
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<()> {
-        let pkg_list = packages.join(" ");
+        let pkg_list: Vec<String> = packages.iter().map(|p| shell_escape(p)).collect();
         let cmd = format!(
             "DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y {}",
-            pkg_list
+            pkg_list.join(" ")
         );
 
         let result = conn.execute(&cmd, options).await.map_err(|e| {
@@ -542,4 +545,27 @@ mod tests {
 
     // Integration tests would require actual apt access
     // These are unit tests for the parsing/configuration logic
+
+    #[test]
+    fn test_shell_escape() {
+        assert_eq!(shell_escape("simple"), "simple");
+        assert_eq!(shell_escape("nginx"), "nginx");
+        assert_eq!(shell_escape("with space"), "'with space'");
+        assert_eq!(shell_escape("with'quote"), "'with'\\''quote'");
+        assert_eq!(shell_escape("pkg; rm -rf /"), "'pkg; rm -rf /'");
+        assert_eq!(shell_escape("$(whoami)"), "'$(whoami)'");
+        assert_eq!(shell_escape("`id`"), "'`id`'");
+    }
+}
+
+/// Escape a string for safe use in shell commands
+fn shell_escape(s: &str) -> String {
+    // Simple escape: wrap in single quotes and escape any single quotes
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/' || c == '+')
+    {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
 }

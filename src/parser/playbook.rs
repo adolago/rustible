@@ -908,7 +908,7 @@ pub struct TaskBuilder {
     register: Option<String>,
     notify: Vec<String>,
     tags: Vec<String>,
-    become: Option<bool>,
+    r#become: Option<bool>,
     ignore_errors: bool,
     loop_over: Option<LoopSpec>,
 }
@@ -959,8 +959,8 @@ impl TaskBuilder {
     }
 
     /// Enable become
-    pub fn become(mut self, become: bool) -> Self {
-        self.r#become = Some(become);
+    pub fn r#become(mut self, r#become: bool) -> Self {
+        self.r#become = Some(r#become);
         self
     }
 
@@ -996,7 +996,7 @@ impl TaskBuilder {
         task.register = self.register;
         task.notify = self.notify;
         task.tags = self.tags;
-        task.become = self.r#become;
+        task.r#become = self.r#become;
         task.ignore_errors = self.ignore_errors;
         task.loop_over = self.loop_over;
 
@@ -1027,12 +1027,12 @@ mod tests {
             .module("apt")
             .arg("name", serde_yaml::Value::String("nginx".into()))
             .arg("state", serde_yaml::Value::String("present".into()))
-            .become(true)
+            .r#become(true)
             .notify("restart nginx")
             .build();
 
         assert_eq!(task.name, "Install nginx");
-        assert_eq!(task.become, Some(true));
+        assert_eq!(task.r#become, Some(true));
         assert!(task.notify.contains(&"restart nginx".to_string()));
     }
 

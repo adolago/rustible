@@ -90,7 +90,7 @@ pub mod prelude {
     pub use crate::connection::config::RetryConfig;
     pub use crate::connection::docker::DockerConnection;
     pub use crate::connection::local::LocalConnection;
-    pub use crate::connection::ssh::SshConnection;
+    pub use crate::connection::ssh::{SshConnection, SshConnectionBuilder};
     pub use crate::connection::{
         CommandResult, Connection, ConnectionBuilder, ConnectionConfig, ConnectionError,
         ConnectionFactory, ConnectionResult, ConnectionType, ExecuteOptions, FileStat, HostConfig,

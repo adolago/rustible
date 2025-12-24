@@ -10,6 +10,18 @@ use super::{
 use crate::connection::ExecuteOptions;
 use std::collections::HashMap;
 
+/// Escape a string for safe use in shell commands
+fn shell_escape(s: &str) -> String {
+    // Simple escape: wrap in single quotes and escape any single quotes
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/')
+    {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
 /// Desired state for a package
 #[derive(Debug, Clone, PartialEq)]
 pub enum YumState {
@@ -42,7 +54,7 @@ impl YumModule {
         package: &str,
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<bool> {
-        let cmd = format!("rpm -q {}", package);
+        let cmd = format!("rpm -q {}", shell_escape(package));
         match conn.execute(&cmd, options).await {
             Ok(result) => Ok(result.success),
             Err(_) => Ok(false),
@@ -55,7 +67,7 @@ impl YumModule {
         package: &str,
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<Option<String>> {
-        let cmd = format!("rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' {}", package);
+        let cmd = format!("rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' {}", shell_escape(package));
         match conn.execute(&cmd, options).await {
             Ok(result) if result.success => {
                 let version = result.stdout.trim().to_string();
@@ -76,9 +88,9 @@ impl YumModule {
         packages: &[String],
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<(bool, String, String)> {
-        let mut cmd_parts = vec!["yum"];
-        cmd_parts.extend(args);
-        cmd_parts.extend(packages.iter().map(|s| s.as_str()));
+        let mut cmd_parts: Vec<String> = vec!["yum".to_string()];
+        cmd_parts.extend(args.iter().map(|s| s.to_string()));
+        cmd_parts.extend(packages.iter().map(|s| shell_escape(s)));
 
         let cmd = cmd_parts.join(" ");
 
@@ -450,6 +462,17 @@ impl Module for YumModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_shell_escape() {
+        assert_eq!(shell_escape("simple"), "simple");
+        assert_eq!(shell_escape("nginx-1.0"), "nginx-1.0");
+        assert_eq!(shell_escape("with space"), "'with space'");
+        assert_eq!(shell_escape("with'quote"), "'with'\\''quote'");
+        assert_eq!(shell_escape("; rm -rf /"), "'; rm -rf /'");
+        assert_eq!(shell_escape("$(whoami)"), "'$(whoami)'");
+        assert_eq!(shell_escape("`id`"), "'`id`'");
+    }
 
     #[test]
     fn test_yum_state_from_str() {

@@ -25,7 +25,7 @@ use thiserror::Error;
 // Re-export config types at module level for convenience
 pub use crate::config::SshConfig;
 pub use config::{ConnectionConfig, HostConfig};
-pub use ssh::SshConnection;
+pub use ssh::{SshConnection, SshConnectionBuilder};
 
 // Re-export russh types when the feature is enabled
 #[cfg(feature = "russh")]

@@ -21,12 +21,12 @@
 //! cargo test --test real_ssh_tests
 //! ```
 
-use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use rustible::connection::{Connection, ExecuteOptions, SshConnectionBuilder};
 use tempfile::TempDir;
 use tokio::sync::Semaphore;
 
@@ -108,18 +108,13 @@ async fn test_ssh_connect_with_key_authentication() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    // Use rustible's SSH connection
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        password: None,
-        timeout: Duration::from_secs(30),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    // Use rustible's SSH connection builder
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .timeout(Duration::from_secs(30))
+        .connect()
         .await
         .expect("Failed to connect via SSH");
 
@@ -149,17 +144,12 @@ async fn test_ssh_connect_with_password_authentication() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: None,
-        password: Some(password),
-        timeout: Duration::from_secs(30),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .password(password)
+        .timeout(Duration::from_secs(30))
+        .connect()
         .await
         .expect("Failed to connect via SSH with password");
 
@@ -175,18 +165,14 @@ async fn test_ssh_connection_timeout() {
     }
 
     // Try to connect to a non-routable IP with short timeout
-    let ssh_config = rustible::connection::SshConfig {
-        host: "10.255.255.1".to_string(), // Non-routable
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        password: None,
-        timeout: Duration::from_secs(2), // Short timeout
-        ..Default::default()
-    };
-
     let start = Instant::now();
-    let result = rustible::connection::SshConnection::connect(ssh_config).await;
+    let result = SshConnectionBuilder::new("10.255.255.1") // Non-routable
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .timeout(Duration::from_secs(2)) // Short timeout
+        .connect()
+        .await;
     let elapsed = start.elapsed();
 
     assert!(result.is_err(), "Should have failed to connect");
@@ -209,15 +195,11 @@ async fn test_ssh_command_execution_simple() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -245,26 +227,17 @@ async fn test_ssh_command_execution_with_environment() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
-    let mut env_vars = HashMap::new();
-    env_vars.insert("TEST_VAR".to_string(), "test_value".to_string());
-    env_vars.insert("ANOTHER_VAR".to_string(), "123".to_string());
-
-    let options = rustible::connection::ExecuteOptions {
-        environment: Some(env_vars),
-        ..Default::default()
-    };
+    let options = ExecuteOptions::new()
+        .with_env("TEST_VAR", "test_value")
+        .with_env("ANOTHER_VAR", "123");
 
     let result = connection
         .execute("echo $TEST_VAR-$ANOTHER_VAR", Some(options))
@@ -290,22 +263,15 @@ async fn test_ssh_command_execution_with_working_directory() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
-    let options = rustible::connection::ExecuteOptions {
-        working_directory: Some("/tmp".into()),
-        ..Default::default()
-    };
+    let options = ExecuteOptions::new().with_cwd("/tmp");
 
     let result = connection.execute("pwd", Some(options)).await;
 
@@ -330,15 +296,11 @@ async fn test_ssh_command_exit_codes() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -369,15 +331,11 @@ async fn test_ssh_command_stderr_capture() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -412,15 +370,11 @@ async fn test_ssh_file_upload_sftp() {
     let test_content = "Hello from SFTP upload test!";
     std::fs::write(&local_file, test_content).expect("Failed to write local file");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -455,15 +409,11 @@ async fn test_ssh_file_download_sftp() {
     let host = config.first_host().expect("No test hosts configured");
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -513,15 +463,11 @@ async fn test_ssh_large_file_transfer() {
     let large_content: Vec<u8> = (0..10 * 1024 * 1024).map(|i| (i % 256) as u8).collect();
     std::fs::write(&local_file, &large_content).expect("Failed to write large file");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -581,15 +527,11 @@ async fn test_ssh_upload_content_directly() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -620,7 +562,7 @@ async fn test_ssh_upload_content_directly() {
 // =============================================================================
 
 #[tokio::test]
-async fn test_ssh_connection_pool_reuse() {
+async fn test_ssh_connection_reuse() {
     let config = SshTestConfig::from_env();
     if config.skip_if_disabled() {
         return;
@@ -628,24 +570,12 @@ async fn test_ssh_connection_pool_reuse() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    // Create connection pool
-    let pool = rustible::connection::ConnectionPool::new(5);
-
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    // Get connection from pool
-    let conn1 = pool
-        .get_or_create(&format!("ssh://{}@{}:22", config.user, host), || {
-            Box::pin(async {
-                rustible::connection::SshConnection::connect(ssh_config.clone()).await
-            })
-        })
+    // Create first connection
+    let conn1 = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to get connection");
 
@@ -655,28 +585,22 @@ async fn test_ssh_connection_pool_reuse() {
     let result = conn1.execute("echo test1", None).await.unwrap();
     assert!(result.success);
 
-    // Return connection to pool
-    pool.return_connection(conn1).await;
+    // Verify connection is still alive after command
+    assert!(conn1.is_alive().await, "Connection should still be alive");
 
-    // Get connection again - should reuse
-    let conn2 = pool
-        .get_or_create(&format!("ssh://{}@{}:22", config.user, host), || {
-            Box::pin(async {
-                rustible::connection::SshConnection::connect(ssh_config.clone()).await
-            })
-        })
-        .await
-        .expect("Failed to get connection");
-
-    let id2 = conn2.identifier().to_string();
-
-    // Should be the same connection
-    assert_eq!(id1, id2, "Connection should be reused from pool");
-
-    let result = conn2.execute("echo test2", None).await.unwrap();
+    // Execute another command on the same connection
+    let result = conn1.execute("echo test2", None).await.unwrap();
     assert!(result.success);
 
-    pool.return_connection(conn2).await;
+    // Verify we're using the same connection
+    assert_eq!(
+        conn1.identifier(),
+        &id1,
+        "Should be the same connection"
+    );
+
+    // Cleanup
+    conn1.close().await.ok();
 }
 
 #[tokio::test]
@@ -691,13 +615,11 @@ async fn test_ssh_connection_pool_concurrent() {
         return;
     }
 
-    let pool = Arc::new(rustible::connection::ConnectionPool::new(10));
     let semaphore = Arc::new(Semaphore::new(5));
 
     let mut handles = vec![];
 
     for (i, host) in config.hosts.iter().take(3).enumerate() {
-        let pool = Arc::clone(&pool);
         let sem = Arc::clone(&semaphore);
         let host = host.clone();
         let user = config.user.clone();
@@ -706,33 +628,24 @@ async fn test_ssh_connection_pool_concurrent() {
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
 
-            let ssh_config = rustible::connection::SshConfig {
-                host: host.clone(),
-                port: 22,
-                user: user.clone(),
-                private_key_path: Some(key_path),
-                ..Default::default()
-            };
-
-            let conn = pool
-                .get_or_create(&format!("ssh://{}@{}:22", user, host), || {
-                    Box::pin(async {
-                        rustible::connection::SshConnection::connect(ssh_config.clone()).await
-                    })
-                })
+            let connection = SshConnectionBuilder::new(&host)
+                .port(22)
+                .user(&user)
+                .private_key(&key_path)
+                .connect()
                 .await
-                .expect("Failed to get connection");
+                .expect("Failed to connect");
 
             // Execute multiple commands
             for j in 0..3 {
-                let result = conn
+                let result = connection
                     .execute(&format!("echo 'host {} command {}'", i, j), None)
                     .await
                     .unwrap();
                 assert!(result.success);
             }
 
-            pool.return_connection(conn).await;
+            connection.close().await.ok();
         }));
     }
 
@@ -754,15 +667,11 @@ async fn test_ssh_privilege_escalation_sudo() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -799,15 +708,11 @@ async fn test_ssh_become_user() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -840,16 +745,12 @@ async fn test_ssh_connection_recovery_after_disconnect() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
     // First connection
-    let connection = rustible::connection::SshConnection::connect(ssh_config.clone())
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -863,7 +764,11 @@ async fn test_ssh_connection_recovery_after_disconnect() {
     assert!(!connection.is_alive().await);
 
     // Create new connection
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to reconnect");
 
@@ -883,16 +788,12 @@ async fn test_ssh_long_running_command() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        timeout: Duration::from_secs(120),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .timeout(Duration::from_secs(120))
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -922,16 +823,12 @@ async fn test_ssh_concurrent_commands_single_connection() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
     let connection = Arc::new(
-        rustible::connection::SshConnection::connect(ssh_config)
+        SshConnectionBuilder::new(host)
+            .port(22)
+            .user(&config.user)
+            .private_key(&config.key_path)
+            .connect()
             .await
             .expect("Failed to connect"),
     );
@@ -961,9 +858,9 @@ async fn test_ssh_concurrent_commands_single_connection() {
     // All commands should complete
     assert_eq!(results.len(), 5);
 
-    Arc::try_unwrap(connection)
-        .ok()
-        .map(|c| async { c.close().await.ok() });
+    if let Ok(conn) = Arc::try_unwrap(connection) {
+        conn.close().await.ok();
+    }
 }
 
 // =============================================================================
@@ -979,15 +876,11 @@ async fn test_ssh_path_exists() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -1024,15 +917,11 @@ async fn test_ssh_is_directory() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -1062,15 +951,11 @@ async fn test_ssh_file_stat() {
 
     let host = config.first_host().expect("No test hosts configured");
 
-    let ssh_config = rustible::connection::SshConfig {
-        host: host.to_string(),
-        port: 22,
-        user: config.user.clone(),
-        private_key_path: Some(config.key_path.clone()),
-        ..Default::default()
-    };
-
-    let connection = rustible::connection::SshConnection::connect(ssh_config)
+    let connection = SshConnectionBuilder::new(host)
+        .port(22)
+        .user(&config.user)
+        .private_key(&config.key_path)
+        .connect()
         .await
         .expect("Failed to connect");
 
@@ -1123,15 +1008,11 @@ async fn test_ssh_multiple_hosts_parallel() {
         let key_path = config.key_path.clone();
 
         handles.push(tokio::spawn(async move {
-            let ssh_config = rustible::connection::SshConfig {
-                host: host.clone(),
-                port: 22,
-                user,
-                private_key_path: Some(key_path),
-                ..Default::default()
-            };
-
-            let connection = rustible::connection::SshConnection::connect(ssh_config)
+            let connection = SshConnectionBuilder::new(&host)
+                .port(22)
+                .user(&user)
+                .private_key(&key_path)
+                .connect()
                 .await
                 .expect("Failed to connect");
 

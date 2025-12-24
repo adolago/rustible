@@ -52,11 +52,9 @@ impl PipModule {
 
     /// Check if a package is installed
     fn is_package_installed(&self, pip_cmd: &str, package: &str) -> ModuleResult<bool> {
-        let check_cmd = format!("{} show {}", pip_cmd, package);
-
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&check_cmd)
+        let output = Command::new(pip_cmd)
+            .arg("show")
+            .arg(package)
             .output()
             .map_err(|e| {
                 ModuleError::ExecutionFailed(format!("Failed to check package status: {}", e))
@@ -66,28 +64,27 @@ impl PipModule {
 
     /// Get installed version of a package
     fn get_installed_version(&self, pip_cmd: &str, package: &str) -> ModuleResult<Option<String>> {
-        let check_cmd = format!("{} show {} | grep Version:", pip_cmd, package);
-
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&check_cmd)
+        let output = Command::new(pip_cmd)
+            .arg("show")
+            .arg(package)
             .output()
             .map_err(|e| {
                 ModuleError::ExecutionFailed(format!("Failed to get package version: {}", e))
             })?;
 
         if output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .strip_prefix("Version:")
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if version.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(version))
+            // Parse the output to find the Version line
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if let Some(version) = line.strip_prefix("Version:") {
+                    let version = version.trim().to_string();
+                    if version.is_empty() {
+                        return Ok(None);
+                    }
+                    return Ok(Some(version));
+                }
             }
+            Ok(None)
         } else {
             Ok(None)
         }
@@ -99,11 +96,8 @@ impl PipModule {
         pip_cmd: &str,
         args: &[&str],
     ) -> ModuleResult<(bool, String, String)> {
-        let full_cmd = format!("{} {}", pip_cmd, args.join(" "));
-
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&full_cmd)
+        let output = Command::new(pip_cmd)
+            .args(args)
             .output()
             .map_err(|e| {
                 ModuleError::ExecutionFailed(format!("Failed to execute pip command: {}", e))
@@ -117,27 +111,17 @@ impl PipModule {
 
     /// Create a virtualenv if it doesn't exist
     fn ensure_virtualenv(&self, venv_path: &str) -> ModuleResult<bool> {
-        // Check if virtualenv exists
-        let check_cmd = format!("test -f {}/bin/activate", venv_path);
-
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&check_cmd)
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to check virtualenv: {}", e))
-            })?;
-
-        if output.status.success() {
+        // Check if virtualenv exists by checking for the activate script
+        let activate_path = std::path::Path::new(venv_path).join("bin").join("activate");
+        if activate_path.exists() {
             return Ok(false);
         }
 
-        // Create virtualenv
-        let create_cmd = format!("python3 -m venv {}", venv_path);
-
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&create_cmd)
+        // Create virtualenv using safe argument passing
+        let output = Command::new("python3")
+            .arg("-m")
+            .arg("venv")
+            .arg(venv_path)
             .output()
             .map_err(|e| {
                 ModuleError::ExecutionFailed(format!("Failed to create virtualenv: {}", e))

@@ -65,7 +65,7 @@ impl DnfModule {
         package: &str,
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<bool> {
-        let cmd = format!("rpm -q {}", package);
+        let cmd = format!("rpm -q {}", shell_escape(package));
         match conn.execute(&cmd, options).await {
             Ok(result) => Ok(result.success),
             Err(_) => Ok(false),
@@ -78,7 +78,7 @@ impl DnfModule {
         package: &str,
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<Option<String>> {
-        let cmd = format!("rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' {}", package);
+        let cmd = format!("rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' {}", shell_escape(package));
         match conn.execute(&cmd, options).await {
             Ok(result) if result.success => {
                 let version = result.stdout.trim().to_string();
@@ -99,9 +99,9 @@ impl DnfModule {
         packages: &[String],
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<(bool, String, String)> {
-        let mut cmd_parts = vec!["dnf"];
-        cmd_parts.extend(args);
-        cmd_parts.extend(packages.iter().map(|s| s.as_str()));
+        let mut cmd_parts: Vec<String> = vec!["dnf".to_string()];
+        cmd_parts.extend(args.iter().map(|s| s.to_string()));
+        cmd_parts.extend(packages.iter().map(|s| shell_escape(s)));
 
         let cmd = cmd_parts.join(" ");
 
@@ -431,9 +431,32 @@ impl Module for DnfModule {
     }
 }
 
+/// Escape a string for safe use in shell commands
+fn shell_escape(s: &str) -> String {
+    // Simple escape: wrap in single quotes and escape any single quotes
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/')
+    {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_shell_escape() {
+        assert_eq!(shell_escape("simple"), "simple");
+        assert_eq!(shell_escape("nginx"), "nginx");
+        assert_eq!(shell_escape("with space"), "'with space'");
+        assert_eq!(shell_escape("with'quote"), "'with'\\''quote'");
+        assert_eq!(shell_escape("pkg; rm -rf /"), "'pkg; rm -rf /'");
+        assert_eq!(shell_escape("$(malicious)"), "'$(malicious)'");
+        assert_eq!(shell_escape("`cmd`"), "'`cmd`'");
+    }
 
     #[test]
     fn test_dnf_state_from_str() {
