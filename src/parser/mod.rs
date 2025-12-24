@@ -581,13 +581,13 @@ impl Parser {
             if let Some(seq) = value.as_seq() {
                 let len = seq.len();
                 if len > 0 {
-                    let idx = rand::thread_rng().gen_range(0..len);
+                    let idx = rand::rngs::OsRng.gen_range(0..len);
                     seq.get_item(&Value::from(idx)).unwrap_or(Value::UNDEFINED)
                 } else {
                     Value::UNDEFINED
                 }
             } else if let Ok(max) = TryInto::<i64>::try_into(value) {
-                let n = rand::thread_rng().gen_range(0..max);
+                let n = rand::rngs::OsRng.gen_range(0..max);
                 Value::from(n)
             } else {
                 Value::UNDEFINED
@@ -599,7 +599,7 @@ impl Parser {
             use rand::seq::SliceRandom;
             if let Some(seq) = value.as_seq() {
                 let mut items: Vec<Value> = seq.iter().collect();
-                items.shuffle(&mut rand::thread_rng());
+                items.shuffle(&mut rand::rngs::OsRng);
                 items
             } else {
                 Vec::new()

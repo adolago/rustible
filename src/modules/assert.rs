@@ -20,11 +20,10 @@ impl AssertModule {
     /// Evaluate a single condition string using the template engine
     fn evaluate_condition(
         &self,
+        template_engine: &TemplateEngine,
         condition: &str,
         vars: &HashMap<String, Value>,
     ) -> ModuleResult<bool> {
-        let template_engine = TemplateEngine::new();
-
         // Wrap the condition in a template expression that evaluates to a boolean
         let template = format!("{{{{ {} }}}}", condition);
 
@@ -55,9 +54,10 @@ impl AssertModule {
         vars: &HashMap<String, Value>,
     ) -> ModuleResult<Vec<String>> {
         let mut failed_conditions = Vec::new();
+        let template_engine = TemplateEngine::new();
 
         for condition in conditions {
-            match self.evaluate_condition(condition, vars) {
+            match self.evaluate_condition(&template_engine, condition, vars) {
                 Ok(true) => {
                     // Condition passed
                 }
