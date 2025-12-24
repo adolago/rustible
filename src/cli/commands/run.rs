@@ -469,7 +469,11 @@ impl RunArgs {
             let cmd = if let Some(args) = args {
                 args.as_str()
                     .map(|s| s.to_string())
-                    .or_else(|| args.get("cmd").and_then(|c| c.as_str()).map(|s| s.to_string()))
+                    .or_else(|| {
+                        args.get("cmd")
+                            .and_then(|c| c.as_str())
+                            .map(|s| s.to_string())
+                    })
                     .unwrap_or_default()
             } else {
                 String::new()
@@ -487,10 +491,15 @@ impl RunArgs {
                     return Err(anyhow::anyhow!("Empty command"));
                 }
 
-                let output = std::process::Command::new(if module == "shell" { "sh" } else { parts[0] })
-                    .args(if module == "shell" { vec!["-c", &cmd] } else { parts[1..].to_vec() })
-                    .output()
-                    .map_err(|e| anyhow::anyhow!("Failed to execute command: {}", e))?;
+                let output =
+                    std::process::Command::new(if module == "shell" { "sh" } else { parts[0] })
+                        .args(if module == "shell" {
+                            vec!["-c", &cmd]
+                        } else {
+                            parts[1..].to_vec()
+                        })
+                        .output()
+                        .map_err(|e| anyhow::anyhow!("Failed to execute command: {}", e))?;
 
                 if output.status.success() {
                     return Ok(true);
@@ -597,7 +606,8 @@ impl RunArgs {
                             let ansible_port = host_config
                                 .get("ansible_port")
                                 .and_then(|p| p.as_u64())
-                                .unwrap_or(22) as u16;
+                                .unwrap_or(22)
+                                as u16;
                             let ansible_key = host_config
                                 .get("ansible_ssh_private_key_file")
                                 .and_then(|k| k.as_str())
@@ -612,10 +622,14 @@ impl RunArgs {
         }
 
         // Default: use host as-is with current user
-        let user = self.user.clone().unwrap_or_else(|| {
-            std::env::var("USER").unwrap_or_else(|_| "root".to_string())
-        });
-        let key = self.private_key.as_ref().map(|p| p.to_string_lossy().to_string());
+        let user = self
+            .user
+            .clone()
+            .unwrap_or_else(|| std::env::var("USER").unwrap_or_else(|_| "root".to_string()));
+        let key = self
+            .private_key
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string());
 
         Ok((host.to_string(), user, 22, key))
     }

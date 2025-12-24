@@ -283,14 +283,9 @@ impl RusshConnection {
                 russh::keys::key::RSA_SHA2_512,
             ]),
             // Prefer fast MACs (not used with AEAD ciphers but needed for fallback)
-            mac: std::borrow::Cow::Borrowed(&[
-                russh::mac::HMAC_SHA256,
-                russh::mac::HMAC_SHA512,
-            ]),
+            mac: std::borrow::Cow::Borrowed(&[russh::mac::HMAC_SHA256, russh::mac::HMAC_SHA512]),
             // No compression for speed
-            compression: std::borrow::Cow::Borrowed(&[
-                russh::compression::NONE,
-            ]),
+            compression: std::borrow::Cow::Borrowed(&[russh::compression::NONE]),
         };
         let config = Arc::new(config);
 
@@ -469,7 +464,6 @@ impl RusshConnection {
     }
 }
 
-
 #[async_trait]
 impl Connection for RusshConnection {
     fn identifier(&self) -> &str {
@@ -535,12 +529,9 @@ impl Connection for RusshConnection {
                 let password = options.escalate_password.as_ref().unwrap();
                 let password_data = format!("{}\n", password);
                 let mut cursor = tokio::io::BufReader::new(password_data.as_bytes());
-                channel
-                    .data(&mut cursor)
-                    .await
-                    .map_err(|e| {
-                        ConnectionError::ExecutionFailed(format!("Failed to write password: {}", e))
-                    })?;
+                channel.data(&mut cursor).await.map_err(|e| {
+                    ConnectionError::ExecutionFailed(format!("Failed to write password: {}", e))
+                })?;
             }
 
             // 3. Capture stdout/stderr
@@ -971,21 +962,11 @@ impl Connection for RusshConnection {
             // Check for common SFTP error conditions
             let error_str = e.to_string().to_lowercase();
             if error_str.contains("no such file") || error_str.contains("not found") {
-                ConnectionError::TransferFailed(format!(
-                    "File not found: {}",
-                    path.display()
-                ))
+                ConnectionError::TransferFailed(format!("File not found: {}", path.display()))
             } else if error_str.contains("permission denied") {
-                ConnectionError::TransferFailed(format!(
-                    "Permission denied: {}",
-                    path.display()
-                ))
+                ConnectionError::TransferFailed(format!("Permission denied: {}", path.display()))
             } else {
-                ConnectionError::TransferFailed(format!(
-                    "Failed to stat {}: {}",
-                    path.display(),
-                    e
-                ))
+                ConnectionError::TransferFailed(format!("Failed to stat {}: {}", path.display(), e))
             }
         })?;
 
@@ -1010,7 +991,6 @@ impl Connection for RusshConnection {
         })
     }
 
-
     async fn close(&self) -> ConnectionResult<()> {
         debug!("Closing SSH connection");
 
@@ -1027,7 +1007,11 @@ impl Connection for RusshConnection {
         if let Some(handle) = handle {
             // Request disconnect from the SSH server
             let _ = handle
-                .disconnect(russh::Disconnect::ByApplication, "Connection closed by client", "en")
+                .disconnect(
+                    russh::Disconnect::ByApplication,
+                    "Connection closed by client",
+                    "en",
+                )
                 .await;
         }
 
@@ -1159,8 +1143,7 @@ impl RusshConnection {
         let task_results = futures::future::join_all(tasks).await;
 
         // Collect results in order
-        let mut results: Vec<ConnectionResult<CommandResult>> =
-            Vec::with_capacity(commands.len());
+        let mut results: Vec<ConnectionResult<CommandResult>> = Vec::with_capacity(commands.len());
 
         // Initialize with error placeholders
         for idx in 0..commands.len() {
@@ -1380,7 +1363,6 @@ impl RusshConnectionBuilder {
     }
 }
 
-
 // ============================================================================
 // SSH Request Pipelining
 // ============================================================================
@@ -1530,7 +1512,8 @@ impl<'a> PipelinedExecutor<'a> {
 
     /// Queue a command with specific options
     pub fn queue_with_options(&mut self, command: impl Into<String>, options: ExecuteOptions) {
-        self.pending.push(PendingCommand::new(command, Some(options)));
+        self.pending
+            .push(PendingCommand::new(command, Some(options)));
     }
 
     /// Get the number of pending commands
@@ -1613,8 +1596,10 @@ impl<'a> PipelinedExecutor<'a> {
         drop(handle_guard);
 
         // Collect opened channels, tracking which ones failed
-        let mut channels: Vec<Option<russh::Channel<russh::client::Msg>>> = Vec::with_capacity(num_commands);
-        let mut channel_errors: Vec<Option<ConnectionError>> = (0..num_commands).map(|_| None).collect();
+        let mut channels: Vec<Option<russh::Channel<russh::client::Msg>>> =
+            Vec::with_capacity(num_commands);
+        let mut channel_errors: Vec<Option<ConnectionError>> =
+            (0..num_commands).map(|_| None).collect();
 
         for (idx, result) in channel_results.into_iter().enumerate() {
             match result {
@@ -1623,9 +1608,10 @@ impl<'a> PipelinedExecutor<'a> {
                 }
                 Err(e) => {
                     channels.push(None);
-                    channel_errors[idx] = Some(ConnectionError::ExecutionFailed(
-                        format!("Failed to open channel: {}", e)
-                    ));
+                    channel_errors[idx] = Some(ConnectionError::ExecutionFailed(format!(
+                        "Failed to open channel: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -1640,14 +1626,16 @@ impl<'a> PipelinedExecutor<'a> {
             }
 
             if let Some(Some(channel)) = channels.get_mut(idx) {
-                let full_command = RusshConnection::build_command_with_env(&cmd.command, &cmd.options);
+                let full_command =
+                    RusshConnection::build_command_with_env(&cmd.command, &cmd.options);
 
                 if let Err(e) = channel.exec(true, full_command).await {
                     // Mark this channel as failed
                     channels[idx] = None;
-                    channel_errors[idx] = Some(ConnectionError::ExecutionFailed(
-                        format!("Failed to execute command: {}", e)
-                    ));
+                    channel_errors[idx] = Some(ConnectionError::ExecutionFailed(format!(
+                        "Failed to execute command: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -1666,9 +1654,10 @@ impl<'a> PipelinedExecutor<'a> {
 
                     if let Err(e) = channel.data(&mut cursor).await {
                         channels[idx] = None;
-                        channel_errors[idx] = Some(ConnectionError::ExecutionFailed(
-                            format!("Failed to write password: {}", e)
-                        ));
+                        channel_errors[idx] = Some(ConnectionError::ExecutionFailed(format!(
+                            "Failed to write password: {}",
+                            e
+                        )));
                     }
                 }
             }
@@ -1693,7 +1682,7 @@ impl<'a> PipelinedExecutor<'a> {
                     // If channel is None, something went wrong
                     let Some(mut channel) = channel_opt else {
                         return Err(ConnectionError::ExecutionFailed(
-                            "Channel not available".to_string()
+                            "Channel not available".to_string(),
                         ));
                     };
 
@@ -1742,8 +1731,10 @@ impl<'a> PipelinedExecutor<'a> {
                     if let Some(timeout_secs) = timeout {
                         match tokio::time::timeout(
                             Duration::from_secs(timeout_secs),
-                            collect_output
-                        ).await {
+                            collect_output,
+                        )
+                        .await
+                        {
                             Ok(result) => result,
                             Err(_) => Err(ConnectionError::Timeout(timeout_secs)),
                         }
@@ -1930,7 +1921,10 @@ mod tests {
 
     #[test]
     fn test_escape_shell_arg_with_spaces() {
-        assert_eq!(escape_shell_arg("/path/with spaces/file.txt"), "'/path/with spaces/file.txt'");
+        assert_eq!(
+            escape_shell_arg("/path/with spaces/file.txt"),
+            "'/path/with spaces/file.txt'"
+        );
     }
 
     #[test]
@@ -1961,9 +1955,7 @@ mod tests {
 
     #[test]
     fn test_pending_command_with_options() {
-        let options = ExecuteOptions::new()
-            .with_cwd("/tmp")
-            .with_timeout(30);
+        let options = ExecuteOptions::new().with_cwd("/tmp").with_timeout(30);
         let cmd = PendingCommand::new("echo hello", Some(options));
         assert_eq!(cmd.command(), "echo hello");
         assert_eq!(cmd.options().cwd, Some("/tmp".to_string()));

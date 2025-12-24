@@ -68,9 +68,9 @@ impl UserModule {
         let options = Self::get_exec_options(context);
 
         // Use tokio runtime to execute async command
-        let result = Handle::current().block_on(async {
-            connection.execute(command, Some(options)).await
-        }).map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
+        let result = Handle::current()
+            .block_on(async { connection.execute(command, Some(options)).await })
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
 
         Ok((result.success, result.stdout, result.stderr))
     }
@@ -704,7 +704,9 @@ impl Module for UserModule {
 /// Escape a string for safe use in shell commands
 fn shell_escape(s: &str) -> String {
     // Simple escape: wrap in single quotes and escape any single quotes
-    if s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/') {
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/')
+    {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))

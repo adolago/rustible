@@ -389,9 +389,14 @@ impl Module for TemplateModule {
                     }
                     // Set permissions via chmod command on remote
                     let chmod_cmd = format!("chmod {:o} {}", mode.unwrap(), dest);
-                    handle.block_on(async { conn.execute(&chmod_cmd, None).await }).map_err(
-                        |e| ModuleError::ExecutionFailed(format!("Failed to set permissions: {}", e)),
-                    )?;
+                    handle
+                        .block_on(async { conn.execute(&chmod_cmd, None).await })
+                        .map_err(|e| {
+                            ModuleError::ExecutionFailed(format!(
+                                "Failed to set permissions: {}",
+                                e
+                            ))
+                        })?;
                     return Ok(ModuleOutput::changed(format!(
                         "Changed permissions on '{}'",
                         dest
@@ -468,7 +473,10 @@ impl Module for TemplateModule {
                     .with_data("dest", serde_json::json!(dest))
                     .with_data("src", serde_json::json!(src))
                     .with_data("size", serde_json::json!(stat.size))
-                    .with_data("mode", serde_json::json!(format!("{:o}", stat.mode & 0o7777)))
+                    .with_data(
+                        "mode",
+                        serde_json::json!(format!("{:o}", stat.mode & 0o7777)),
+                    )
                     .with_data("uid", serde_json::json!(stat.uid))
                     .with_data("gid", serde_json::json!(stat.gid));
             }
@@ -476,7 +484,16 @@ impl Module for TemplateModule {
             Ok(output)
         } else {
             // Local execution (no connection)
-            Self::execute_local(params, context, &rendered, src_path, dest_path, backup, &backup_suffix, mode)
+            Self::execute_local(
+                params,
+                context,
+                &rendered,
+                src_path,
+                dest_path,
+                backup,
+                &backup_suffix,
+                mode,
+            )
         }
     }
 

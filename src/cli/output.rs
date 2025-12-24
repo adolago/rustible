@@ -32,13 +32,13 @@ impl TaskStatus {
     /// Get the colored string representation
     pub fn colored_string(&self) -> String {
         match self {
-            TaskStatus::Ok => format!("{} ok", "[+]").green().to_string(),
-            TaskStatus::Changed => format!("{} changed", "[~]").yellow().to_string(),
-            TaskStatus::Skipped => format!("{} skipping", "[-]").cyan().to_string(),
-            TaskStatus::Failed => format!("{} failed", "[!]").red().bold().to_string(),
-            TaskStatus::Unreachable => format!("{} unreachable", "[x]").red().bold().to_string(),
-            TaskStatus::Rescued => format!("{} rescued", "[*]").magenta().to_string(),
-            TaskStatus::Ignored => format!("{} ignored", "[.]").blue().to_string(),
+            TaskStatus::Ok => "ok".green().to_string(),
+            TaskStatus::Changed => "changed".yellow().to_string(),
+            TaskStatus::Skipped => "skipping".cyan().to_string(),
+            TaskStatus::Failed => "failed".red().bold().to_string(),
+            TaskStatus::Unreachable => "unreachable".red().bold().to_string(),
+            TaskStatus::Rescued => "rescued".magenta().to_string(),
+            TaskStatus::Ignored => "ignored".blue().to_string(),
         }
     }
 
@@ -288,14 +288,41 @@ impl OutputFormatter {
                     host.green()
                 };
 
+                // Helper to format stats: dim if zero, colored if non-zero
+                let fmt_stat = |label: &str, value: u32, color: colored::Color| -> String {
+                    if value > 0 {
+                        format!("{}={:<4}", label.color(color), value)
+                    } else {
+                        format!("{}={:<4}", label, value).dimmed().to_string()
+                    }
+                };
+
                 print!("{:<30} : ", host_colored);
-                print!("{}={:<4} ", "ok".green(), host_stats.ok);
-                print!("{}={:<4} ", "changed".yellow(), host_stats.changed);
-                print!("{}={:<4} ", "unreachable".red(), host_stats.unreachable);
-                print!("{}={:<4} ", "failed".red().bold(), host_stats.failed);
-                print!("{}={:<4} ", "skipped".cyan(), host_stats.skipped);
-                print!("{}={:<4} ", "rescued".magenta(), host_stats.rescued);
-                print!("{}={:<4}", "ignored".blue(), host_stats.ignored);
+                print!("{} ", fmt_stat("ok", host_stats.ok, colored::Color::Green));
+                print!(
+                    "{} ",
+                    fmt_stat("changed", host_stats.changed, colored::Color::Yellow)
+                );
+                print!(
+                    "{} ",
+                    fmt_stat("unreachable", host_stats.unreachable, colored::Color::Red)
+                );
+                print!(
+                    "{} ",
+                    fmt_stat("failed", host_stats.failed, colored::Color::Red)
+                );
+                print!(
+                    "{} ",
+                    fmt_stat("skipped", host_stats.skipped, colored::Color::Cyan)
+                );
+                print!(
+                    "{} ",
+                    fmt_stat("rescued", host_stats.rescued, colored::Color::Magenta)
+                );
+                print!(
+                    "{} ",
+                    fmt_stat("ignored", host_stats.ignored, colored::Color::Blue)
+                );
                 println!();
             } else {
                 println!("{}", line);
@@ -665,6 +692,17 @@ mod tests {
         assert_eq!(TaskStatus::Ok.as_str(), "ok");
         assert_eq!(TaskStatus::Changed.as_str(), "changed");
         assert_eq!(TaskStatus::Failed.as_str(), "failed");
+
+        // Test colored string content (without color codes for simplicity if we could strip them, but here we just check availability)
+        // Note: Colored strings contain ANSI codes, so we can't easily assert equality with plain text.
+        // But we can check it doesn't contain the old brackets
+        assert!(!TaskStatus::Ok.colored_string().contains("[+]"));
+        assert!(!TaskStatus::Changed.colored_string().contains("[~]"));
+        assert!(!TaskStatus::Failed.colored_string().contains("[!]"));
+
+        // It should contain the text
+        assert!(TaskStatus::Ok.colored_string().contains("ok"));
+        assert!(TaskStatus::Changed.colored_string().contains("changed"));
     }
 
     #[test]

@@ -78,10 +78,7 @@ impl AptModule {
         package: &str,
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<Option<String>> {
-        let cmd = format!(
-            "dpkg-query -W -f='${{Version}}' {} 2>/dev/null",
-            package
-        );
+        let cmd = format!("dpkg-query -W -f='${{Version}}' {} 2>/dev/null", package);
         match conn.execute(&cmd, options).await {
             Ok(result) if result.success => {
                 let version = result.stdout.trim().to_string();

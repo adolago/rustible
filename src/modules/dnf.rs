@@ -119,9 +119,10 @@ impl DnfModule {
         options: Option<ExecuteOptions>,
     ) -> ModuleResult<()> {
         let cmd = "dnf makecache";
-        let result = conn.execute(cmd, options).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to update cache: {}", e))
-        })?;
+        let result = conn
+            .execute(cmd, options)
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to update cache: {}", e)))?;
 
         if result.success {
             Ok(())

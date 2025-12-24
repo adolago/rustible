@@ -64,9 +64,7 @@ impl SshBenchConfig {
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(22);
-        let user = std::env::var("SSH_BENCH_USER")
-            .ok()
-            .unwrap_or_else(whoami);
+        let user = std::env::var("SSH_BENCH_USER").ok().unwrap_or_else(whoami);
         let key_path = std::env::var("SSH_BENCH_KEY")
             .ok()
             .unwrap_or_else(|| "~/.ssh/id_ed25519".to_string());
@@ -187,11 +185,7 @@ async fn russh_execute(client: &async_ssh2_tokio::client::Client, command: &str)
 
 /// Upload data via russh (using base64 encoding over command)
 /// Note: async-ssh2-tokio doesn't expose SFTP directly, so we use command-based transfer
-async fn russh_upload(
-    client: &async_ssh2_tokio::client::Client,
-    data: &[u8],
-    remote_path: &str,
-) {
+async fn russh_upload(client: &async_ssh2_tokio::client::Client, data: &[u8], remote_path: &str) {
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(data);
     let cmd = format!("echo '{}' | base64 -d > {}", encoded, remote_path);

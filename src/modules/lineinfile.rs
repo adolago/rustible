@@ -302,11 +302,9 @@ impl LineinfileModule {
 
             // Download file content (empty if doesn't exist)
             let content = if file_exists {
-                conn.download_content(remote_path)
-                    .await
-                    .map_err(|e| {
-                        ModuleError::ExecutionFailed(format!("Failed to download file: {}", e))
-                    })?
+                conn.download_content(remote_path).await.map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to download file: {}", e))
+                })?
             } else {
                 Vec::new()
             };

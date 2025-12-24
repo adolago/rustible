@@ -230,9 +230,7 @@ async fn test_russh_file_transfer() {
     // Download file
     let download_file = temp_dir.path().join("test_download.txt");
     let download_start = Instant::now();
-    let download_result = conn
-        .download(remote_path, &download_file)
-        .await;
+    let download_result = conn.download(remote_path, &download_file).await;
     let download_time = download_start.elapsed();
 
     match download_result {
@@ -247,7 +245,9 @@ async fn test_russh_file_transfer() {
     }
 
     // Cleanup
-    let _ = conn.execute("rm -f /tmp/rustible_russh_test.txt", None).await;
+    let _ = conn
+        .execute("rm -f /tmp/rustible_russh_test.txt", None)
+        .await;
     let _ = conn.close().await;
 }
 
@@ -354,7 +354,10 @@ async fn benchmark_russh_performance() {
     let host = &HOMELAB_HOSTS[1]; // svr-core
     let iterations = 10;
 
-    println!("Benchmarking russh on {} ({} iterations)...", host.name, iterations);
+    println!(
+        "Benchmarking russh on {} ({} iterations)...",
+        host.name, iterations
+    );
 
     // Measure connection time
     let mut connect_times = vec![];
@@ -387,15 +390,23 @@ async fn benchmark_russh_performance() {
     }
 
     if !connect_times.is_empty() {
-        let avg_connect: Duration = connect_times.iter().sum::<Duration>() / connect_times.len() as u32;
-        let avg_command: Duration = command_times.iter().sum::<Duration>() / command_times.len() as u32;
+        let avg_connect: Duration =
+            connect_times.iter().sum::<Duration>() / connect_times.len() as u32;
+        let avg_command: Duration =
+            command_times.iter().sum::<Duration>() / command_times.len() as u32;
         let min_connect = connect_times.iter().min().unwrap();
         let max_connect = connect_times.iter().max().unwrap();
         let min_command = command_times.iter().min().unwrap();
         let max_command = command_times.iter().max().unwrap();
 
         println!("Results:");
-        println!("  Connect time: avg={:?}, min={:?}, max={:?}", avg_connect, min_connect, max_connect);
-        println!("  Command time: avg={:?}, min={:?}, max={:?}", avg_command, min_command, max_command);
+        println!(
+            "  Connect time: avg={:?}, min={:?}, max={:?}",
+            avg_connect, min_connect, max_connect
+        );
+        println!(
+            "  Command time: avg={:?}, min={:?}, max={:?}",
+            avg_command, min_command, max_command
+        );
     }
 }

@@ -342,7 +342,10 @@ impl std::fmt::Debug for ModuleContext {
             .field("become", &self.r#become)
             .field("become_method", &self.become_method)
             .field("become_user", &self.become_user)
-            .field("connection", &self.connection.as_ref().map(|c| c.identifier()))
+            .field(
+                "connection",
+                &self.connection.as_ref().map(|c| c.identifier()),
+            )
             .finish()
     }
 }
