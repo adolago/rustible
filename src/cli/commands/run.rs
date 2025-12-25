@@ -6,6 +6,8 @@ use super::{CommandContext, Runnable};
 use crate::cli::output::{RecapStats, TaskStatus};
 use anyhow::{Context, Result};
 use clap::Parser;
+use indexmap::IndexMap;
+use regex::Regex;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -194,6 +196,29 @@ impl RunArgs {
             return Ok(());
         }
 
+        // Extract play-level variables
+        let mut vars: IndexMap<String, serde_yaml::Value> = IndexMap::new();
+
+        // Add extra vars first (lowest precedence in this context)
+        if let Ok(extra_vars) = ctx.parse_extra_vars() {
+            for (k, v) in extra_vars {
+                if let Ok(yaml_val) = serde_yaml::to_value(&v) {
+                    vars.insert(k, yaml_val);
+                }
+            }
+        }
+
+        // Add play vars (higher precedence)
+        if let Some(play_vars) = play.get("vars") {
+            if let Some(mapping) = play_vars.as_mapping() {
+                for (k, v) in mapping {
+                    if let Some(key) = k.as_str() {
+                        vars.insert(key.to_string(), v.clone());
+                    }
+                }
+            }
+        }
+
         // Get tasks
         let tasks = play
             .get("tasks")
@@ -203,7 +228,7 @@ impl RunArgs {
 
         // Execute tasks
         for task in &tasks {
-            self.execute_task(ctx, task, &hosts, stats).await?;
+            self.execute_task(ctx, task, &hosts, stats, &vars).await?;
         }
 
         Ok(())
@@ -262,6 +287,7 @@ impl RunArgs {
         task: &serde_yaml::Value,
         hosts: &[String],
         stats: &Arc<Mutex<RecapStats>>,
+        vars: &IndexMap<String, serde_yaml::Value>,
     ) -> Result<()> {
         // Get task name
         let task_name = task
@@ -314,7 +340,7 @@ impl RunArgs {
             }
 
             // Execute the task (simplified)
-            let result = self.execute_module(ctx, host, task).await;
+            let result = self.execute_module(ctx, host, task, vars).await;
 
             match result {
                 Ok(changed) => {
@@ -440,6 +466,7 @@ impl RunArgs {
         ctx: &CommandContext,
         host: &str,
         task: &serde_yaml::Value,
+        vars: &IndexMap<String, serde_yaml::Value>,
     ) -> Result<bool> {
         let (module, args) = self.detect_module(task);
 
@@ -450,10 +477,17 @@ impl RunArgs {
         if module == "debug" {
             if let Some(args) = args {
                 if let Some(msg) = args.get("msg").and_then(|m| m.as_str()) {
-                    ctx.output.info(&format!("DEBUG: {}", msg));
+                    let templated_msg = Self::template_string(msg, vars);
+                    ctx.output.info(&format!("DEBUG: {}", templated_msg));
                 }
                 if let Some(var) = args.get("var").and_then(|v| v.as_str()) {
-                    ctx.output.info(&format!("DEBUG: {} = <value>", var));
+                    // Look up the variable value
+                    let var_name = Self::template_string(var, vars);
+                    if let Some(value) = vars.get(&var_name) {
+                        ctx.output.info(&format!("DEBUG: {} = {:?}", var_name, value));
+                    } else {
+                        ctx.output.info(&format!("DEBUG: {} = <undefined>", var_name));
+                    }
                 }
             }
             return Ok(false);
@@ -665,6 +699,57 @@ impl RunArgs {
         }
 
         Ok(())
+    }
+
+    /// Template a string by replacing {{ variable }} patterns with values
+    fn template_string(template: &str, vars: &IndexMap<String, serde_yaml::Value>) -> String {
+        // Simple Jinja2-like templating for {{ variable }} syntax
+        let re = Regex::new(r"\{\{\s*([^}]+?)\s*\}\}").unwrap();
+        let mut result = template.to_string();
+
+        for cap in re.captures_iter(template) {
+            let full_match = cap.get(0).unwrap().as_str();
+            let expr = cap.get(1).unwrap().as_str().trim();
+
+            // Handle simple variable lookup (no filters for now)
+            let var_name = expr.split('|').next().unwrap_or(expr).trim();
+
+            if let Some(value) = vars.get(var_name) {
+                let replacement = Self::yaml_value_to_string(value);
+                result = result.replace(full_match, &replacement);
+            }
+            // If variable not found, leave the original template expression
+        }
+
+        result
+    }
+
+    /// Convert a YAML value to a display string
+    fn yaml_value_to_string(value: &serde_yaml::Value) -> String {
+        match value {
+            serde_yaml::Value::Null => String::new(),
+            serde_yaml::Value::Bool(b) => b.to_string(),
+            serde_yaml::Value::Number(n) => n.to_string(),
+            serde_yaml::Value::String(s) => s.clone(),
+            serde_yaml::Value::Sequence(seq) => {
+                let items: Vec<String> = seq.iter().map(Self::yaml_value_to_string).collect();
+                format!("[{}]", items.join(", "))
+            }
+            serde_yaml::Value::Mapping(map) => {
+                let items: Vec<String> = map
+                    .iter()
+                    .map(|(k, v)| {
+                        format!(
+                            "{}: {}",
+                            Self::yaml_value_to_string(k),
+                            Self::yaml_value_to_string(v)
+                        )
+                    })
+                    .collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            serde_yaml::Value::Tagged(tagged) => Self::yaml_value_to_string(&tagged.value),
+        }
     }
 }
 
