@@ -17,6 +17,18 @@ use std::path::Path;
 use tera::{Context as TeraContext, Tera};
 use tokio::runtime::Handle;
 
+/// Escape a string for use in shell commands
+fn shell_escape(s: &str) -> String {
+    // If the string contains no special characters, return as-is
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/')
+    {
+        return s.to_string();
+    }
+    // Otherwise, wrap in single quotes and escape any single quotes within
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Global Tera instance with pre-registered filters
 static BASE_TERA: Lazy<Tera> = Lazy::new(|| {
     let mut tera = Tera::default();
@@ -388,7 +400,7 @@ impl Module for TemplateModule {
                         )));
                     }
                     // Set permissions via chmod command on remote
-                    let chmod_cmd = format!("chmod {:o} {}", mode.unwrap(), dest);
+                    let chmod_cmd = format!("chmod {:o} {}", mode.unwrap(), shell_escape(&dest));
                     handle
                         .block_on(async { conn.execute(&chmod_cmd, None).await })
                         .map_err(|e| {
@@ -431,7 +443,7 @@ impl Module for TemplateModule {
             // Create backup if requested (via remote command)
             let backup_file = if backup && current_content.is_some() {
                 let backup_path = format!("{}{}", dest, backup_suffix);
-                let cp_cmd = format!("cp {} {}", dest, backup_path);
+                let cp_cmd = format!("cp {} {}", shell_escape(&dest), shell_escape(&backup_path));
                 handle
                     .block_on(async { conn.execute(&cp_cmd, None).await })
                     .map_err(|e| {
@@ -726,5 +738,14 @@ mod tests {
 
         assert!(result.changed);
         assert_eq!(fs::read_to_string(&dest).unwrap(), "HELLO");
+    }
+
+    #[test]
+    fn test_shell_escape() {
+        assert_eq!(shell_escape("foo"), "foo");
+        assert_eq!(shell_escape("foo/bar"), "foo/bar");
+        assert_eq!(shell_escape("foo bar"), "'foo bar'");
+        assert_eq!(shell_escape("foo;bar"), "'foo;bar'");
+        assert_eq!(shell_escape("foo'bar"), "'foo'\\''bar'");
     }
 }
