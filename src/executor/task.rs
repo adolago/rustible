@@ -15,6 +15,7 @@ use serde_json::Value as JsonValue;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, instrument, warn};
 
+use crate::executor::parallelization::ParallelizationManager;
 use crate::executor::runtime::{ExecutionContext, RegisteredResult, RuntimeContext};
 use crate::executor::{ExecutorError, ExecutorResult};
 
@@ -207,6 +208,9 @@ pub struct Task {
     /// Delegate task to another host
     #[serde(default)]
     pub delegate_to: Option<String>,
+    /// Whether facts should be set on the delegated host instead of the original host
+    #[serde(default)]
+    pub delegate_facts: Option<bool>,
     /// Run task only once (not on each host)
     #[serde(default)]
     pub run_once: bool,
@@ -240,10 +244,67 @@ impl Default for Task {
             changed_when: None,
             failed_when: None,
             delegate_to: None,
+            delegate_facts: None,
             run_once: false,
             tags: Vec::new(),
             r#become: false,
             become_user: None,
+        }
+    }
+}
+
+/// Convert from playbook::Task to executor::task::Task
+impl From<crate::playbook::Task> for Task {
+    fn from(pt: crate::playbook::Task) -> Self {
+        // Convert args from serde_json::Value to IndexMap
+        let args = if let Some(obj) = pt.module.args.as_object() {
+            obj.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        } else {
+            IndexMap::new()
+        };
+
+        // Convert when condition
+        let when = pt.when.map(|w| match w {
+            crate::playbook::When::Single(s) => s,
+            crate::playbook::When::Multiple(v) => v.join(" and "),
+        });
+
+        // Convert loop items
+        let loop_items = pt.loop_.or(pt.with_items).and_then(|v| {
+            if let Some(arr) = v.as_array() {
+                Some(arr.clone())
+            } else {
+                None
+            }
+        });
+
+        // Get loop_var from loop_control if available
+        let loop_var = pt
+            .loop_control
+            .as_ref()
+            .map(|lc| lc.loop_var.clone())
+            .unwrap_or_else(default_loop_var);
+
+        Self {
+            name: pt.name,
+            module: pt.module.name,
+            args,
+            when,
+            notify: pt.notify,
+            register: pt.register,
+            loop_items,
+            loop_var,
+            ignore_errors: pt.ignore_errors,
+            changed_when: pt.changed_when,
+            failed_when: pt.failed_when,
+            delegate_to: pt.delegate_to,
+            delegate_facts: pt.delegate_facts,
+            run_once: pt.run_once,
+            tags: pt.tags,
+            r#become: pt.r#become.unwrap_or(false),
+            become_user: pt.become_user,
         }
     }
 }
@@ -301,13 +362,14 @@ impl Task {
     }
 
     /// Execute the task
-    #[instrument(skip(self, ctx, runtime, handlers, notified), fields(task_name = %self.name, host = %ctx.host))]
+    #[instrument(skip(self, ctx, runtime, handlers, notified, parallelization_manager), fields(task_name = %self.name, host = %ctx.host))]
     pub async fn execute(
         &self,
         ctx: &ExecutionContext,
         runtime: &Arc<RwLock<RuntimeContext>>,
         handlers: &Arc<RwLock<HashMap<String, Handler>>>,
         notified: &Arc<Mutex<std::collections::HashSet<String>>>,
+        parallelization_manager: &Arc<ParallelizationManager>,
     ) -> ExecutorResult<TaskResult> {
         info!("Executing task: {}", self.name);
 
@@ -323,23 +385,59 @@ impl Task {
             }
         }
 
-        // Handle loops
+        // Handle delegation - create appropriate context for execution and fact storage
+        let (execution_ctx, fact_storage_ctx) = if let Some(ref delegate_host) = self.delegate_to {
+            debug!("Delegating task to host: {}", delegate_host);
+
+            // Create execution context for the delegate host (where task actually runs)
+            let mut delegate_ctx = ctx.clone();
+            delegate_ctx.host = delegate_host.clone();
+
+            // Create fact storage context based on delegate_facts setting
+            // If delegate_facts is true, store on delegate host; otherwise on original host
+            let fact_ctx = if self.delegate_facts.unwrap_or(false) {
+                // Facts go to delegate host
+                let mut fact_ctx = ctx.clone();
+                fact_ctx.host = delegate_host.clone();
+                fact_ctx
+            } else {
+                // Facts go to original host (default behavior)
+                ctx.clone()
+            };
+
+            (delegate_ctx, fact_ctx)
+        } else {
+            // No delegation - both execution and facts use the same context
+            (ctx.clone(), ctx.clone())
+        };
+
+        // Handle loops - for set_fact, use fact_storage_ctx; for others, use execution_ctx
         if let Some(ref items) = self.loop_items {
+            let loop_ctx = if self.module == "set_fact" {
+                &fact_storage_ctx
+            } else {
+                &execution_ctx
+            };
             return self
-                .execute_loop(items, ctx, runtime, handlers, notified)
+                .execute_loop(items, loop_ctx, runtime, handlers, notified, parallelization_manager)
                 .await;
         }
 
-        // Execute the module
-        let result = self.execute_module(ctx, runtime).await?;
+        // Execute the module - use fact_storage_ctx for set_fact to ensure facts go to right host
+        let module_ctx = if self.module == "set_fact" {
+            &fact_storage_ctx
+        } else {
+            &execution_ctx
+        };
+        let result = self.execute_module(module_ctx, runtime, handlers, notified, parallelization_manager).await?;
 
-        // Apply changed_when override
-        let result = self.apply_changed_when(result, ctx, runtime).await?;
+        // Apply changed_when override - use execution context for condition evaluation
+        let result = self.apply_changed_when(result, &execution_ctx, runtime).await?;
 
-        // Apply failed_when override
-        let result = self.apply_failed_when(result, ctx, runtime).await?;
+        // Apply failed_when override - use execution context for condition evaluation
+        let result = self.apply_failed_when(result, &execution_ctx, runtime).await?;
 
-        // Register result if needed
+        // Register result if needed - always register on the original host
         if let Some(ref register_name) = self.register {
             self.register_result(register_name, &result, ctx, runtime)
                 .await?;
@@ -375,8 +473,9 @@ impl Task {
         items: &[JsonValue],
         ctx: &ExecutionContext,
         runtime: &Arc<RwLock<RuntimeContext>>,
-        _handlers: &Arc<RwLock<HashMap<String, Handler>>>,
+        handlers: &Arc<RwLock<HashMap<String, Handler>>>,
         notified: &Arc<Mutex<std::collections::HashSet<String>>>,
+        parallelization_manager: &Arc<ParallelizationManager>,
     ) -> ExecutorResult<TaskResult> {
         debug!("Executing loop with {} items", items.len());
 
@@ -401,8 +500,8 @@ impl Task {
                 );
             }
 
-            // Execute for this item
-            let result = self.execute_module(ctx, runtime).await?;
+            // Execute for this item with parallelization enforcement
+            let result = self.execute_module(ctx, runtime, handlers, notified, parallelization_manager).await?;
 
             if result.changed {
                 any_changed = true;
@@ -467,11 +566,32 @@ impl Task {
         &self,
         ctx: &ExecutionContext,
         runtime: &Arc<RwLock<RuntimeContext>>,
+        handlers: &Arc<RwLock<HashMap<String, Handler>>>,
+        notified: &Arc<Mutex<std::collections::HashSet<String>>>,
+        parallelization_manager: &Arc<ParallelizationManager>,
     ) -> ExecutorResult<TaskResult> {
         // Template the arguments
         let args = self.template_args(ctx, runtime).await?;
 
         debug!("Module: {}, Args: {:?}", self.module, args);
+
+        // Enforce parallelization constraints based on module hint
+        // Get the module's parallelization hint from the registry
+        let hint = {
+            let registry = crate::modules::ModuleRegistry::with_builtins();
+            if let Some(module) = registry.get(&self.module) {
+                module.parallelization_hint()
+            } else {
+                // For unknown modules (Python fallback), use FullyParallel as default
+                crate::modules::ParallelizationHint::FullyParallel
+            }
+        };
+
+        // Acquire parallelization guard - this will block if necessary based on the hint
+        // The guard is automatically released when it goes out of scope (when this function returns)
+        let _parallelization_guard = parallelization_manager
+            .acquire(hint, &ctx.host, &self.module)
+            .await;
 
         // Execute based on module type
         let result = match self.module.as_str() {
@@ -492,8 +612,10 @@ impl Task {
             "assert" => self.execute_assert(&args, ctx, runtime).await,
             "pause" => self.execute_pause(&args).await,
             "wait_for" => self.execute_wait_for(&args, ctx).await,
-            "include_vars" => self.execute_include_vars(&args, runtime).await,
-            "include_tasks" | "import_tasks" => self.execute_include_tasks(&args).await,
+            "include_vars" => self.execute_include_vars(&args, ctx, runtime).await,
+            "include_tasks" | "import_tasks" => {
+                self.execute_include_tasks(&args, ctx, runtime, handlers, notified, parallelization_manager).await
+            }
             "meta" => self.execute_meta(&args).await,
             _ => {
                 // Python fallback for unknown modules
@@ -696,12 +818,18 @@ impl Task {
 
         let mut facts_set = Vec::new();
 
+        // Determine the target host for fact storage based on delegation
+        // Note: ctx.host is already set to the delegated host if delegation is active
+        // The caller (execute method) handles the delegation logic and passes the
+        // appropriate host context
+        let fact_target = &ctx.host;
+
         for (key, value) in args {
             if key != "cacheable" {
                 // Use set_host_fact instead of set_host_var for proper precedence
                 // Facts set by set_fact should have SetFact precedence level
-                rt.set_host_fact(&ctx.host, key.clone(), value.clone());
-                debug!("Set fact '{}' = {:?} for host '{}'", key, value, ctx.host);
+                rt.set_host_fact(fact_target, key.clone(), value.clone());
+                debug!("Set fact '{}' = {:?} for host '{}'", key, value, fact_target);
                 facts_set.push(key.clone());
             }
         }
@@ -1046,24 +1174,185 @@ impl Task {
     async fn execute_include_vars(
         &self,
         args: &IndexMap<String, JsonValue>,
-        _runtime: &Arc<RwLock<RuntimeContext>>,
+        ctx: &ExecutionContext,
+        runtime: &Arc<RwLock<RuntimeContext>>,
     ) -> ExecutorResult<TaskResult> {
-        let file = args
-            .get("file")
-            .or_else(|| args.get("_raw_params"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("include_vars requires file path".into()))?;
+        // Get file or dir parameter
+        let file = args.get("file").or_else(|| args.get("_raw_params")).and_then(|v| v.as_str());
+        let dir = args.get("dir").and_then(|v| v.as_str());
+        let name = args.get("name").and_then(|v| v.as_str());
 
-        debug!("Would include vars from: {}", file);
+        if file.is_none() && dir.is_none() {
+            return Err(ExecutorError::RuntimeError(
+                "include_vars requires 'file' or 'dir' parameter".into(),
+            ));
+        }
 
-        // In real implementation, would load and parse the file
-        // For now, just acknowledge
-        Ok(TaskResult::ok().with_msg(format!("Included vars from {}", file)))
+        if file.is_some() && dir.is_some() {
+            return Err(ExecutorError::RuntimeError(
+                "include_vars cannot have both 'file' and 'dir' parameters".into(),
+            ));
+        }
+
+        // Determine base path
+        let base_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+        let mut all_vars: IndexMap<String, JsonValue> = IndexMap::new();
+        let source: String;
+
+        if let Some(file_path) = file {
+            // Load from a single file
+            let resolved_path = if std::path::Path::new(file_path).is_absolute() {
+                std::path::PathBuf::from(file_path)
+            } else {
+                base_path.join(file_path)
+            };
+
+            if !resolved_path.exists() {
+                return Err(ExecutorError::RuntimeError(format!(
+                    "include_vars file not found: {}",
+                    resolved_path.display()
+                )));
+            }
+
+            let content = tokio::fs::read_to_string(&resolved_path).await.map_err(|e| {
+                ExecutorError::RuntimeError(format!(
+                    "Failed to read include_vars file {}: {}",
+                    resolved_path.display(),
+                    e
+                ))
+            })?;
+
+            // Parse as YAML (which also handles JSON)
+            let vars: IndexMap<String, serde_yaml::Value> =
+                serde_yaml::from_str(&content).map_err(|e| {
+                    ExecutorError::RuntimeError(format!(
+                        "Failed to parse include_vars file {}: {}",
+                        resolved_path.display(),
+                        e
+                    ))
+                })?;
+
+            // Convert YAML values to JSON values
+            for (key, value) in vars {
+                let json_value = serde_json::to_value(&value).map_err(|e| {
+                    ExecutorError::RuntimeError(format!("Failed to convert variable {}: {}", key, e))
+                })?;
+                all_vars.insert(key, json_value);
+            }
+
+            source = resolved_path.display().to_string();
+        } else if let Some(dir_path) = dir {
+            // Load from all files in a directory
+            let resolved_path = if std::path::Path::new(dir_path).is_absolute() {
+                std::path::PathBuf::from(dir_path)
+            } else {
+                base_path.join(dir_path)
+            };
+
+            if !resolved_path.is_dir() {
+                return Err(ExecutorError::RuntimeError(format!(
+                    "include_vars directory not found: {}",
+                    resolved_path.display()
+                )));
+            }
+
+            // Read and sort files by name for predictable ordering
+            let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&resolved_path)
+                .map_err(|e| {
+                    ExecutorError::RuntimeError(format!(
+                        "Failed to read directory {}: {}",
+                        resolved_path.display(),
+                        e
+                    ))
+                })?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.is_file()
+                        && (p.extension() == Some("yml".as_ref())
+                            || p.extension() == Some("yaml".as_ref())
+                            || p.extension() == Some("json".as_ref()))
+                })
+                .collect();
+
+            files.sort();
+
+            // Load each file and merge variables
+            for file_path in &files {
+                let content = tokio::fs::read_to_string(file_path).await.map_err(|e| {
+                    ExecutorError::RuntimeError(format!(
+                        "Failed to read file {}: {}",
+                        file_path.display(),
+                        e
+                    ))
+                })?;
+
+                let vars: IndexMap<String, serde_yaml::Value> =
+                    serde_yaml::from_str(&content).map_err(|e| {
+                        ExecutorError::RuntimeError(format!(
+                            "Failed to parse file {}: {}",
+                            file_path.display(),
+                            e
+                        ))
+                    })?;
+
+                for (key, value) in vars {
+                    let json_value = serde_json::to_value(&value).map_err(|e| {
+                        ExecutorError::RuntimeError(format!(
+                            "Failed to convert variable {}: {}",
+                            key, e
+                        ))
+                    })?;
+                    all_vars.insert(key, json_value);
+                }
+            }
+
+            source = format!("{}/*.yml", resolved_path.display());
+        } else {
+            return Err(ExecutorError::RuntimeError(
+                "include_vars requires 'file' or 'dir' parameter".into(),
+            ));
+        }
+
+        // If 'name' parameter is specified, scope all variables under that key
+        let final_vars = if let Some(scope_name) = name {
+            let mut scoped = IndexMap::new();
+            scoped.insert(
+                scope_name.to_string(),
+                JsonValue::Object(all_vars.into_iter().collect()),
+            );
+            scoped
+        } else {
+            all_vars
+        };
+
+        let var_count = final_vars.len();
+
+        // Store variables in the runtime context for the current host
+        {
+            let mut rt = runtime.write().await;
+            for (key, value) in &final_vars {
+                rt.set_host_var(&ctx.host, key.clone(), value.clone());
+            }
+        }
+
+        info!(
+            "Loaded {} variable(s) from {} for host {}",
+            var_count, source, ctx.host
+        );
+
+        Ok(TaskResult::ok().with_msg(format!("Loaded {} variable(s) from {}", var_count, source)))
     }
 
     async fn execute_include_tasks(
         &self,
         args: &IndexMap<String, JsonValue>,
+        ctx: &ExecutionContext,
+        runtime: &Arc<RwLock<RuntimeContext>>,
+        handlers: &Arc<RwLock<HashMap<String, Handler>>>,
+        notified: &Arc<Mutex<std::collections::HashSet<String>>>,
+        parallelization_manager: &Arc<ParallelizationManager>,
     ) -> ExecutorResult<TaskResult> {
         let file = args
             .get("file")
@@ -1073,10 +1362,65 @@ impl Task {
                 ExecutorError::RuntimeError("include_tasks requires file path".into())
             })?;
 
-        debug!("Would include tasks from: {}", file);
+        info!("Including tasks from: {}", file);
 
-        // In real implementation, would load and execute tasks
-        Ok(TaskResult::ok().with_msg(format!("Included tasks from {}", file)))
+        // Determine base path from the runtime context or use current directory
+        let base_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let handler = crate::executor::include_handler::IncludeTasksHandler::new(base_path);
+
+        // Build the include spec with any variables passed
+        let mut spec = crate::include::IncludeTasksSpec::new(file);
+
+        // Add any variables passed to include_tasks
+        if let Some(vars) = args.get("vars").and_then(|v| v.as_object()) {
+            for (key, value) in vars {
+                spec = spec.with_var(key, value.clone());
+            }
+        }
+
+        // Load tasks from the file (returns playbook::Task)
+        let playbook_tasks = handler
+            .load_include_tasks(&spec, runtime, &ctx.host)
+            .await
+            .map_err(|e| ExecutorError::RuntimeError(format!("Failed to load include_tasks: {}", e)))?;
+
+        debug!("Loaded {} tasks from {}", playbook_tasks.len(), file);
+
+        // Convert playbook::Task to executor::task::Task and execute
+        let mut total_changed = false;
+        let mut task_count = 0;
+        let mut failed = false;
+
+        for playbook_task in playbook_tasks {
+            // Convert to executor task
+            let executor_task: Task = playbook_task.into();
+            // Use Box::pin to handle async recursion
+            let result = Box::pin(executor_task.execute(ctx, runtime, handlers, notified, parallelization_manager)).await?;
+
+            task_count += 1;
+            if result.changed {
+                total_changed = true;
+            }
+            if result.status == TaskStatus::Failed {
+                failed = true;
+                break;
+            }
+        }
+
+        if failed {
+            Ok(TaskResult::failed(format!(
+                "Included {} tasks from {}, execution failed",
+                task_count, file
+            )))
+        } else {
+            let mut result = if total_changed {
+                TaskResult::changed()
+            } else {
+                TaskResult::ok()
+            };
+            result.msg = Some(format!("Included {} tasks from {}", task_count, file));
+            Ok(result)
+        }
     }
 
     async fn execute_meta(&self, args: &IndexMap<String, JsonValue>) -> ExecutorResult<TaskResult> {

@@ -8,9 +8,62 @@
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as JsonValue;
 use tracing::debug;
+
+/// Helper function to deserialize flexible booleans (yes/no/true/false/1/0)
+fn deserialize_flexible_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = JsonValue::deserialize(deserializer)?;
+    match &value {
+        JsonValue::Bool(b) => Ok(*b),
+        JsonValue::String(s) => match s.to_lowercase().as_str() {
+            "yes" | "true" | "on" | "1" => Ok(true),
+            "no" | "false" | "off" | "0" | "" => Ok(false),
+            _ => Err(D::Error::custom(format!("invalid boolean string: {}", s))),
+        },
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(i != 0)
+            } else {
+                Err(D::Error::custom("invalid boolean number"))
+            }
+        }
+        JsonValue::Null => Ok(false),
+        _ => Err(D::Error::custom(format!("invalid boolean value: {:?}", value))),
+    }
+}
+
+/// Helper function to deserialize optional flexible booleans
+fn deserialize_option_flexible_bool<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = Option::<JsonValue>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(JsonValue::Null) => Ok(None),
+        Some(JsonValue::Bool(b)) => Ok(Some(b)),
+        Some(JsonValue::String(s)) => match s.to_lowercase().as_str() {
+            "yes" | "true" | "on" | "1" => Ok(Some(true)),
+            "no" | "false" | "off" | "0" | "" => Ok(Some(false)),
+            _ => Err(D::Error::custom(format!("invalid boolean string: {}", s))),
+        },
+        Some(JsonValue::Number(n)) => {
+            if let Some(i) = n.as_i64() {
+                Ok(Some(i != 0))
+            } else {
+                Err(D::Error::custom("invalid boolean number"))
+            }
+        }
+        Some(other) => Err(D::Error::custom(format!("invalid boolean value: {:?}", other))),
+    }
+}
 
 use crate::executor::task::{Handler, Task};
 use crate::executor::{ExecutorError, ExecutorResult};
@@ -100,10 +153,10 @@ pub struct PlayDefinition {
     #[serde(default = "default_hosts")]
     pub hosts: String,
     /// Gather facts
-    #[serde(default = "default_gather_facts")]
+    #[serde(default = "default_gather_facts", deserialize_with = "deserialize_flexible_bool")]
     pub gather_facts: bool,
     /// Become root
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub r#become: bool,
     /// User to become
     #[serde(default)]
@@ -154,7 +207,7 @@ pub struct PlayDefinition {
     #[serde(default)]
     pub strategy: Option<String>,
     /// Ignore unreachable hosts
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub ignore_unreachable: bool,
     /// Fact gathering subset
     #[serde(default)]
@@ -261,13 +314,13 @@ pub struct TaskDefinition {
     #[serde(default)]
     pub notify: NotifyValue,
     /// Loop items
-    #[serde(default, alias = "with_items", alias = "with_list")]
+    #[serde(default, alias = "loop", alias = "with_items", alias = "with_list")]
     pub loop_items: Option<LoopValue>,
     /// Loop control
     #[serde(default)]
     pub loop_control: Option<LoopControl>,
     /// Ignore errors
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub ignore_errors: bool,
     /// Changed when condition
     #[serde(default)]
@@ -279,13 +332,13 @@ pub struct TaskDefinition {
     #[serde(default)]
     pub delegate_to: Option<String>,
     /// Run once
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub run_once: bool,
     /// Tags
     #[serde(default)]
     pub tags: Vec<String>,
     /// Become
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub r#become: bool,
     /// Become user
     #[serde(default)]
@@ -349,10 +402,11 @@ pub struct IncludeRoleDefinition {
     pub allow_duplicates: bool,
 }
 
-/// When condition can be a string or list
+/// When condition can be a string, boolean, or list
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum WhenCondition {
+    Bool(bool),
     Single(String),
     List(Vec<String>),
 }
@@ -361,6 +415,7 @@ impl WhenCondition {
     /// Convert to a single condition string (AND-joined if list)
     pub fn to_condition(&self) -> String {
         match self {
+            WhenCondition::Bool(b) => b.to_string(),
             WhenCondition::Single(s) => s.clone(),
             WhenCondition::List(list) => {
                 if list.len() == 1 {
@@ -475,7 +530,7 @@ pub struct Play {
     /// Tags
     pub tags: Vec<String>,
     /// Serial execution
-    pub serial: Option<usize>,
+    pub serial: Option<crate::playbook::SerialSpec>,
     /// Max failure percentage
     pub max_fail_percentage: Option<u8>,
     /// Strategy
@@ -531,22 +586,9 @@ impl Play {
         play.ignore_unreachable = def.ignore_unreachable;
         play.max_fail_percentage = def.max_fail_percentage;
 
-        // Parse serial value
+        // Parse serial value into SerialSpec
         if let Some(serial) = def.serial {
-            play.serial = match serial {
-                SerialValue::Number(n) => Some(n),
-                SerialValue::Percentage(p) => {
-                    // Parse percentage like "50%" - for now just treat as a fixed number
-                    p.trim_end_matches('%').parse::<usize>().ok()
-                }
-                SerialValue::List(list) => {
-                    // Use first value for simplicity
-                    list.first().and_then(|v| match v {
-                        SerialValue::Number(n) => Some(*n),
-                        _ => None,
-                    })
-                }
-            };
+            play.serial = Some(convert_serial_value_to_spec(serial));
         }
 
         // Parse roles
@@ -962,6 +1004,7 @@ fn parse_task_definition(
         changed_when: def.changed_when.as_ref().map(|w| w.to_condition()),
         failed_when: def.failed_when.as_ref().map(|w| w.to_condition()),
         delegate_to: def.delegate_to,
+        delegate_facts: None, // Not in old TaskDefinition, would need to add to parser
         run_once: def.run_once,
         tags: def.tags,
         r#become: def.r#become,
@@ -1066,6 +1109,23 @@ fn find_module_in_definition(
 
     // Default to debug module if nothing found
     Ok(("debug".to_string(), IndexMap::new()))
+}
+
+/// Convert SerialValue to SerialSpec
+fn convert_serial_value_to_spec(value: SerialValue) -> crate::playbook::SerialSpec {
+    use crate::playbook::SerialSpec;
+
+    match value {
+        SerialValue::Number(n) => SerialSpec::Fixed(n),
+        SerialValue::Percentage(p) => SerialSpec::Percentage(p),
+        SerialValue::List(list) => {
+            let specs: Vec<SerialSpec> = list
+                .into_iter()
+                .map(convert_serial_value_to_spec)
+                .collect();
+            SerialSpec::Progressive(specs)
+        }
+    }
 }
 
 /// Parse a handler definition

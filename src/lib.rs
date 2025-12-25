@@ -78,7 +78,7 @@
 //! }
 //! ```
 
-#![warn(missing_docs)]
+#![allow(missing_docs)] // TODO: Add comprehensive documentation in future PR
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
@@ -122,10 +122,10 @@ pub mod prelude {
     pub use crate::connection::config::RetryConfig;
     pub use crate::connection::docker::DockerConnection;
     pub use crate::connection::local::LocalConnection;
-    #[cfg(feature = "ssh2-backend")]
-    pub use crate::connection::ssh::{SshConnection, SshConnectionBuilder};
     #[cfg(feature = "russh")]
     pub use crate::connection::russh::{RusshConnection, RusshConnectionBuilder};
+    #[cfg(feature = "ssh2-backend")]
+    pub use crate::connection::ssh::{SshConnection, SshConnectionBuilder};
     pub use crate::connection::{
         CommandResult, Connection, ConnectionBuilder, ConnectionConfig, ConnectionError,
         ConnectionFactory, ConnectionResult, ConnectionType, ExecuteOptions, FileStat, HostConfig,
@@ -192,6 +192,7 @@ pub mod tasks;
 
 pub mod connection;
 pub mod facts;
+pub mod include;
 pub mod inventory;
 
 // ============================================================================

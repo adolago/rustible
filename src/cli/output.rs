@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 /// Task execution status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum TaskStatus {
     /// Task completed successfully with no changes
     Ok,
@@ -67,6 +68,7 @@ pub struct OutputFormatter {
     /// Start time for duration calculations
     start_time: Instant,
     /// Multi-progress bar container
+    #[allow(dead_code)]
     multi_progress: Option<Arc<MultiProgress>>,
 }
 
@@ -86,6 +88,7 @@ impl OutputFormatter {
     }
 
     /// Initialize progress bar support
+    #[allow(dead_code)]
     pub fn init_progress(&mut self) {
         if !self.json_mode {
             self.multi_progress = Some(Arc::new(MultiProgress::new()));
@@ -93,6 +96,7 @@ impl OutputFormatter {
     }
 
     /// Get the multi-progress bar container
+    #[allow(dead_code)]
     pub fn multi_progress(&self) -> Option<Arc<MultiProgress>> {
         self.multi_progress.clone()
     }
@@ -215,6 +219,7 @@ impl OutputFormatter {
     }
 
     /// Print task result with detailed output
+    #[allow(dead_code)]
     pub fn task_result_verbose(
         &self,
         host: &str,
@@ -415,6 +420,21 @@ impl OutputFormatter {
         }
     }
 
+    /// Print plan output (always shows, bypasses verbosity)
+    pub fn plan(&self, message: &str) {
+        if self.json_mode {
+            let plan = serde_json::json!({
+                "type": "plan",
+                "message": message
+            });
+            println!("{}", serde_json::to_string(&plan).unwrap());
+            return;
+        }
+
+        // Plan output is plain text (no prefix) for terraform-like appearance
+        println!("{}", message);
+    }
+
     /// Print a debug message (requires higher verbosity)
     pub fn debug(&self, message: &str) {
         if self.verbosity < 2 {
@@ -438,6 +458,7 @@ impl OutputFormatter {
     }
 
     /// Print a diff output
+    #[allow(dead_code)]
     pub fn diff(&self, old: &str, new: &str) {
         if self.json_mode {
             let diff = serde_json::json!({
@@ -468,6 +489,7 @@ impl OutputFormatter {
     }
 
     /// Create a progress bar for a task
+    #[allow(dead_code)]
     pub fn create_progress_bar(&self, len: u64, message: &str) -> Option<ProgressBar> {
         if self.json_mode {
             return None;
@@ -490,6 +512,7 @@ impl OutputFormatter {
     }
 
     /// Create a spinner for indeterminate progress
+    #[allow(dead_code)]
     pub fn create_spinner(&self, message: &str) -> Option<ProgressBar> {
         if self.json_mode {
             return None;
@@ -537,6 +560,7 @@ impl OutputFormatter {
     }
 
     /// Print a table
+    #[allow(dead_code)]
     pub fn table(&self, headers: &[&str], rows: &[Vec<String>]) {
         if self.json_mode {
             let table = serde_json::json!({
@@ -616,6 +640,7 @@ pub struct HostStats {
 
 impl HostStats {
     /// Create new empty stats
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -665,6 +690,7 @@ impl RecapStats {
     }
 
     /// Get total task count
+    #[allow(dead_code)]
     pub fn total_tasks(&self) -> u32 {
         self.hosts
             .values()

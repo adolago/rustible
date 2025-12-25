@@ -7,6 +7,8 @@
 //! - Handler triggering system
 //! - Dry-run support
 
+pub mod include_handler;
+pub mod parallelization;
 pub mod playbook;
 pub mod runtime;
 pub mod task;
@@ -19,6 +21,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tracing::{debug, error, info, instrument, warn};
 
+use crate::executor::parallelization::ParallelizationManager;
 use crate::executor::playbook::{Play, Playbook};
 use crate::executor::runtime::{ExecutionContext, RuntimeContext};
 use crate::executor::task::{Handler, Task, TaskResult, TaskStatus};
@@ -143,6 +146,7 @@ pub struct Executor {
     handlers: Arc<RwLock<HashMap<String, Handler>>>,
     notified_handlers: Arc<Mutex<HashSet<String>>>,
     semaphore: Arc<Semaphore>,
+    parallelization_manager: Arc<ParallelizationManager>,
 }
 
 impl Executor {
@@ -155,6 +159,7 @@ impl Executor {
             handlers: Arc::new(RwLock::new(HashMap::new())),
             notified_handlers: Arc::new(Mutex::new(HashSet::new())),
             semaphore: Arc::new(Semaphore::new(forks)),
+            parallelization_manager: Arc::new(ParallelizationManager::new()),
         }
     }
 
@@ -167,6 +172,7 @@ impl Executor {
             handlers: Arc::new(RwLock::new(HashMap::new())),
             notified_handlers: Arc::new(Mutex::new(HashSet::new())),
             semaphore: Arc::new(Semaphore::new(forks)),
+            parallelization_manager: Arc::new(ParallelizationManager::new()),
         }
     }
 
@@ -247,11 +253,17 @@ impl Executor {
 
         debug!("Executing on {} hosts", hosts.len());
 
-        // Execute based on strategy
-        let results = match self.config.strategy {
-            ExecutionStrategy::Linear => self.run_linear(&hosts, &play.tasks).await?,
-            ExecutionStrategy::Free => self.run_free(&hosts, &play.tasks).await?,
-            ExecutionStrategy::HostPinned => self.run_host_pinned(&hosts, &play.tasks).await?,
+        // Execute based on serial specification and strategy
+        let results = if let Some(ref serial_spec) = play.serial {
+            self.run_serial(serial_spec, &hosts, &play.tasks, play.max_fail_percentage)
+                .await?
+        } else {
+            // Execute based on strategy without serial batching
+            match self.config.strategy {
+                ExecutionStrategy::Linear => self.run_linear(&hosts, &play.tasks).await?,
+                ExecutionStrategy::Free => self.run_free(&hosts, &play.tasks).await?,
+                ExecutionStrategy::HostPinned => self.run_host_pinned(&hosts, &play.tasks).await?,
+            }
         };
 
         // Flush handlers at end of play
@@ -334,6 +346,7 @@ impl Executor {
                 let config = self.config.clone();
                 let handlers = Arc::clone(&self.handlers);
                 let notified = Arc::clone(&self.notified_handlers);
+                let parallelization_local = Arc::clone(&self.parallelization_manager);
 
                 tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.unwrap();
@@ -345,7 +358,7 @@ impl Executor {
                         unreachable: false,
                     };
 
-                    for task in tasks.iter() {
+                for task in tasks.iter() {
                         if host_result.failed || host_result.unreachable {
                             break;
                         }
@@ -354,7 +367,7 @@ impl Executor {
                             .with_check_mode(config.check_mode)
                             .with_diff_mode(config.diff_mode);
 
-                        let task_result = task.execute(&ctx, &runtime, &handlers, &notified).await;
+                        let task_result = task.execute(&ctx, &runtime, &handlers, &notified, &parallelization_local).await;
 
                         match task_result {
                             Ok(result) => {
@@ -395,6 +408,105 @@ impl Executor {
         self.run_free(hosts, tasks).await
     }
 
+    /// Run tasks with serial batching
+    async fn run_serial(
+        &self,
+        serial_spec: &crate::playbook::SerialSpec,
+        hosts: &[String],
+        tasks: &[Task],
+        max_fail_percentage: Option<u8>,
+    ) -> ExecutorResult<HashMap<String, HostResult>> {
+        info!(
+            "Running with serial batching: {:?}, max_fail_percentage: {:?}",
+            serial_spec, max_fail_percentage
+        );
+
+        // Split hosts into batches
+        let batches = serial_spec.batch_hosts(hosts);
+
+        if batches.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        debug!("Created {} batches for serial execution", batches.len());
+
+        let mut all_results: HashMap<String, HostResult> = HashMap::new();
+        let mut total_failed = 0;
+        let total_hosts = hosts.len();
+
+        // Execute each batch sequentially
+        for (batch_idx, batch_hosts) in batches.iter().enumerate() {
+            debug!(
+                "Executing batch {}/{} with {} hosts",
+                batch_idx + 1,
+                batches.len(),
+                batch_hosts.len()
+            );
+
+            // Convert batch hosts to owned Strings
+            let batch_hosts_owned: Vec<String> = batch_hosts.iter().map(|s| s.to_string()).collect();
+
+            // Execute this batch based on the configured strategy
+            let batch_results = match self.config.strategy {
+                ExecutionStrategy::Linear => self.run_linear(&batch_hosts_owned, tasks).await?,
+                ExecutionStrategy::Free => self.run_free(&batch_hosts_owned, tasks).await?,
+                ExecutionStrategy::HostPinned => self.run_host_pinned(&batch_hosts_owned, tasks).await?,
+            };
+
+            // Count failures in this batch
+            let batch_failed = batch_results
+                .values()
+                .filter(|r| r.failed || r.unreachable)
+                .count();
+
+            total_failed += batch_failed;
+
+            // Merge batch results into overall results
+            for (host, result) in batch_results {
+                all_results.insert(host, result);
+            }
+
+            // Check max_fail_percentage if specified
+            if let Some(max_fail_pct) = max_fail_percentage {
+                let current_fail_pct = (total_failed as f64 / total_hosts as f64 * 100.0) as u8;
+
+                if current_fail_pct > max_fail_pct {
+                    error!(
+                        "Failure percentage ({:.1}%) exceeded max_fail_percentage ({}%), aborting remaining batches",
+                        current_fail_pct, max_fail_pct
+                    );
+
+                    // Mark remaining hosts as skipped
+                    for remaining_batch in batches.iter().skip(batch_idx + 1) {
+                        for host in remaining_batch.iter() {
+                            all_results.insert(
+                                host.to_string(),
+                                HostResult {
+                                    host: host.to_string(),
+                                    stats: ExecutionStats {
+                                        skipped: tasks.len(),
+                                        ..Default::default()
+                                    },
+                                    failed: false,
+                                    unreachable: false,
+                                },
+                            );
+                        }
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        info!(
+            "Serial execution completed: {} hosts, {} failed",
+            total_hosts, total_failed
+        );
+
+        Ok(all_results)
+    }
+
     /// Run a single task on multiple hosts in parallel
     async fn run_task_on_hosts(
         &self,
@@ -416,6 +528,7 @@ impl Executor {
                 let config = self.config.clone();
                 let handlers = Arc::clone(&self.handlers);
                 let notified = Arc::clone(&self.notified_handlers);
+                let parallelization = Arc::clone(&self.parallelization_manager);
 
                 tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.unwrap();
@@ -424,7 +537,7 @@ impl Executor {
                         .with_check_mode(config.check_mode)
                         .with_diff_mode(config.diff_mode);
 
-                    let result = task.execute(&ctx, &runtime, &handlers, &notified).await;
+                    let result = task.execute(&ctx, &runtime, &handlers, &notified, &parallelization).await;
 
                     match result {
                         Ok(task_result) => {
@@ -535,6 +648,7 @@ impl Executor {
                     changed_when: None,
                     failed_when: None,
                     delegate_to: None,
+                    delegate_facts: None,
                     run_once: false,
                     tags: Vec::new(),
                     r#become: false,

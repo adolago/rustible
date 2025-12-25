@@ -71,6 +71,10 @@ pub struct RunArgs {
     /// SSH common args
     #[arg(long)]
     pub ssh_common_args: Option<String>,
+
+    /// Plan mode - show what would be executed without running
+    #[arg(long)]
+    pub plan: bool,
 }
 
 impl RunArgs {
@@ -123,6 +127,12 @@ impl RunArgs {
         let extra_vars = ctx.parse_extra_vars()?;
         ctx.output.debug(&format!("Extra vars: {:?}", extra_vars));
 
+        // Plan mode notice
+        if self.plan {
+            ctx.output
+                .plan("WARNING: Running in PLAN MODE - showing execution plan only");
+        }
+
         // Check mode notice
         if ctx.check_mode {
             ctx.output
@@ -134,8 +144,14 @@ impl RunArgs {
 
         // Process playbook plays
         if let Some(plays) = playbook.as_sequence() {
-            for play in plays {
-                self.execute_play(ctx, play, &stats).await?;
+            if self.plan {
+                // In plan mode, show what would be executed
+                self.show_plan(ctx, plays, &extra_vars).await?;
+            } else {
+                // Normal execution
+                for play in plays {
+                    self.execute_play(ctx, play, &stats).await?;
+                }
             }
         } else {
             ctx.output.error("Playbook must be a list of plays");
@@ -161,6 +177,334 @@ impl RunArgs {
             Ok(2)
         } else {
             Ok(0)
+        }
+    }
+
+    /// Show execution plan for the playbook
+    async fn show_plan(
+        &self,
+        ctx: &mut CommandContext,
+        plays: &[serde_yaml::Value],
+        extra_vars: &std::collections::HashMap<String, serde_yaml::Value>,
+    ) -> Result<()> {
+        ctx.output.section("EXECUTION PLAN");
+        ctx.output.plan("Rustible will perform the following actions:\n");
+
+        for (play_idx, play) in plays.iter().enumerate() {
+            let play_name = play
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("Unnamed play");
+
+            let hosts_pattern = play
+                .get("hosts")
+                .and_then(|h| h.as_str())
+                .unwrap_or("localhost");
+
+            // Resolve hosts
+            let hosts = self.resolve_hosts(ctx, hosts_pattern)?;
+
+            if hosts.is_empty() {
+                continue;
+            }
+
+            // Print play header similar to terraform plan
+            ctx.output.plan(&format!(
+                "{}[Play {}/{}] {} {}",
+                if play_idx > 0 { "\n" } else { "" },
+                play_idx + 1,
+                plays.len(),
+                "⚡".to_string(),
+                play_name
+            ));
+            ctx.output.plan(&format!("  Hosts: {} ({} host{})",
+                hosts_pattern,
+                hosts.len(),
+                if hosts.len() == 1 { "" } else { "s" }
+            ));
+
+            // Collect play variables
+            let mut vars: IndexMap<String, serde_yaml::Value> = IndexMap::new();
+            for (k, v) in extra_vars {
+                vars.insert(k.clone(), v.clone());
+            }
+            if let Some(play_vars) = play.get("vars") {
+                if let Some(mapping) = play_vars.as_mapping() {
+                    for (k, v) in mapping {
+                        if let Some(key) = k.as_str() {
+                            vars.insert(key.to_string(), v.clone());
+                        }
+                    }
+                }
+            }
+
+            // Get tasks
+            let tasks = play
+                .get("tasks")
+                .and_then(|t| t.as_sequence())
+                .cloned()
+                .unwrap_or_default();
+
+            if tasks.is_empty() {
+                ctx.output.plan("  No tasks to execute");
+                continue;
+            }
+
+            ctx.output.plan(&format!("  Tasks: {} task{}",
+                tasks.len(),
+                if tasks.len() == 1 { "" } else { "s" }
+            ));
+
+            // Show each task
+            for (task_idx, task) in tasks.iter().enumerate() {
+                let task_name = task
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("Unnamed task");
+
+                // Check if task should run based on tags
+                if !self.should_run_task(task) {
+                    continue;
+                }
+
+                let (module, args) = self.detect_module(task);
+
+                // Format the task details
+                ctx.output.plan(&format!("\n  {} Task {}/{}: {}",
+                    "▸".to_string(),
+                    task_idx + 1,
+                    tasks.len(),
+                    task_name
+                ));
+                ctx.output.plan(&format!("    Module: {}", module));
+
+                // Show which hosts will be affected
+                for host in &hosts {
+                    let action_desc = self.get_action_description(module, args, &vars);
+                    ctx.output.plan(&format!("      [{}] {}",
+                        host,
+                        action_desc
+                    ));
+                }
+
+                // Show when condition if present
+                if let Some(when) = task.get("when") {
+                    let condition = when.as_str().unwrap_or("<complex condition>");
+                    ctx.output.plan(&format!("    When: {}", condition));
+                }
+
+                // Show notify handlers if present
+                if let Some(notify) = task.get("notify") {
+                    let handlers = if let Some(s) = notify.as_str() {
+                        vec![s]
+                    } else if let Some(seq) = notify.as_sequence() {
+                        seq.iter().filter_map(|v| v.as_str()).collect()
+                    } else {
+                        vec![]
+                    };
+
+                    if !handlers.is_empty() {
+                        ctx.output.plan(&format!("    Notify: {}", handlers.join(", ")));
+                    }
+                }
+            }
+        }
+
+        ctx.output.section("\nPLAN SUMMARY");
+
+        // Count total tasks and hosts
+        let mut total_tasks = 0;
+        let mut total_hosts = std::collections::HashSet::new();
+
+        for play in plays {
+            let hosts_pattern = play
+                .get("hosts")
+                .and_then(|h| h.as_str())
+                .unwrap_or("localhost");
+
+            if let Ok(hosts) = self.resolve_hosts(ctx, hosts_pattern) {
+                for host in hosts {
+                    total_hosts.insert(host);
+                }
+            }
+
+            if let Some(tasks) = play.get("tasks").and_then(|t| t.as_sequence()) {
+                // Count only tasks that would run based on tags
+                for task in tasks {
+                    if self.should_run_task(task) {
+                        total_tasks += 1;
+                    }
+                }
+            }
+        }
+
+        ctx.output.plan(&format!(
+            "Plan: {} task{} across {} host{}",
+            total_tasks,
+            if total_tasks == 1 { "" } else { "s" },
+            total_hosts.len(),
+            if total_hosts.len() == 1 { "" } else { "s" }
+        ));
+
+        ctx.output.plan("\nTo execute this plan, run the same command without --plan");
+
+        Ok(())
+    }
+
+    /// Get a human-readable description of what an action will do
+    fn get_action_description(
+        &self,
+        module: &str,
+        args: Option<&serde_yaml::Value>,
+        vars: &IndexMap<String, serde_yaml::Value>,
+    ) -> String {
+        match module {
+            "command" | "shell" => {
+                let cmd = args
+                    .and_then(|a| {
+                        a.as_str().map(|s| s.to_string()).or_else(|| {
+                            a.get("cmd").and_then(|c| c.as_str()).map(|s| s.to_string())
+                        })
+                    })
+                    .unwrap_or_else(|| "<command>".to_string());
+                let templated = Self::template_string(&cmd, vars);
+                format!("will execute: {}", templated)
+            }
+            "package" | "apt" | "yum" | "dnf" | "pip" => {
+                let name = args
+                    .and_then(|a| a.get("name"))
+                    .and_then(|n| {
+                        n.as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| n.as_sequence().map(|seq| {
+                                seq.iter()
+                                    .filter_map(|v| v.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            }))
+                    })
+                    .unwrap_or_else(|| "<package>".to_string());
+                let templated_name = Self::template_string(&name, vars);
+                let state = args
+                    .and_then(|a| a.get("state"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("present");
+                format!("will {} package: {}",
+                    if state == "absent" { "remove" } else { "install" },
+                    templated_name
+                )
+            }
+            "service" => {
+                let name = args
+                    .and_then(|a| a.get("name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("<service>");
+                let templated_name = Self::template_string(name, vars);
+                let state = args
+                    .and_then(|a| a.get("state"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("started");
+                let templated_state = Self::template_string(state, vars);
+                format!("will {} service: {}", templated_state, templated_name)
+            }
+            "copy" => {
+                let src = args
+                    .and_then(|a| a.get("src"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("<src>");
+                let dest = args
+                    .and_then(|a| a.get("dest"))
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("<dest>");
+                format!("will copy {} to {}", src, dest)
+            }
+            "file" => {
+                let path = args
+                    .and_then(|a| a.get("path"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("<path>");
+                let state = args
+                    .and_then(|a| a.get("state"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("file");
+                format!("will ensure {} exists as {}", path, state)
+            }
+            "template" => {
+                let src = args
+                    .and_then(|a| a.get("src"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("<template>");
+                let dest = args
+                    .and_then(|a| a.get("dest"))
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("<dest>");
+                format!("will render template {} to {}", src, dest)
+            }
+            "user" => {
+                let name = args
+                    .and_then(|a| a.get("name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("<user>");
+                let state = args
+                    .and_then(|a| a.get("state"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("present");
+                format!("will {} user: {}",
+                    if state == "absent" { "remove" } else { "create/update" },
+                    name
+                )
+            }
+            "group" => {
+                let name = args
+                    .and_then(|a| a.get("name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("<group>");
+                let state = args
+                    .and_then(|a| a.get("state"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("present");
+                format!("will {} group: {}",
+                    if state == "absent" { "remove" } else { "create/update" },
+                    name
+                )
+            }
+            "git" => {
+                let repo = args
+                    .and_then(|a| a.get("repo"))
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("<repo>");
+                let dest = args
+                    .and_then(|a| a.get("dest"))
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("<dest>");
+                format!("will clone/update {} to {}", repo, dest)
+            }
+            "debug" => {
+                if let Some(msg) = args.and_then(|a| a.get("msg")).and_then(|m| m.as_str()) {
+                    let templated = Self::template_string(msg, vars);
+                    format!("will display: {}", templated)
+                } else if let Some(var) = args.and_then(|a| a.get("var")).and_then(|v| v.as_str()) {
+                    format!("will display variable: {}", var)
+                } else {
+                    "will display debug information".to_string()
+                }
+            }
+            "set_fact" => "will set facts".to_string(),
+            "lineinfile" => {
+                let path = args
+                    .and_then(|a| a.get("path"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("<file>");
+                format!("will modify line in {}", path)
+            }
+            "blockinfile" => {
+                let path = args
+                    .and_then(|a| a.get("path"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("<file>");
+                format!("will insert/update block in {}", path)
+            }
+            _ => format!("will execute {} module", module),
         }
     }
 
@@ -484,9 +828,11 @@ impl RunArgs {
                     // Look up the variable value
                     let var_name = Self::template_string(var, vars);
                     if let Some(value) = vars.get(&var_name) {
-                        ctx.output.info(&format!("DEBUG: {} = {:?}", var_name, value));
+                        ctx.output
+                            .info(&format!("DEBUG: {} = {:?}", var_name, value));
                     } else {
-                        ctx.output.info(&format!("DEBUG: {} = <undefined>", var_name));
+                        ctx.output
+                            .info(&format!("DEBUG: {} = <undefined>", var_name));
                     }
                 }
             }
@@ -791,5 +1137,111 @@ mod tests {
                 .unwrap();
         assert!(args.r#become);
         assert_eq!(args.become_user, "admin");
+    }
+
+    #[test]
+    fn test_run_args_plan_flag() {
+        let args = RunArgs::try_parse_from(["run", "playbook.yml", "--plan"]).unwrap();
+        assert!(args.plan);
+    }
+
+    #[test]
+    fn test_get_action_description_command() {
+        let run_args = RunArgs::try_parse_from(["run", "playbook.yml"]).unwrap();
+        let vars = IndexMap::new();
+
+        let cmd_value = serde_yaml::Value::String("echo hello".to_string());
+        let desc = run_args.get_action_description("command", Some(&cmd_value), &vars);
+        assert_eq!(desc, "will execute: echo hello");
+    }
+
+    #[test]
+    fn test_get_action_description_package() {
+        let run_args = RunArgs::try_parse_from(["run", "playbook.yml"]).unwrap();
+        let vars = IndexMap::new();
+
+        let mut args = serde_yaml::Mapping::new();
+        args.insert(
+            serde_yaml::Value::String("name".to_string()),
+            serde_yaml::Value::String("nginx".to_string()),
+        );
+        args.insert(
+            serde_yaml::Value::String("state".to_string()),
+            serde_yaml::Value::String("present".to_string()),
+        );
+        let package_value = serde_yaml::Value::Mapping(args);
+
+        let desc = run_args.get_action_description("apt", Some(&package_value), &vars);
+        assert_eq!(desc, "will install package: nginx");
+    }
+
+    #[test]
+    fn test_get_action_description_service() {
+        let run_args = RunArgs::try_parse_from(["run", "playbook.yml"]).unwrap();
+        let vars = IndexMap::new();
+
+        let mut args = serde_yaml::Mapping::new();
+        args.insert(
+            serde_yaml::Value::String("name".to_string()),
+            serde_yaml::Value::String("nginx".to_string()),
+        );
+        args.insert(
+            serde_yaml::Value::String("state".to_string()),
+            serde_yaml::Value::String("started".to_string()),
+        );
+        let service_value = serde_yaml::Value::Mapping(args);
+
+        let desc = run_args.get_action_description("service", Some(&service_value), &vars);
+        assert_eq!(desc, "will started service: nginx");
+    }
+
+    #[test]
+    fn test_get_action_description_copy() {
+        let run_args = RunArgs::try_parse_from(["run", "playbook.yml"]).unwrap();
+        let vars = IndexMap::new();
+
+        let mut args = serde_yaml::Mapping::new();
+        args.insert(
+            serde_yaml::Value::String("src".to_string()),
+            serde_yaml::Value::String("/tmp/source".to_string()),
+        );
+        args.insert(
+            serde_yaml::Value::String("dest".to_string()),
+            serde_yaml::Value::String("/tmp/dest".to_string()),
+        );
+        let copy_value = serde_yaml::Value::Mapping(args);
+
+        let desc = run_args.get_action_description("copy", Some(&copy_value), &vars);
+        assert_eq!(desc, "will copy /tmp/source to /tmp/dest");
+    }
+
+    #[test]
+    fn test_get_action_description_debug() {
+        let run_args = RunArgs::try_parse_from(["run", "playbook.yml"]).unwrap();
+        let vars = IndexMap::new();
+
+        let mut args = serde_yaml::Mapping::new();
+        args.insert(
+            serde_yaml::Value::String("msg".to_string()),
+            serde_yaml::Value::String("Hello World".to_string()),
+        );
+        let debug_value = serde_yaml::Value::Mapping(args);
+
+        let desc = run_args.get_action_description("debug", Some(&debug_value), &vars);
+        assert_eq!(desc, "will display: Hello World");
+    }
+
+    #[test]
+    fn test_get_action_description_with_variables() {
+        let run_args = RunArgs::try_parse_from(["run", "playbook.yml"]).unwrap();
+        let mut vars = IndexMap::new();
+        vars.insert(
+            "package_name".to_string(),
+            serde_yaml::Value::String("nginx".to_string()),
+        );
+
+        let cmd_value = serde_yaml::Value::String("install {{ package_name }}".to_string());
+        let desc = run_args.get_action_description("command", Some(&cmd_value), &vars);
+        assert_eq!(desc, "will execute: install nginx");
     }
 }

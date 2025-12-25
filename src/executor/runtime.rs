@@ -300,6 +300,23 @@ impl RuntimeContext {
         ctx
     }
 
+    /// Create a runtime context from an inventory
+    pub fn from_inventory(inventory: &crate::inventory::Inventory) -> Self {
+        let mut ctx = Self::new();
+
+        // Add hosts from inventory
+        for host in inventory.hosts() {
+            // Convert host variables from serde_yaml to serde_json
+            for (key, value) in &host.vars {
+                if let Ok(json_value) = serde_json::to_value(value) {
+                    ctx.set_host_var(host.name(), key.clone(), json_value);
+                }
+            }
+        }
+
+        ctx
+    }
+
     /// Initialize magic variables
     fn init_magic_vars(&mut self) {
         self.magic_vars.insert(
