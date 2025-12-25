@@ -10,8 +10,13 @@ use super::{
     ModuleResult, ParallelizationHint, ParamExt,
 };
 use crate::template::TemplateEngine;
+use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::collections::HashMap;
+
+/// Global template engine instance for assertions
+/// This avoids recreating the engine for every task, improving performance
+static TEMPLATE_ENGINE: Lazy<TemplateEngine> = Lazy::new(TemplateEngine::new);
 
 /// Module for asserting conditions are true
 pub struct AssertModule;
@@ -20,14 +25,13 @@ impl AssertModule {
     /// Evaluate a single condition string using the template engine
     fn evaluate_condition(
         &self,
-        template_engine: &TemplateEngine,
         condition: &str,
         vars: &HashMap<String, Value>,
     ) -> ModuleResult<bool> {
         // Wrap the condition in a template expression that evaluates to a boolean
         let template = format!("{{{{ {} }}}}", condition);
 
-        let result = template_engine.render(&template, vars).map_err(|e| {
+        let result = TEMPLATE_ENGINE.render(&template, vars).map_err(|e| {
             ModuleError::TemplateError(format!(
                 "Failed to evaluate condition '{}': {}",
                 condition, e
@@ -54,10 +58,9 @@ impl AssertModule {
         vars: &HashMap<String, Value>,
     ) -> ModuleResult<Vec<String>> {
         let mut failed_conditions = Vec::new();
-        let template_engine = TemplateEngine::new();
 
         for condition in conditions {
-            match self.evaluate_condition(&template_engine, condition, vars) {
+            match self.evaluate_condition(condition, vars) {
                 Ok(true) => {
                     // Condition passed
                 }
