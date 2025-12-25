@@ -8,7 +8,6 @@ mod cli;
 mod config;
 
 use anyhow::Result;
-use clap::Parser;
 use cli::commands::CommandContext;
 use cli::{Cli, Commands};
 use config::Config;

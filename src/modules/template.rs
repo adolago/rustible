@@ -146,6 +146,7 @@ impl TemplateModule {
             .map_err(|e| ModuleError::TemplateError(format!("Failed to render template: {}", e)))
     }
 
+    #[allow(dead_code)]
     fn get_file_checksum(path: &Path) -> std::io::Result<String> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -182,17 +183,17 @@ impl TemplateModule {
 
     /// Execute template rendering locally (when no connection is present)
     fn execute_local(
-        params: &ModuleParams,
+        _params: &ModuleParams,
         context: &ModuleContext,
         rendered: &str,
-        src_path: &Path,
+        src_name: &str,
         dest_path: &Path,
         backup: bool,
         backup_suffix: &str,
         mode: Option<u32>,
     ) -> ModuleResult<ModuleOutput> {
-        let src = params.get_string_required("src")?;
-        let dest = params.get_string_required("dest")?;
+        let src = src_name;
+        let dest = dest_path.to_string_lossy();
 
         // Check if dest needs updating
         let needs_update = if dest_path.exists() {
@@ -302,7 +303,6 @@ impl TemplateModule {
             .with_data("uid", serde_json::json!(meta.uid()))
             .with_data("gid", serde_json::json!(meta.gid()));
 
-        let _ = src_path; // Suppress unused warning
         Ok(output)
     }
 }
@@ -321,7 +321,7 @@ impl Module for TemplateModule {
     }
 
     fn required_params(&self) -> &[&'static str] {
-        &["src", "dest"]
+        &["dest"] // src or content is required, but we check that in execute
     }
 
     fn execute(
@@ -329,9 +329,9 @@ impl Module for TemplateModule {
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
-        let src = params.get_string_required("src")?;
+        let src = params.get_string("src")?;
+        let content = params.get_string("content")?;
         let dest = params.get_string_required("dest")?;
-        let src_path = Path::new(&src);
         let dest_path = Path::new(&dest);
         let backup = params.get_bool_or("backup", false);
         let backup_suffix = params
@@ -340,16 +340,27 @@ impl Module for TemplateModule {
         let mode = params.get_u32("mode")?;
         let extra_vars = params.get("vars");
 
-        // Check source exists (template source is always on control node)
-        if !src_path.exists() {
-            return Err(ModuleError::ExecutionFailed(format!(
-                "Template source '{}' does not exist",
-                src
-            )));
-        }
-
-        // Read template content from control node
-        let template_content = fs::read_to_string(src_path).map_err(ModuleError::Io)?;
+        // Get template content from either src file or content parameter
+        let (template_content, src_name) = match (&src, &content) {
+            (Some(src_path_str), _) => {
+                let src_path = Path::new(src_path_str);
+                if !src_path.exists() {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Template source '{}' does not exist",
+                        src_path_str
+                    )));
+                }
+                let content = fs::read_to_string(src_path).map_err(ModuleError::Io)?;
+                (content, src_path_str.clone())
+            }
+            (None, Some(content_str)) => (content_str.clone(), "<inline>".to_string()),
+            (None, None) => {
+                return Err(ModuleError::MissingParameter(
+                    "Either 'src' or 'content' is required".to_string(),
+                ));
+            }
+        };
+        let src_path = Path::new(&src_name);
 
         // Build context and render
         let tera_ctx = Self::build_tera_context(context, extra_vars);
@@ -430,8 +441,10 @@ impl Module for TemplateModule {
                     None
                 };
 
-                let mut output =
-                    ModuleOutput::changed(format!("Would render template '{}' to '{}'", src, dest));
+                let mut output = ModuleOutput::changed(format!(
+                    "Would render template '{}' to '{}'",
+                    src_name, dest
+                ));
 
                 if let Some(d) = diff {
                     output = output.with_diff(d);
@@ -473,7 +486,7 @@ impl Module for TemplateModule {
                 })?;
 
             let mut output =
-                ModuleOutput::changed(format!("Rendered template '{}' to '{}'", src, dest));
+                ModuleOutput::changed(format!("Rendered template '{}' to '{}'", src_name, dest));
 
             if let Some(backup_path) = backup_file {
                 output = output.with_data("backup_file", serde_json::json!(backup_path));
@@ -483,7 +496,7 @@ impl Module for TemplateModule {
             if let Ok(stat) = handle.block_on(async { conn.stat(dest_path).await }) {
                 output = output
                     .with_data("dest", serde_json::json!(dest))
-                    .with_data("src", serde_json::json!(src))
+                    .with_data("src", serde_json::json!(src_name))
                     .with_data("size", serde_json::json!(stat.size))
                     .with_data(
                         "mode",
@@ -500,7 +513,7 @@ impl Module for TemplateModule {
                 params,
                 context,
                 &rendered,
-                src_path,
+                &src_name,
                 dest_path,
                 backup,
                 &backup_suffix,
@@ -518,20 +531,31 @@ impl Module for TemplateModule {
     }
 
     fn diff(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<Option<Diff>> {
-        let src = params.get_string_required("src")?;
+        let src = params.get_string("src")?;
+        let content = params.get_string("content")?;
         let dest = params.get_string_required("dest")?;
-        let src_path = Path::new(&src);
         let dest_path = Path::new(&dest);
         let extra_vars = params.get("vars");
 
-        if !src_path.exists() {
-            return Err(ModuleError::ExecutionFailed(format!(
-                "Template source '{}' does not exist",
-                src
-            )));
-        }
-
-        let template_content = fs::read_to_string(src_path)?;
+        // Get template content from either src file or content parameter
+        let template_content = match (&src, &content) {
+            (Some(src_path_str), _) => {
+                let src_path = Path::new(src_path_str);
+                if !src_path.exists() {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Template source '{}' does not exist",
+                        src_path_str
+                    )));
+                }
+                fs::read_to_string(src_path)?
+            }
+            (None, Some(content_str)) => content_str.clone(),
+            (None, None) => {
+                return Err(ModuleError::MissingParameter(
+                    "Either 'src' or 'content' is required".to_string(),
+                ));
+            }
+        };
         let tera_ctx = Self::build_tera_context(context, extra_vars);
         let rendered = Self::render_template(&template_content, &tera_ctx)?;
 

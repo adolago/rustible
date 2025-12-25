@@ -1,0 +1,6 @@
+# Sysctl configuration managed by Rustible
+# Generated from common role
+
+{% for key, value in sysctl_settings.items() %}
+{{ key }} = {{ value }}
+{% endfor %}

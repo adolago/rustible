@@ -176,6 +176,7 @@ struct HostStats {
 
 impl HostStats {
     /// Returns true if any actionable events occurred (changes or failures)
+    #[allow(dead_code)]
     fn has_actions(&self) -> bool {
         self.changed > 0 || self.failed > 0 || self.unreachable > 0
     }
@@ -796,7 +797,8 @@ mod tests {
         let ok_result = create_execution_result("host1", "task1", true, false, false, "ok");
         callback.on_task_complete(&ok_result).await;
 
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
         callback.on_task_complete(&changed_result).await;
 
         let failed_result =
@@ -884,7 +886,11 @@ mod tests {
         callback
             .on_play_start(
                 "test-play",
-                &["host1".to_string(), "host2".to_string(), "host3".to_string()],
+                &[
+                    "host1".to_string(),
+                    "host2".to_string(),
+                    "host3".to_string(),
+                ],
             )
             .await;
 

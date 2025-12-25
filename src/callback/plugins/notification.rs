@@ -131,7 +131,8 @@ impl SlackConfig {
         Some(Self {
             webhook_url,
             channel: env::var("RUSTIBLE_SLACK_CHANNEL").ok(),
-            username: env::var("RUSTIBLE_SLACK_USERNAME").unwrap_or_else(|_| "Rustible".to_string()),
+            username: env::var("RUSTIBLE_SLACK_USERNAME")
+                .unwrap_or_else(|_| "Rustible".to_string()),
             icon_emoji: env::var("RUSTIBLE_SLACK_ICON_EMOJI")
                 .unwrap_or_else(|_| ":gear:".to_string()),
         })

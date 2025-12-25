@@ -27,10 +27,6 @@ pub struct CheckArgs {
     #[arg(long)]
     pub start_at_task: Option<String>,
 
-    /// Show differences
-    #[arg(long, short = 'D')]
-    pub diff: bool,
-
     /// Ask for vault password
     #[arg(long)]
     pub ask_vault_pass: bool,
@@ -65,11 +61,7 @@ impl CheckArgs {
     pub async fn execute(&self, ctx: &mut CommandContext) -> Result<i32> {
         // Force check mode
         ctx.check_mode = true;
-
-        // Enable diff mode if requested
-        if self.diff {
-            ctx.diff_mode = true;
-        }
+        // diff_mode is set by global --diff flag already
 
         // Convert to RunArgs and execute
         let run_args = RunArgs {
@@ -87,6 +79,7 @@ impl CheckArgs {
             user: self.user.clone(),
             private_key: self.private_key.clone(),
             ssh_common_args: None,
+            plan: false, // check mode doesn't need plan mode
         };
 
         ctx.output.banner("CHECK MODE - DRY RUN");
@@ -114,9 +107,6 @@ mod tests {
         assert_eq!(args.playbook, PathBuf::from("playbook.yml"));
     }
 
-    #[test]
-    fn test_check_args_with_diff() {
-        let args = CheckArgs::try_parse_from(["check", "playbook.yml", "--diff"]).unwrap();
-        assert!(args.diff);
-    }
+    // Note: --diff is now a global flag defined in the main CLI struct,
+    // not a local flag in CheckArgs
 }

@@ -234,8 +234,8 @@ impl MailConfig {
             .map(|s| s.to_lowercase() == "true" || s == "1")
             .unwrap_or(false);
 
-        let subject_prefix = env::var("RUSTIBLE_MAIL_SUBJECT_PREFIX")
-            .unwrap_or_else(|_| "[Rustible]".to_string());
+        let subject_prefix =
+            env::var("RUSTIBLE_MAIL_SUBJECT_PREFIX").unwrap_or_else(|_| "[Rustible]".to_string());
 
         let timeout_secs = env::var("RUSTIBLE_SMTP_TIMEOUT")
             .ok()
@@ -405,11 +405,13 @@ struct HostStats {
 
 impl HostStats {
     /// Returns total tasks executed.
+    #[allow(dead_code)]
     fn total(&self) -> u32 {
         self.ok + self.changed + self.failed + self.skipped
     }
 
     /// Returns true if any failures occurred.
+    #[allow(dead_code)]
     fn has_issues(&self) -> bool {
         self.failed > 0 || self.unreachable > 0
     }
@@ -915,7 +917,12 @@ fn build_email_message(config: &MailConfig, subject: &str, body: &str) -> String
 
     // Date header
     let now = chrono::Utc::now();
-    writeln!(message, "Date: {}", now.format("%a, %d %b %Y %H:%M:%S +0000")).unwrap();
+    writeln!(
+        message,
+        "Date: {}",
+        now.format("%a, %d %b %Y %H:%M:%S +0000")
+    )
+    .unwrap();
 
     // Empty line separates headers from body
     writeln!(message).unwrap();
@@ -1196,13 +1203,15 @@ mod tests {
         let ok_result = create_execution_result("host1", "task1", true, false, false, "ok");
         callback.on_task_complete(&ok_result).await;
 
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
         callback.on_task_complete(&changed_result).await;
 
         let failed_result = create_execution_result("host2", "task1", false, false, false, "error");
         callback.on_task_complete(&failed_result).await;
 
-        let skipped_result = create_execution_result("host2", "task2", true, false, true, "skipped");
+        let skipped_result =
+            create_execution_result("host2", "task2", true, false, true, "skipped");
         callback.on_task_complete(&skipped_result).await;
 
         // Verify stats

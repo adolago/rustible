@@ -446,6 +446,7 @@ impl YamlCallback {
     }
 
     /// Truncate output if it exceeds max lines.
+    #[allow(dead_code)]
     fn truncate_output(&self, output: &str) -> String {
         if self.config.max_output_lines == 0 {
             return output.to_string();
@@ -1057,9 +1058,7 @@ mod tests {
         let callback = YamlCallback::without_colors();
 
         callback.on_playbook_start("test.yml").await;
-        callback
-            .on_play_start("test", &["host1".to_string()])
-            .await;
+        callback.on_play_start("test", &["host1".to_string()]).await;
 
         // Simulate task completions
         let ok_result = ExecutionResult {

@@ -145,6 +145,7 @@ impl Cli {
     }
 
     /// Check if running in quiet mode
+    #[allow(dead_code)]
     pub fn is_quiet(&self) -> bool {
         matches!(self.output, OutputFormat::Minimal)
     }
@@ -161,6 +162,7 @@ pub mod env {
     use std::path::PathBuf;
 
     /// Get the Rustible home directory
+    #[allow(dead_code)]
     pub fn rustible_home() -> Option<PathBuf> {
         env::var("RUSTIBLE_HOME")
             .ok()
@@ -169,11 +171,13 @@ pub mod env {
     }
 
     /// Get the default inventory path
+    #[allow(dead_code)]
     pub fn default_inventory() -> Option<PathBuf> {
         env::var("RUSTIBLE_INVENTORY").ok().map(PathBuf::from)
     }
 
     /// Get the vault password file path
+    #[allow(dead_code)]
     pub fn vault_password_file() -> Option<PathBuf> {
         env::var("RUSTIBLE_VAULT_PASSWORD_FILE")
             .ok()
@@ -181,16 +185,19 @@ pub mod env {
     }
 
     /// Check if colors should be disabled
+    #[allow(dead_code)]
     pub fn no_color() -> bool {
         env::var("NO_COLOR").is_ok() || env::var("RUSTIBLE_NO_COLOR").is_ok()
     }
 
     /// Get the SSH private key path
+    #[allow(dead_code)]
     pub fn ssh_private_key() -> Option<PathBuf> {
         env::var("RUSTIBLE_SSH_KEY").ok().map(PathBuf::from)
     }
 
     /// Get the remote user
+    #[allow(dead_code)]
     pub fn remote_user() -> Option<String> {
         env::var("RUSTIBLE_REMOTE_USER").ok()
     }

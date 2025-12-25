@@ -92,6 +92,7 @@ impl Default for ProgressConfig {
 
 /// State for tracking play progress
 #[derive(Debug)]
+#[allow(dead_code)]
 struct PlayState {
     /// Play name
     name: String,
@@ -107,6 +108,7 @@ struct PlayState {
 
 /// State for tracking task execution
 #[derive(Debug)]
+#[allow(dead_code)]
 struct TaskState {
     /// Task name
     name: String,
@@ -870,10 +872,22 @@ mod tests {
 
     #[test]
     fn test_format_duration() {
-        assert_eq!(ProgressCallback::format_duration(Duration::from_millis(500)), "500ms");
-        assert_eq!(ProgressCallback::format_duration(Duration::from_secs(5)), "5.00s");
-        assert_eq!(ProgressCallback::format_duration(Duration::from_secs(65)), "1m 5s");
-        assert_eq!(ProgressCallback::format_duration(Duration::from_secs(3665)), "1h 1m 5s");
+        assert_eq!(
+            ProgressCallback::format_duration(Duration::from_millis(500)),
+            "500ms"
+        );
+        assert_eq!(
+            ProgressCallback::format_duration(Duration::from_secs(5)),
+            "5.00s"
+        );
+        assert_eq!(
+            ProgressCallback::format_duration(Duration::from_secs(65)),
+            "1m 5s"
+        );
+        assert_eq!(
+            ProgressCallback::format_duration(Duration::from_secs(3665)),
+            "1h 1m 5s"
+        );
     }
 
     #[tokio::test]
@@ -997,14 +1011,8 @@ mod tests {
 
         let callback2 = callback1.clone();
 
-        assert_eq!(
-            callback2.total_tasks.load(Ordering::Relaxed),
-            10
-        );
-        assert_eq!(
-            callback2.completed_tasks.load(Ordering::Relaxed),
-            5
-        );
+        assert_eq!(callback2.total_tasks.load(Ordering::Relaxed), 10);
+        assert_eq!(callback2.completed_tasks.load(Ordering::Relaxed), 5);
     }
 
     #[test]

@@ -171,6 +171,26 @@ pub struct Handler {
     pub listen: Vec<String>,
 }
 
+/// Loop control options for customizing loop behavior
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LoopControl {
+    /// Variable name for current item (default: "item")
+    #[serde(default = "default_loop_var")]
+    pub loop_var: String,
+    /// Variable name for item index
+    #[serde(default)]
+    pub index_var: Option<String>,
+    /// Label for display (template evaluated per item)
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Pause between iterations in seconds
+    #[serde(default)]
+    pub pause: Option<u64>,
+    /// Enable extended loop information (revindex, revindex0, etc.)
+    #[serde(default)]
+    pub extended: bool,
+}
+
 /// A task to be executed
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
@@ -196,6 +216,9 @@ pub struct Task {
     /// Loop variable name (default: "item")
     #[serde(default = "default_loop_var")]
     pub loop_var: String,
+    /// Loop control options
+    #[serde(default)]
+    pub loop_control: Option<LoopControl>,
     /// Whether to ignore errors
     #[serde(default)]
     pub ignore_errors: bool,
@@ -223,6 +246,34 @@ pub struct Task {
     /// User to become
     #[serde(default)]
     pub become_user: Option<String>,
+    /// Block ID this task belongs to (if part of block/rescue/always)
+    #[serde(default)]
+    pub block_id: Option<String>,
+    /// Task type within a block
+    #[serde(default)]
+    pub block_role: BlockRole,
+    /// Number of retries for until loop
+    #[serde(default)]
+    pub retries: Option<u32>,
+    /// Delay between retries in seconds
+    #[serde(default)]
+    pub delay: Option<u64>,
+    /// Until condition for retry loop
+    #[serde(default)]
+    pub until: Option<String>,
+}
+
+/// Role of a task within a block structure
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BlockRole {
+    /// Normal task or task in the main block section
+    #[default]
+    Normal,
+    /// Task in the rescue section (runs on block failure)
+    Rescue,
+    /// Task in the always section (runs regardless)
+    Always,
 }
 
 fn default_loop_var() -> String {
@@ -240,6 +291,7 @@ impl Default for Task {
             register: None,
             loop_items: None,
             loop_var: default_loop_var(),
+            loop_control: None,
             ignore_errors: false,
             changed_when: None,
             failed_when: None,
@@ -249,6 +301,11 @@ impl Default for Task {
             tags: Vec::new(),
             r#become: false,
             become_user: None,
+            block_id: None,
+            block_role: BlockRole::Normal,
+            retries: None,
+            delay: None,
+            until: None,
         }
     }
 }
@@ -258,9 +315,7 @@ impl From<crate::playbook::Task> for Task {
     fn from(pt: crate::playbook::Task) -> Self {
         // Convert args from serde_json::Value to IndexMap
         let args = if let Some(obj) = pt.module.args.as_object() {
-            obj.iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
+            obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         } else {
             IndexMap::new()
         };
@@ -271,14 +326,39 @@ impl From<crate::playbook::Task> for Task {
             crate::playbook::When::Multiple(v) => v.join(" and "),
         });
 
-        // Convert loop items
-        let loop_items = pt.loop_.or(pt.with_items).and_then(|v| {
+        // Convert loop items from various sources
+        // Priority: loop > with_items > with_dict > with_fileglob
+        let loop_items = if let Some(v) = pt.loop_.or(pt.with_items) {
+            // Standard loop or with_items - expect array
             if let Some(arr) = v.as_array() {
                 Some(arr.clone())
             } else {
                 None
             }
-        });
+        } else if let Some(v) = pt.with_dict {
+            // with_dict - convert dict to list of {key, value} objects
+            if let Some(obj) = v.as_object() {
+                let items: Vec<JsonValue> = obj
+                    .iter()
+                    .map(|(k, val)| serde_json::json!({"key": k, "value": val}))
+                    .collect();
+                Some(items)
+            } else {
+                None
+            }
+        } else if let Some(v) = pt.with_fileglob {
+            // with_fileglob - for now just pass patterns as strings
+            // (actual glob expansion happens at runtime)
+            if let Some(arr) = v.as_array() {
+                Some(arr.clone())
+            } else if v.is_string() {
+                Some(vec![v])
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Get loop_var from loop_control if available
         let loop_var = pt
@@ -286,6 +366,15 @@ impl From<crate::playbook::Task> for Task {
             .as_ref()
             .map(|lc| lc.loop_var.clone())
             .unwrap_or_else(default_loop_var);
+
+        // Convert loop_control from playbook to executor format
+        let loop_control = pt.loop_control.as_ref().map(|lc| LoopControl {
+            loop_var: lc.loop_var.clone(),
+            index_var: lc.index_var.clone(),
+            label: lc.label.clone(),
+            pause: lc.pause,
+            extended: lc.extended,
+        });
 
         Self {
             name: pt.name,
@@ -296,6 +385,7 @@ impl From<crate::playbook::Task> for Task {
             register: pt.register,
             loop_items,
             loop_var,
+            loop_control,
             ignore_errors: pt.ignore_errors,
             changed_when: pt.changed_when,
             failed_when: pt.failed_when,
@@ -305,6 +395,11 @@ impl From<crate::playbook::Task> for Task {
             tags: pt.tags,
             r#become: pt.r#become.unwrap_or(false),
             become_user: pt.become_user,
+            block_id: None,
+            block_role: BlockRole::Normal,
+            retries: pt.retries,
+            delay: pt.delay,
+            until: pt.until,
         }
     }
 }
@@ -419,7 +514,14 @@ impl Task {
                 &execution_ctx
             };
             return self
-                .execute_loop(items, loop_ctx, runtime, handlers, notified, parallelization_manager)
+                .execute_loop(
+                    items,
+                    loop_ctx,
+                    runtime,
+                    handlers,
+                    notified,
+                    parallelization_manager,
+                )
                 .await;
         }
 
@@ -429,13 +531,31 @@ impl Task {
         } else {
             &execution_ctx
         };
-        let result = self.execute_module(module_ctx, runtime, handlers, notified, parallelization_manager).await?;
+
+        // Handle until/retries/delay retry logic
+        let result = if self.until.is_some() {
+            self.execute_with_retry(module_ctx, runtime, handlers, notified, parallelization_manager)
+                .await?
+        } else {
+            self.execute_module(
+                module_ctx,
+                runtime,
+                handlers,
+                notified,
+                parallelization_manager,
+            )
+            .await?
+        };
 
         // Apply changed_when override - use execution context for condition evaluation
-        let result = self.apply_changed_when(result, &execution_ctx, runtime).await?;
+        let result = self
+            .apply_changed_when(result, &execution_ctx, runtime)
+            .await?;
 
         // Apply failed_when override - use execution context for condition evaluation
-        let result = self.apply_failed_when(result, &execution_ctx, runtime).await?;
+        let result = self
+            .apply_failed_when(result, &execution_ctx, runtime)
+            .await?;
 
         // Register result if needed - always register on the original host
         if let Some(ref register_name) = self.register {
@@ -483,25 +603,82 @@ impl Task {
         let mut any_changed = false;
         let mut any_failed = false;
 
+        // Extract loop_control options
+        let pause_seconds = self.loop_control.as_ref().and_then(|lc| lc.pause);
+        let index_var = self
+            .loop_control
+            .as_ref()
+            .and_then(|lc| lc.index_var.clone());
+        let extended = self
+            .loop_control
+            .as_ref()
+            .map(|lc| lc.extended)
+            .unwrap_or(false);
+        let total_items = items.len();
+
         for (index, item) in items.iter().enumerate() {
+            // Pause between iterations (but not before the first)
+            if index > 0 {
+                if let Some(pause) = pause_seconds {
+                    if pause > 0 {
+                        debug!("Pausing {} seconds between loop iterations", pause);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(pause)).await;
+                    }
+                }
+            }
+
             // Set loop variables
             {
                 let mut rt = runtime.write().await;
                 rt.set_task_var(self.loop_var.clone(), item.clone());
-                rt.set_task_var(
-                    "ansible_loop".to_string(),
-                    serde_json::json!({
-                        "index": index,
-                        "index0": index,
-                        "first": index == 0,
-                        "last": index == items.len() - 1,
-                        "length": items.len(),
-                    }),
-                );
+
+                // Set index_var if specified
+                if let Some(ref idx_var) = index_var {
+                    rt.set_task_var(idx_var.clone(), serde_json::json!(index));
+                }
+
+                // Build ansible_loop object
+                let mut ansible_loop = serde_json::json!({
+                    "index": index + 1,  // 1-based index
+                    "index0": index,     // 0-based index
+                    "first": index == 0,
+                    "last": index == total_items - 1,
+                    "length": total_items,
+                });
+
+                // Add extended loop info if enabled
+                if extended {
+                    let revindex = total_items - index; // 1-based reverse index
+                    let revindex0 = total_items - index - 1; // 0-based reverse index
+                    let loop_obj = ansible_loop.as_object_mut().unwrap();
+                    loop_obj.insert("revindex".to_string(), serde_json::json!(revindex));
+                    loop_obj.insert("revindex0".to_string(), serde_json::json!(revindex0));
+                    loop_obj.insert("allitems".to_string(), serde_json::json!(items));
+                    loop_obj.insert(
+                        "previtem".to_string(),
+                        if index > 0 {
+                            items[index - 1].clone()
+                        } else {
+                            JsonValue::Null
+                        },
+                    );
+                    loop_obj.insert(
+                        "nextitem".to_string(),
+                        if index < total_items - 1 {
+                            items[index + 1].clone()
+                        } else {
+                            JsonValue::Null
+                        },
+                    );
+                }
+
+                rt.set_task_var("ansible_loop".to_string(), ansible_loop);
             }
 
             // Execute for this item with parallelization enforcement
-            let result = self.execute_module(ctx, runtime, handlers, notified, parallelization_manager).await?;
+            let result = self
+                .execute_module(ctx, runtime, handlers, notified, parallelization_manager)
+                .await?;
 
             if result.changed {
                 any_changed = true;
@@ -561,6 +738,79 @@ impl Task {
         Ok(result)
     }
 
+    /// Execute task with until/retries/delay retry logic
+    async fn execute_with_retry(
+        &self,
+        ctx: &ExecutionContext,
+        runtime: &Arc<RwLock<RuntimeContext>>,
+        handlers: &Arc<RwLock<HashMap<String, Handler>>>,
+        notified: &Arc<Mutex<std::collections::HashSet<String>>>,
+        parallelization_manager: &Arc<ParallelizationManager>,
+    ) -> ExecutorResult<TaskResult> {
+        let max_retries = self.retries.unwrap_or(3);
+        let delay_seconds = self.delay.unwrap_or(5);
+        let until_condition = self.until.as_ref().expect("until condition must be set");
+
+        debug!(
+            "Executing with retry: max_retries={}, delay={}s, until='{}'",
+            max_retries, delay_seconds, until_condition
+        );
+
+        let mut last_result: Option<TaskResult> = None;
+        let mut attempt = 0;
+
+        loop {
+            attempt += 1;
+            debug!("Retry attempt {} of {}", attempt, max_retries + 1);
+
+            // Execute the module
+            let result = self
+                .execute_module(ctx, runtime, handlers, notified, parallelization_manager)
+                .await?;
+
+            // Register the result for condition evaluation
+            if let Some(ref register_name) = self.register {
+                self.register_result(register_name, &result, ctx, runtime)
+                    .await?;
+            }
+
+            // Evaluate the until condition
+            let condition_met = self.evaluate_condition(until_condition, ctx, runtime).await?;
+
+            if condition_met {
+                debug!("Until condition '{}' met after {} attempt(s)", until_condition, attempt);
+                return Ok(result);
+            }
+
+            // Store the last result
+            last_result = Some(result);
+
+            // Check if we've exhausted retries
+            if attempt > max_retries {
+                debug!("Max retries ({}) exhausted, condition not met", max_retries);
+                break;
+            }
+
+            // Wait before retrying
+            if delay_seconds > 0 {
+                debug!("Waiting {} seconds before retry", delay_seconds);
+                tokio::time::sleep(tokio::time::Duration::from_secs(delay_seconds)).await;
+            }
+        }
+
+        // Return failure after exhausting retries
+        Ok(TaskResult {
+            status: TaskStatus::Failed,
+            changed: false,
+            msg: Some(format!(
+                "Retries exhausted ({}). Until condition '{}' never met",
+                max_retries, until_condition
+            )),
+            result: last_result.as_ref().and_then(|r| r.result.clone()),
+            diff: None,
+        })
+    }
+
     /// Execute the actual module
     async fn execute_module(
         &self,
@@ -598,7 +848,7 @@ impl Task {
             "debug" => self.execute_debug(&args, ctx).await,
             "set_fact" => self.execute_set_fact(&args, ctx, runtime).await,
             "command" | "shell" => self.execute_command(&args, ctx, runtime).await,
-            "copy" => self.execute_copy(&args, ctx).await,
+            "copy" => self.execute_copy(&args, ctx, runtime).await,
             "file" => self.execute_file(&args, ctx).await,
             "template" => self.execute_template(&args, ctx, runtime).await,
             "package" | "apt" | "yum" | "dnf" => self.execute_package(&args, ctx).await,
@@ -614,7 +864,15 @@ impl Task {
             "wait_for" => self.execute_wait_for(&args, ctx).await,
             "include_vars" => self.execute_include_vars(&args, ctx, runtime).await,
             "include_tasks" | "import_tasks" => {
-                self.execute_include_tasks(&args, ctx, runtime, handlers, notified, parallelization_manager).await
+                self.execute_include_tasks(
+                    &args,
+                    ctx,
+                    runtime,
+                    handlers,
+                    notified,
+                    parallelization_manager,
+                )
+                .await
             }
             "meta" => self.execute_meta(&args).await,
             _ => {
@@ -829,7 +1087,10 @@ impl Task {
                 // Use set_host_fact instead of set_host_var for proper precedence
                 // Facts set by set_fact should have SetFact precedence level
                 rt.set_host_fact(fact_target, key.clone(), value.clone());
-                debug!("Set fact '{}' = {:?} for host '{}'", key, value, fact_target);
+                debug!(
+                    "Set fact '{}' = {:?} for host '{}'",
+                    key, value, fact_target
+                );
                 facts_set.push(key.clone());
             }
         }
@@ -882,17 +1143,96 @@ impl Task {
         &self,
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
+        runtime: &Arc<RwLock<RuntimeContext>>,
     ) -> ExecutorResult<TaskResult> {
-        let dest = args.get("dest").and_then(|v| v.as_str()).ok_or_else(|| {
-            ExecutorError::RuntimeError("copy module requires 'dest' argument".into())
-        })?;
+        // Convert args to ModuleParams
+        let mut params: std::collections::HashMap<String, serde_json::Value> =
+            args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
-        if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg("Check mode - would copy file"));
+        // Get all variables from runtime for potential content template substitution
+        let vars = {
+            let rt = runtime.read().await;
+            rt.get_merged_vars(&ctx.host)
+        };
+
+        // If content contains template variables, use the template module's rendering
+        if let Some(serde_json::Value::String(content)) = params.get("content") {
+            if content.contains("{{") || content.contains("{%") {
+                // Use template module for content with variables
+                let template_params = params.clone();
+                let module_ctx = crate::modules::ModuleContext {
+                    check_mode: ctx.check_mode,
+                    diff_mode: ctx.diff_mode,
+                    vars: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    facts: std::collections::HashMap::new(),
+                    work_dir: None,
+                    r#become: false,
+                    become_method: None,
+                    become_user: None,
+                    connection: None,
+                };
+
+                let registry = crate::modules::ModuleRegistry::with_builtins();
+                let module = registry.get("template").ok_or_else(|| {
+                    ExecutorError::ModuleNotFound("template module not found in registry".into())
+                })?;
+
+                return match module.execute(&template_params, &module_ctx) {
+                    Ok(output) => {
+                        let mut result = if output.changed {
+                            TaskResult::changed()
+                        } else {
+                            TaskResult::ok()
+                        };
+                        result.msg = Some(output.msg);
+                        if !output.data.is_empty() {
+                            result.result =
+                                Some(serde_json::to_value(&output.data).unwrap_or_default());
+                        }
+                        Ok(result)
+                    }
+                    Err(e) => Ok(TaskResult::failed(format!(
+                        "template (for copy with content) failed: {}",
+                        e
+                    ))),
+                };
+            }
         }
 
-        debug!("Would copy file to: {}", dest);
-        Ok(TaskResult::changed().with_msg(format!("Copied to {}", dest)))
+        // Create module context from execution context
+        let module_ctx = crate::modules::ModuleContext {
+            check_mode: ctx.check_mode,
+            diff_mode: ctx.diff_mode,
+            vars: std::collections::HashMap::new(),
+            facts: std::collections::HashMap::new(),
+            work_dir: None,
+            r#become: false,
+            become_method: None,
+            become_user: None,
+            connection: None, // Local execution for integration tests
+        };
+
+        // Get the copy module from registry and execute
+        let registry = crate::modules::ModuleRegistry::with_builtins();
+        let module = registry.get("copy").ok_or_else(|| {
+            ExecutorError::ModuleNotFound("copy module not found in registry".into())
+        })?;
+
+        match module.execute(&params, &module_ctx) {
+            Ok(output) => {
+                let mut result = if output.changed {
+                    TaskResult::changed()
+                } else {
+                    TaskResult::ok()
+                };
+                result.msg = Some(output.msg);
+                if !output.data.is_empty() {
+                    result.result = Some(serde_json::to_value(&output.data).unwrap_or_default());
+                }
+                Ok(result)
+            }
+            Err(e) => Ok(TaskResult::failed(format!("copy module failed: {}", e))),
+        }
     }
 
     async fn execute_file(
@@ -900,41 +1240,96 @@ impl Task {
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
     ) -> ExecutorResult<TaskResult> {
-        let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
-            ExecutorError::RuntimeError("file module requires 'path' argument".into())
+        // Convert args to ModuleParams
+        let params: std::collections::HashMap<String, serde_json::Value> =
+            args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+        // Create module context from execution context
+        let module_ctx = crate::modules::ModuleContext {
+            check_mode: ctx.check_mode,
+            diff_mode: ctx.diff_mode,
+            vars: std::collections::HashMap::new(),
+            facts: std::collections::HashMap::new(),
+            work_dir: None,
+            r#become: false,
+            become_method: None,
+            become_user: None,
+            connection: None, // Local execution for integration tests
+        };
+
+        // Get the file module from registry and execute
+        let registry = crate::modules::ModuleRegistry::with_builtins();
+        let module = registry.get("file").ok_or_else(|| {
+            ExecutorError::ModuleNotFound("file module not found in registry".into())
         })?;
 
-        let state = args.get("state").and_then(|v| v.as_str()).unwrap_or("file");
-
-        if ctx.check_mode {
-            return Ok(TaskResult::ok()
-                .with_msg(format!("Check mode - would ensure {} is {}", path, state)));
+        match module.execute(&params, &module_ctx) {
+            Ok(output) => {
+                let mut result = if output.changed {
+                    TaskResult::changed()
+                } else {
+                    TaskResult::ok()
+                };
+                result.msg = Some(output.msg);
+                if !output.data.is_empty() {
+                    result.result = Some(serde_json::to_value(&output.data).unwrap_or_default());
+                }
+                Ok(result)
+            }
+            Err(e) => Ok(TaskResult::failed(format!("file module failed: {}", e))),
         }
-
-        debug!("Would ensure {} state for: {}", state, path);
-        Ok(TaskResult::changed().with_msg(format!("{} state set for {}", state, path)))
     }
 
     async fn execute_template(
         &self,
         args: &IndexMap<String, JsonValue>,
         ctx: &ExecutionContext,
-        _runtime: &Arc<RwLock<RuntimeContext>>,
+        runtime: &Arc<RwLock<RuntimeContext>>,
     ) -> ExecutorResult<TaskResult> {
-        let src = args.get("src").and_then(|v| v.as_str()).ok_or_else(|| {
-            ExecutorError::RuntimeError("template module requires 'src' argument".into())
+        // Convert args to ModuleParams
+        let params: std::collections::HashMap<String, serde_json::Value> =
+            args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+        // Get all variables from runtime for template substitution
+        let vars = {
+            let rt = runtime.read().await;
+            rt.get_merged_vars(&ctx.host)
+        };
+
+        // Create module context from execution context with variables
+        let module_ctx = crate::modules::ModuleContext {
+            check_mode: ctx.check_mode,
+            diff_mode: ctx.diff_mode,
+            vars: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            facts: std::collections::HashMap::new(),
+            work_dir: None,
+            r#become: false,
+            become_method: None,
+            become_user: None,
+            connection: None, // Local execution for integration tests
+        };
+
+        // Get the template module from registry and execute
+        let registry = crate::modules::ModuleRegistry::with_builtins();
+        let module = registry.get("template").ok_or_else(|| {
+            ExecutorError::ModuleNotFound("template module not found in registry".into())
         })?;
 
-        let dest = args.get("dest").and_then(|v| v.as_str()).ok_or_else(|| {
-            ExecutorError::RuntimeError("template module requires 'dest' argument".into())
-        })?;
-
-        if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg("Check mode - would template file"));
+        match module.execute(&params, &module_ctx) {
+            Ok(output) => {
+                let mut result = if output.changed {
+                    TaskResult::changed()
+                } else {
+                    TaskResult::ok()
+                };
+                result.msg = Some(output.msg);
+                if !output.data.is_empty() {
+                    result.result = Some(serde_json::to_value(&output.data).unwrap_or_default());
+                }
+                Ok(result)
+            }
+            Err(e) => Ok(TaskResult::failed(format!("template module failed: {}", e))),
         }
-
-        debug!("Would template {} to {}", src, dest);
-        Ok(TaskResult::changed().with_msg(format!("Templated {} to {}", src, dest)))
     }
 
     async fn execute_package(
@@ -1171,6 +1566,100 @@ impl Task {
         Ok(TaskResult::ok().with_msg("Wait condition met"))
     }
 
+    /// Validate that a path is safe and within the allowed base directory.
+    ///
+    /// This function prevents path traversal attacks by:
+    /// 1. Rejecting paths containing ".." traversal components
+    /// 2. Canonicalizing paths to resolve symlinks
+    /// 3. Ensuring the resolved path stays within the base directory
+    ///
+    /// # Security
+    ///
+    /// This is a critical security function. All file operations that load
+    /// external content (variables, tasks, etc.) MUST use this validation
+    /// to prevent unauthorized file access.
+    fn validate_include_path(
+        requested_path: &str,
+        base_path: &std::path::Path,
+    ) -> ExecutorResult<std::path::PathBuf> {
+        use std::path::{Path, PathBuf};
+
+        // Early rejection of obvious path traversal attempts
+        // Check for ".." in path components (handles both Unix and Windows separators)
+        if requested_path.contains("..") {
+            warn!(
+                "Security: Rejecting path traversal attempt in include_vars: '{}'",
+                requested_path
+            );
+            return Err(ExecutorError::RuntimeError(format!(
+                "Security violation: Path traversal detected in '{}'. \
+                 Paths containing '..' are not allowed for security reasons.",
+                requested_path
+            )));
+        }
+
+        let path = Path::new(requested_path);
+
+        // Construct the full path
+        let full_path = if path.is_absolute() {
+            PathBuf::from(requested_path)
+        } else {
+            base_path.join(requested_path)
+        };
+
+        // Check if the path exists before canonicalizing
+        if !full_path.exists() {
+            return Err(ExecutorError::RuntimeError(format!(
+                "include_vars path not found: {}",
+                full_path.display()
+            )));
+        }
+
+        // Canonicalize base path for comparison
+        let canonical_base = base_path.canonicalize().map_err(|e| {
+            ExecutorError::RuntimeError(format!(
+                "Failed to resolve base path '{}': {}",
+                base_path.display(),
+                e
+            ))
+        })?;
+
+        // Canonicalize the requested path to resolve symlinks and normalize
+        let canonical_path = full_path.canonicalize().map_err(|e| {
+            ExecutorError::RuntimeError(format!(
+                "Failed to resolve include_vars path '{}': {}",
+                full_path.display(),
+                e
+            ))
+        })?;
+
+        // Security check: ensure the canonical path is within the base directory
+        if !canonical_path.starts_with(&canonical_base) {
+            warn!(
+                "Security: Path traversal blocked - '{}' (resolved to '{}') escapes base '{}'",
+                requested_path,
+                canonical_path.display(),
+                canonical_base.display()
+            );
+            return Err(ExecutorError::RuntimeError(format!(
+                "Security violation: Path '{}' resolves to '{}' which is outside \
+                 the allowed directory '{}'. This may indicate a path traversal attack.",
+                requested_path,
+                canonical_path.display(),
+                canonical_base.display()
+            )));
+        }
+
+        debug!(
+            "Path validated: '{}' -> '{}' (within '{}')",
+            requested_path,
+            canonical_path.display(),
+            canonical_base.display()
+        );
+
+        Ok(canonical_path)
+    }
+
     async fn execute_include_vars(
         &self,
         args: &IndexMap<String, JsonValue>,
@@ -1178,7 +1667,10 @@ impl Task {
         runtime: &Arc<RwLock<RuntimeContext>>,
     ) -> ExecutorResult<TaskResult> {
         // Get file or dir parameter
-        let file = args.get("file").or_else(|| args.get("_raw_params")).and_then(|v| v.as_str());
+        let file = args
+            .get("file")
+            .or_else(|| args.get("_raw_params"))
+            .and_then(|v| v.as_str());
         let dir = args.get("dir").and_then(|v| v.as_str());
         let name = args.get("name").and_then(|v| v.as_str());
 
@@ -1194,38 +1686,29 @@ impl Task {
             ));
         }
 
-        // Determine base path
+        // Determine base path for path validation
         let base_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
         let mut all_vars: IndexMap<String, JsonValue> = IndexMap::new();
         let source: String;
 
         if let Some(file_path) = file {
-            // Load from a single file
-            let resolved_path = if std::path::Path::new(file_path).is_absolute() {
-                std::path::PathBuf::from(file_path)
-            } else {
-                base_path.join(file_path)
-            };
+            // Validate and resolve the file path with security checks
+            let resolved_path = Self::validate_include_path(file_path, &base_path)?;
 
-            if !resolved_path.exists() {
-                return Err(ExecutorError::RuntimeError(format!(
-                    "include_vars file not found: {}",
-                    resolved_path.display()
-                )));
-            }
-
-            let content = tokio::fs::read_to_string(&resolved_path).await.map_err(|e| {
-                ExecutorError::RuntimeError(format!(
-                    "Failed to read include_vars file {}: {}",
-                    resolved_path.display(),
-                    e
-                ))
-            })?;
+            let content = tokio::fs::read_to_string(&resolved_path)
+                .await
+                .map_err(|e| {
+                    ExecutorError::RuntimeError(format!(
+                        "Failed to read include_vars file {}: {}",
+                        resolved_path.display(),
+                        e
+                    ))
+                })?;
 
             // Parse as YAML (which also handles JSON)
-            let vars: IndexMap<String, serde_yaml::Value> =
-                serde_yaml::from_str(&content).map_err(|e| {
+            let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(&content)
+                .map_err(|e| {
                     ExecutorError::RuntimeError(format!(
                         "Failed to parse include_vars file {}: {}",
                         resolved_path.display(),
@@ -1236,23 +1719,22 @@ impl Task {
             // Convert YAML values to JSON values
             for (key, value) in vars {
                 let json_value = serde_json::to_value(&value).map_err(|e| {
-                    ExecutorError::RuntimeError(format!("Failed to convert variable {}: {}", key, e))
+                    ExecutorError::RuntimeError(format!(
+                        "Failed to convert variable {}: {}",
+                        key, e
+                    ))
                 })?;
                 all_vars.insert(key, json_value);
             }
 
             source = resolved_path.display().to_string();
         } else if let Some(dir_path) = dir {
-            // Load from all files in a directory
-            let resolved_path = if std::path::Path::new(dir_path).is_absolute() {
-                std::path::PathBuf::from(dir_path)
-            } else {
-                base_path.join(dir_path)
-            };
+            // Validate and resolve the directory path with security checks
+            let resolved_path = Self::validate_include_path(dir_path, &base_path)?;
 
             if !resolved_path.is_dir() {
                 return Err(ExecutorError::RuntimeError(format!(
-                    "include_vars directory not found: {}",
+                    "include_vars path is not a directory: {}",
                     resolved_path.display()
                 )));
             }
@@ -1278,6 +1760,42 @@ impl Task {
 
             files.sort();
 
+            // Validate each file in the directory is within the base path
+            // This protects against symlink attacks within the directory
+            for file_path in &files {
+                let canonical_file = file_path.canonicalize().map_err(|e| {
+                    ExecutorError::RuntimeError(format!(
+                        "Failed to resolve file path '{}': {}",
+                        file_path.display(),
+                        e
+                    ))
+                })?;
+
+                let canonical_base = base_path.canonicalize().map_err(|e| {
+                    ExecutorError::RuntimeError(format!(
+                        "Failed to resolve base path '{}': {}",
+                        base_path.display(),
+                        e
+                    ))
+                })?;
+
+                if !canonical_file.starts_with(&canonical_base) {
+                    warn!(
+                        "Security: Symlink escape blocked - '{}' (resolved to '{}') escapes base '{}'",
+                        file_path.display(),
+                        canonical_file.display(),
+                        canonical_base.display()
+                    );
+                    return Err(ExecutorError::RuntimeError(format!(
+                        "Security violation: File '{}' in include_vars directory resolves to '{}' \
+                         which is outside the allowed directory '{}'. This may indicate a symlink attack.",
+                        file_path.display(),
+                        canonical_file.display(),
+                        canonical_base.display()
+                    )));
+                }
+            }
+
             // Load each file and merge variables
             for file_path in &files {
                 let content = tokio::fs::read_to_string(file_path).await.map_err(|e| {
@@ -1288,8 +1806,8 @@ impl Task {
                     ))
                 })?;
 
-                let vars: IndexMap<String, serde_yaml::Value> =
-                    serde_yaml::from_str(&content).map_err(|e| {
+                let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(&content)
+                    .map_err(|e| {
                         ExecutorError::RuntimeError(format!(
                             "Failed to parse file {}: {}",
                             file_path.display(),
@@ -1382,7 +1900,9 @@ impl Task {
         let playbook_tasks = handler
             .load_include_tasks(&spec, runtime, &ctx.host)
             .await
-            .map_err(|e| ExecutorError::RuntimeError(format!("Failed to load include_tasks: {}", e)))?;
+            .map_err(|e| {
+                ExecutorError::RuntimeError(format!("Failed to load include_tasks: {}", e))
+            })?;
 
         debug!("Loaded {} tasks from {}", playbook_tasks.len(), file);
 
@@ -1395,7 +1915,14 @@ impl Task {
             // Convert to executor task
             let executor_task: Task = playbook_task.into();
             // Use Box::pin to handle async recursion
-            let result = Box::pin(executor_task.execute(ctx, runtime, handlers, notified, parallelization_manager)).await?;
+            let result = Box::pin(executor_task.execute(
+                ctx,
+                runtime,
+                handlers,
+                notified,
+                parallelization_manager,
+            ))
+            .await?;
 
             task_count += 1;
             if result.changed {
@@ -1556,9 +2083,310 @@ fn json_to_string(value: &JsonValue) -> String {
     }
 }
 
+/// Find the position of the matching closing parenthesis
+fn find_matching_paren(expr: &str, open_pos: usize) -> Option<usize> {
+    let bytes = expr.as_bytes();
+    let mut depth = 1;
+    let mut pos = open_pos + 1;
+
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(pos);
+                }
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    None
+}
+
+/// Find position of operator outside parentheses (returns rightmost match for left-associativity)
+fn find_operator_outside_parens(expr: &str, op: &str) -> Option<usize> {
+    let mut depth = 0;
+    let bytes = expr.as_bytes();
+    let op_bytes = op.as_bytes();
+    let mut last_match: Option<usize> = None;
+
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {
+                if depth == 0 && i + op_bytes.len() <= bytes.len() {
+                    if &bytes[i..i + op_bytes.len()] == op_bytes {
+                        last_match = Some(i);
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    last_match
+}
+
+/// Compare two JSON values with ordering
+fn compare_values(left: &JsonValue, right: &JsonValue) -> Option<std::cmp::Ordering> {
+    match (left, right) {
+        (JsonValue::Number(l), JsonValue::Number(r)) => {
+            let lf = l.as_f64()?;
+            let rf = r.as_f64()?;
+            lf.partial_cmp(&rf)
+        }
+        (JsonValue::String(l), JsonValue::String(r)) => Some(l.cmp(r)),
+        (JsonValue::String(l), JsonValue::Number(r)) => {
+            if let Ok(lf) = l.parse::<f64>() {
+                lf.partial_cmp(&r.as_f64()?)
+            } else {
+                None
+            }
+        }
+        (JsonValue::Number(l), JsonValue::String(r)) => {
+            if let Ok(rf) = r.parse::<f64>() {
+                l.as_f64()?.partial_cmp(&rf)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Compare version strings (e.g., "1.2.3" vs "1.3.0")
+fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
+    let parse_parts = |v: &str| -> Vec<i64> {
+        v.split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse::<i64>().ok())
+            .collect()
+    };
+
+    let p1 = parse_parts(v1);
+    let p2 = parse_parts(v2);
+
+    for i in 0..std::cmp::max(p1.len(), p2.len()) {
+        let n1 = p1.get(i).copied().unwrap_or(0);
+        let n2 = p2.get(i).copied().unwrap_or(0);
+        match n1.cmp(&n2) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+/// Evaluate a Jinja2 test expression (e.g., "is string", "is match('pattern')")
+fn evaluate_jinja_test(
+    value: &JsonValue,
+    test_name: &str,
+    test_arg: Option<&str>,
+    vars: &IndexMap<String, JsonValue>,
+) -> bool {
+    match test_name {
+        "defined" => !value.is_null(),
+        "undefined" => value.is_null(),
+        "none" | "null" => value.is_null(),
+        "true" => matches!(value, JsonValue::Bool(true)),
+        "false" => matches!(value, JsonValue::Bool(false)),
+        "boolean" | "bool" => matches!(value, JsonValue::Bool(_)),
+        "string" => matches!(value, JsonValue::String(_)),
+        "number" | "integer" | "float" => matches!(value, JsonValue::Number(_)),
+        "mapping" | "dict" => matches!(value, JsonValue::Object(_)),
+        "iterable" | "sequence" => matches!(value, JsonValue::Array(_) | JsonValue::String(_)),
+        "callable" => false, // Rust values are not callable in Jinja2 sense
+        "sameas" => {
+            if let Some(arg) = test_arg {
+                let other = vars.get(arg.trim()).unwrap_or(&JsonValue::Null);
+                std::ptr::eq(value, other) || value == other
+            } else {
+                false
+            }
+        }
+        "empty" => match value {
+            JsonValue::Null => true,
+            JsonValue::String(s) => s.is_empty(),
+            JsonValue::Array(a) => a.is_empty(),
+            JsonValue::Object(o) => o.is_empty(),
+            _ => false,
+        },
+        "even" => {
+            if let JsonValue::Number(n) = value {
+                n.as_i64().map(|i| i % 2 == 0).unwrap_or(false)
+            } else {
+                false
+            }
+        }
+        "odd" => {
+            if let JsonValue::Number(n) = value {
+                n.as_i64().map(|i| i % 2 != 0).unwrap_or(false)
+            } else {
+                false
+            }
+        }
+        "lower" => {
+            if let JsonValue::String(s) = value {
+                s.chars().all(|c| !c.is_alphabetic() || c.is_lowercase())
+            } else {
+                false
+            }
+        }
+        "upper" => {
+            if let JsonValue::String(s) = value {
+                s.chars().all(|c| !c.is_alphabetic() || c.is_uppercase())
+            } else {
+                false
+            }
+        }
+        "match" | "regex" => {
+            if let (JsonValue::String(s), Some(pattern)) = (value, test_arg) {
+                let pattern = pattern.trim().trim_matches(|c| c == '\'' || c == '"');
+                regex::Regex::new(pattern)
+                    .map(|re| re.is_match(s))
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }
+        "search" => {
+            if let (JsonValue::String(s), Some(pattern)) = (value, test_arg) {
+                let pattern = pattern.trim().trim_matches(|c| c == '\'' || c == '"');
+                regex::Regex::new(pattern)
+                    .map(|re| re.find(s).is_some())
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }
+        "divisibleby" => {
+            if let (JsonValue::Number(n), Some(arg)) = (value, test_arg) {
+                let arg = arg.trim().trim_matches(|c| c == '\'' || c == '"');
+                if let (Some(val), Ok(div)) = (n.as_i64(), arg.parse::<i64>()) {
+                    div != 0 && val % div == 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+        "startswith" => {
+            if let (JsonValue::String(s), Some(arg)) = (value, test_arg) {
+                let prefix = arg.trim().trim_matches(|c| c == '\'' || c == '"');
+                s.starts_with(prefix)
+            } else {
+                false
+            }
+        }
+        "endswith" => {
+            if let (JsonValue::String(s), Some(arg)) = (value, test_arg) {
+                let suffix = arg.trim().trim_matches(|c| c == '\'' || c == '"');
+                s.ends_with(suffix)
+            } else {
+                false
+            }
+        }
+        "version" | "version_compare" => {
+            if let (JsonValue::String(val), Some(args)) = (value, test_arg) {
+                let parts: Vec<&str> = args.split(',').collect();
+                if parts.len() >= 2 {
+                    let arg1 = parts[0].trim().trim_matches(|c| c == '\'' || c == '"');
+                    let arg2 = parts[1].trim().trim_matches(|c| c == '\'' || c == '"');
+                    let (op, version) = if [
+                        "<", ">", "<=", ">=", "==", "!=", "lt", "gt", "le", "ge", "eq", "ne",
+                    ]
+                    .contains(&arg1)
+                    {
+                        (arg1, arg2)
+                    } else {
+                        (arg2, arg1)
+                    };
+                    let cmp = compare_versions(val, version);
+                    match op {
+                        "<" | "lt" => cmp == std::cmp::Ordering::Less,
+                        ">" | "gt" => cmp == std::cmp::Ordering::Greater,
+                        "<=" | "le" => cmp != std::cmp::Ordering::Greater,
+                        ">=" | "ge" => cmp != std::cmp::Ordering::Less,
+                        "==" | "eq" => cmp == std::cmp::Ordering::Equal,
+                        "!=" | "ne" => cmp != std::cmp::Ordering::Equal,
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+        "subset" => {
+            if let (JsonValue::Array(subset), Some(arg)) = (value, test_arg) {
+                if let Some(JsonValue::Array(superset)) = vars.get(arg.trim()) {
+                    subset.iter().all(|item| superset.contains(item))
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+        "superset" => {
+            if let (JsonValue::Array(superset), Some(arg)) = (value, test_arg) {
+                if let Some(JsonValue::Array(subset)) = vars.get(arg.trim()) {
+                    subset.iter().all(|item| superset.contains(item))
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+        "in" => {
+            if let Some(arg) = test_arg {
+                if let Some(container) = vars.get(arg.trim()) {
+                    match container {
+                        JsonValue::Array(arr) => arr.contains(value),
+                        JsonValue::String(s) => {
+                            if let JsonValue::String(v) = value {
+                                s.contains(v.as_str())
+                            } else {
+                                false
+                            }
+                        }
+                        JsonValue::Object(obj) => {
+                            if let JsonValue::String(k) = value {
+                                obj.contains_key(k)
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+        "truthy" => is_truthy(value),
+        "falsy" => !is_truthy(value),
+        "abs" => matches!(value, JsonValue::Number(_)),
+        _ => false,
+    }
+}
+
 /// Evaluate a conditional expression
 fn evaluate_expression(expr: &str, vars: &IndexMap<String, JsonValue>) -> ExecutorResult<bool> {
     let expr = expr.trim();
+
+    // Handle empty expression
+    if expr.is_empty() {
+        return Ok(true);
+    }
 
     // Handle simple boolean expressions
     if expr == "true" || expr == "True" {
@@ -1568,22 +2396,17 @@ fn evaluate_expression(expr: &str, vars: &IndexMap<String, JsonValue>) -> Execut
         return Ok(false);
     }
 
-    // Handle 'not' expressions
-    if let Some(inner) = expr.strip_prefix("not ") {
-        return Ok(!evaluate_expression(inner.trim(), vars)?);
+    // Handle parenthesized expressions first
+    if expr.starts_with('(') {
+        if let Some(close_pos) = find_matching_paren(expr, 0) {
+            if close_pos == expr.len() - 1 {
+                return evaluate_expression(&expr[1..close_pos], vars);
+            }
+        }
     }
 
-    // Handle 'and' expressions
-    if let Some(pos) = expr.find(" and ") {
-        let left = &expr[..pos];
-        let right = &expr[pos + 5..];
-        return Ok(
-            evaluate_expression(left.trim(), vars)? && evaluate_expression(right.trim(), vars)?
-        );
-    }
-
-    // Handle 'or' expressions
-    if let Some(pos) = expr.find(" or ") {
+    // Handle 'or' expressions (lowest precedence, check first for left-to-right)
+    if let Some(pos) = find_operator_outside_parens(expr, " or ") {
         let left = &expr[..pos];
         let right = &expr[pos + 4..];
         return Ok(
@@ -1591,44 +2414,155 @@ fn evaluate_expression(expr: &str, vars: &IndexMap<String, JsonValue>) -> Execut
         );
     }
 
-    // Handle comparison operators
-    if let Some(pos) = expr.find(" == ") {
+    // Handle 'and' expressions
+    if let Some(pos) = find_operator_outside_parens(expr, " and ") {
+        let left = &expr[..pos];
+        let right = &expr[pos + 5..];
+        return Ok(
+            evaluate_expression(left.trim(), vars)? && evaluate_expression(right.trim(), vars)?
+        );
+    }
+
+    // Handle 'not' expressions (must be at the start)
+    if let Some(inner) = expr.strip_prefix("not ") {
+        return Ok(!evaluate_expression(inner.trim(), vars)?);
+    }
+
+    // Handle 'not in' expressions (must check before 'in')
+    if let Some(pos) = find_operator_outside_parens(expr, " not in ") {
+        let left_str = expr[..pos].trim();
+        let right_str = expr[pos + 8..].trim();
+        let left = evaluate_variable_expression(left_str, vars)?;
+        let right = parse_value(right_str, vars)?;
+
+        let result = match right {
+            JsonValue::Array(arr) => arr.contains(&left),
+            JsonValue::String(s) => {
+                if let JsonValue::String(l) = &left {
+                    s.contains(l.as_str())
+                } else {
+                    false
+                }
+            }
+            JsonValue::Object(obj) => {
+                if let JsonValue::String(k) = &left {
+                    obj.contains_key(k)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+        return Ok(!result);
+    }
+
+    // Handle comparison operators (check >= and <= before > and <)
+    if let Some(pos) = find_operator_outside_parens(expr, " >= ") {
+        let left = evaluate_variable_expression(&expr[..pos].trim(), vars)?;
+        let right_str = expr[pos + 4..].trim();
+        let right = parse_value(right_str, vars)?;
+        return Ok(compare_values(&left, &right)
+            .map(|c| c != std::cmp::Ordering::Less)
+            .unwrap_or(false));
+    }
+
+    if let Some(pos) = find_operator_outside_parens(expr, " <= ") {
+        let left = evaluate_variable_expression(&expr[..pos].trim(), vars)?;
+        let right_str = expr[pos + 4..].trim();
+        let right = parse_value(right_str, vars)?;
+        return Ok(compare_values(&left, &right)
+            .map(|c| c != std::cmp::Ordering::Greater)
+            .unwrap_or(false));
+    }
+
+    if let Some(pos) = find_operator_outside_parens(expr, " > ") {
+        let left = evaluate_variable_expression(&expr[..pos].trim(), vars)?;
+        let right_str = expr[pos + 3..].trim();
+        let right = parse_value(right_str, vars)?;
+        return Ok(compare_values(&left, &right)
+            .map(|c| c == std::cmp::Ordering::Greater)
+            .unwrap_or(false));
+    }
+
+    if let Some(pos) = find_operator_outside_parens(expr, " < ") {
+        let left = evaluate_variable_expression(&expr[..pos].trim(), vars)?;
+        let right_str = expr[pos + 3..].trim();
+        let right = parse_value(right_str, vars)?;
+        return Ok(compare_values(&left, &right)
+            .map(|c| c == std::cmp::Ordering::Less)
+            .unwrap_or(false));
+    }
+
+    // Handle equality operators
+    if let Some(pos) = find_operator_outside_parens(expr, " == ") {
         let left = evaluate_variable_expression(&expr[..pos].trim(), vars)?;
         let right_str = expr[pos + 4..].trim();
         let right = parse_value(right_str, vars)?;
         return Ok(left == right);
     }
 
-    if let Some(pos) = expr.find(" != ") {
+    if let Some(pos) = find_operator_outside_parens(expr, " != ") {
         let left = evaluate_variable_expression(&expr[..pos].trim(), vars)?;
         let right_str = expr[pos + 4..].trim();
         let right = parse_value(right_str, vars)?;
         return Ok(left != right);
     }
 
-    if let Some(pos) = expr.find(" is defined") {
+    // Handle 'is not' tests (must check before 'is')
+    if let Some(pos) = find_operator_outside_parens(expr, " is not ") {
         let var_name = expr[..pos].trim();
+        let test_expr = expr[pos + 8..].trim();
         let value = evaluate_variable_expression(var_name, vars)?;
-        return Ok(!value.is_null());
+
+        let (test_name, test_arg) = if let Some(paren_pos) = test_expr.find('(') {
+            let name = test_expr[..paren_pos].trim();
+            let arg_end = test_expr.rfind(')').unwrap_or(test_expr.len());
+            let arg = &test_expr[paren_pos + 1..arg_end];
+            (name, Some(arg))
+        } else {
+            (test_expr, None)
+        };
+
+        return Ok(!evaluate_jinja_test(&value, test_name, test_arg, vars));
     }
 
-    if let Some(pos) = expr.find(" is not defined") {
+    // Handle 'is' tests
+    if let Some(pos) = find_operator_outside_parens(expr, " is ") {
         let var_name = expr[..pos].trim();
+        let test_expr = expr[pos + 4..].trim();
         let value = evaluate_variable_expression(var_name, vars)?;
-        return Ok(value.is_null());
+
+        let (test_name, test_arg) = if let Some(paren_pos) = test_expr.find('(') {
+            let name = test_expr[..paren_pos].trim();
+            let arg_end = test_expr.rfind(')').unwrap_or(test_expr.len());
+            let arg = &test_expr[paren_pos + 1..arg_end];
+            (name, Some(arg))
+        } else {
+            (test_expr, None)
+        };
+
+        return Ok(evaluate_jinja_test(&value, test_name, test_arg, vars));
     }
 
-    if let Some(pos) = expr.find(" in ") {
+    // Handle 'in' expressions
+    if let Some(pos) = find_operator_outside_parens(expr, " in ") {
         let left_str = expr[..pos].trim();
         let right_str = expr[pos + 4..].trim();
         let left = evaluate_variable_expression(left_str, vars)?;
-        let right = evaluate_variable_expression(right_str, vars)?;
+        let right = parse_value(right_str, vars)?;
 
         return match right {
             JsonValue::Array(arr) => Ok(arr.contains(&left)),
             JsonValue::String(s) => {
                 if let JsonValue::String(l) = left {
                     Ok(s.contains(&l))
+                } else {
+                    Ok(false)
+                }
+            }
+            JsonValue::Object(obj) => {
+                if let JsonValue::String(k) = left {
+                    Ok(obj.contains_key(&k))
                 } else {
                     Ok(false)
                 }

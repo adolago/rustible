@@ -1,0 +1,46 @@
+# E2E Test Inventory
+# This inventory is used for Docker-based E2E testing
+---
+all:
+  vars:
+    ansible_user: testuser
+    ansible_ssh_pass: testpassword
+    ansible_become: true
+    ansible_become_method: sudo
+    ansible_python_interpreter: /usr/bin/python3
+    env: test
+    datacenter: docker
+
+  children:
+    webservers:
+      hosts:
+        web1:
+          ansible_host: localhost
+          ansible_port: 2221
+        web2:
+          ansible_host: localhost
+          ansible_port: 2222
+      vars:
+        http_port: 80
+        nginx_worker_processes: 2
+
+    databases:
+      hosts:
+        db1:
+          ansible_host: localhost
+          ansible_port: 2223
+      vars:
+        db_port: 5432
+        max_connections: 50
+
+    appservers:
+      hosts:
+        app1:
+          ansible_host: localhost
+          ansible_port: 2224
+        app2:
+          ansible_host: localhost
+          ansible_port: 2225
+      vars:
+        app_port: 8080
+        worker_count: 2

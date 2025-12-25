@@ -500,6 +500,7 @@ impl SyslogConfigBuilder {
 
 /// Structured log entry for JSON format.
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 struct LogEntry {
     /// Event type
     event: String,
@@ -537,15 +538,11 @@ struct UnixSyslogWriter {
 #[cfg(unix)]
 impl UnixSyslogWriter {
     fn new(ident: &str, options: libc::c_int, facility: SyslogFacility) -> SyslogResult<Self> {
-        let c_ident = std::ffi::CString::new(ident)
-            .map_err(|e| SyslogError::OpenFailed(e.to_string()))?;
+        let c_ident =
+            std::ffi::CString::new(ident).map_err(|e| SyslogError::OpenFailed(e.to_string()))?;
 
         unsafe {
-            libc::openlog(
-                c_ident.as_ptr(),
-                options,
-                (facility as libc::c_int) << 3,
-            );
+            libc::openlog(c_ident.as_ptr(), options, (facility as libc::c_int) << 3);
         }
 
         Ok(Self { _ident: c_ident })
@@ -559,7 +556,11 @@ impl SyslogWriter for UnixSyslogWriter {
             .map_err(|e| SyslogError::WriteFailed(io::Error::new(io::ErrorKind::InvalidData, e)))?;
 
         unsafe {
-            libc::syslog(priority as libc::c_int, b"%s\0".as_ptr() as *const libc::c_char, c_message.as_ptr());
+            libc::syslog(
+                priority as libc::c_int,
+                b"%s\0".as_ptr() as *const libc::c_char,
+                c_message.as_ptr(),
+            );
         }
 
         Ok(())
@@ -581,12 +582,14 @@ impl Drop for UnixSyslogWriter {
 
 /// Fallback writer that writes to stderr (for non-Unix or testing).
 #[derive(Debug)]
+#[allow(dead_code)]
 struct StderrSyslogWriter {
     ident: String,
     facility: SyslogFacility,
 }
 
 impl StderrSyslogWriter {
+    #[allow(dead_code)]
     fn new(ident: &str, facility: SyslogFacility) -> Self {
         Self {
             ident: ident.to_string(),
@@ -745,12 +748,7 @@ impl SyslogCallback {
     }
 
     /// Logs an event with the given severity and fields.
-    fn log_event(
-        &self,
-        event: &str,
-        severity: SyslogSeverity,
-        fields: serde_json::Value,
-    ) {
+    fn log_event(&self, event: &str, severity: SyslogSeverity, fields: serde_json::Value) {
         if !self.should_log(severity) {
             let mut stats = self.stats.write();
             stats.messages_filtered += 1;
@@ -902,8 +900,7 @@ impl SyslogCallback {
 
     /// Escapes a CEF header field.
     fn escape_cef_header(s: &str) -> String {
-        s.replace('\\', "\\\\")
-            .replace('|', "\\|")
+        s.replace('\\', "\\\\").replace('|', "\\|")
     }
 
     /// Escapes a CEF extension key.
@@ -1303,10 +1300,7 @@ mod tests {
             SyslogCallback::escape_cef_header("test|value"),
             "test\\|value"
         );
-        assert_eq!(
-            SyslogCallback::escape_cef_value("key=value"),
-            "key\\=value"
-        );
+        assert_eq!(SyslogCallback::escape_cef_value("key=value"), "key\\=value");
         assert_eq!(
             SyslogCallback::escape_cef_value("line1\nline2"),
             "line1\\nline2"
@@ -1501,11 +1495,7 @@ mod tests {
         let (callback, _) = create_test_callback();
 
         // Log a message
-        callback.log_event(
-            "test",
-            SyslogSeverity::Info,
-            serde_json::json!({}),
-        );
+        callback.log_event("test", SyslogSeverity::Info, serde_json::json!({}));
 
         let stats = callback.stats();
         assert_eq!(stats.messages_logged, 1);
@@ -1527,11 +1517,7 @@ mod tests {
         };
 
         // Log a debug message (should be filtered)
-        callback.log_event(
-            "test",
-            SyslogSeverity::Debug,
-            serde_json::json!({}),
-        );
+        callback.log_event("test", SyslogSeverity::Debug, serde_json::json!({}));
 
         let stats = callback.stats();
         assert_eq!(stats.messages_logged, 0);

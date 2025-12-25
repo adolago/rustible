@@ -290,6 +290,21 @@ pub struct RuntimeContext {
 
     /// Magic variables
     magic_vars: IndexMap<String, JsonValue>,
+
+    /// Role defaults (lowest precedence)
+    role_defaults: IndexMap<String, JsonValue>,
+
+    /// Block-level variables
+    block_vars: IndexMap<String, JsonValue>,
+
+    /// Include vars (from include_vars module)
+    include_vars: IndexMap<String, JsonValue>,
+
+    /// Role params (when including roles)
+    role_params: IndexMap<String, JsonValue>,
+
+    /// Include params
+    include_params: IndexMap<String, JsonValue>,
 }
 
 impl RuntimeContext {
@@ -647,6 +662,324 @@ impl RuntimeContext {
     pub fn get_all_groups(&self) -> Vec<String> {
         self.groups.keys().cloned().collect()
     }
+
+    // =========================================================================
+    // Variable Precedence Methods (following Ansible precedence order)
+    // =========================================================================
+
+    /// Set a role default variable (lowest precedence after command line values)
+    pub fn set_role_default(&mut self, name: String, value: JsonValue) {
+        trace!("Setting role default: {} = {:?}", name, value);
+        self.role_defaults.insert(name, value);
+    }
+
+    /// Set a block-level variable
+    pub fn set_block_var(&mut self, name: String, value: JsonValue) {
+        trace!("Setting block var: {} = {:?}", name, value);
+        self.block_vars.insert(name, value);
+    }
+
+    /// Clear block-level variables (called when exiting a block)
+    pub fn clear_block_vars(&mut self) {
+        self.block_vars.clear();
+    }
+
+    /// Set an include_vars variable
+    pub fn set_include_var(&mut self, name: String, value: JsonValue) {
+        trace!("Setting include var: {} = {:?}", name, value);
+        self.include_vars.insert(name, value);
+    }
+
+    /// Set role params (when using include_role with parameters)
+    pub fn set_role_param(&mut self, name: String, value: JsonValue) {
+        trace!("Setting role param: {} = {:?}", name, value);
+        self.role_params.insert(name, value);
+    }
+
+    /// Clear role params (after role execution)
+    pub fn clear_role_params(&mut self) {
+        self.role_params.clear();
+    }
+
+    /// Set include params
+    pub fn set_include_param(&mut self, name: String, value: JsonValue) {
+        trace!("Setting include param: {} = {:?}", name, value);
+        self.include_params.insert(name, value);
+    }
+
+    /// Clear include params
+    pub fn clear_include_params(&mut self) {
+        self.include_params.clear();
+    }
+
+    // =========================================================================
+    // Special Variables: hostvars, groups, inventory_hostname
+    // =========================================================================
+
+    /// Get hostvars for accessing variables from other hosts
+    /// Usage: hostvars["other_host"]["some_var"]
+    pub fn get_hostvars(&self) -> IndexMap<String, IndexMap<String, JsonValue>> {
+        let mut hostvars = IndexMap::new();
+
+        for host_name in &self.all_hosts {
+            hostvars.insert(host_name.clone(), self.get_merged_vars(host_name));
+        }
+
+        hostvars
+    }
+
+    /// Get hostvars for a specific host
+    pub fn get_hostvars_for_host(&self, host: &str) -> Option<IndexMap<String, JsonValue>> {
+        if self.all_hosts.contains(&host.to_string()) {
+            Some(self.get_merged_vars(host))
+        } else {
+            None
+        }
+    }
+
+    /// Get groups dictionary mapping group names to hosts
+    pub fn get_groups_dict(&self) -> IndexMap<String, Vec<String>> {
+        let mut groups_dict = IndexMap::new();
+
+        for (group_name, group) in &self.groups {
+            groups_dict.insert(group_name.clone(), group.hosts.clone());
+        }
+
+        // Ensure 'all' group contains all hosts
+        groups_dict.insert("all".to_string(), self.all_hosts.clone());
+
+        groups_dict
+    }
+
+    /// Get group_names for a specific host (list of groups the host belongs to)
+    pub fn get_group_names_for_host(&self, host: &str) -> Vec<String> {
+        let mut group_names = Vec::new();
+
+        for (group_name, group) in &self.groups {
+            if group.hosts.contains(&host.to_string()) {
+                group_names.push(group_name.clone());
+            }
+        }
+
+        // Always include 'all'
+        if !group_names.contains(&"all".to_string()) {
+            group_names.push("all".to_string());
+        }
+
+        group_names
+    }
+
+    /// Get inventory_hostname (the current host being targeted)
+    /// This is set per-task context
+    pub fn get_inventory_hostname(&self, current_host: &str) -> String {
+        current_host.to_string()
+    }
+
+    /// Get inventory_hostname_short (hostname without domain)
+    pub fn get_inventory_hostname_short(&self, current_host: &str) -> String {
+        current_host
+            .split('.')
+            .next()
+            .unwrap_or(current_host)
+            .to_string()
+    }
+
+    /// Get ansible_play_hosts (all hosts in current play)
+    pub fn get_play_hosts(&self) -> Vec<String> {
+        self.all_hosts.clone()
+    }
+
+    /// Get ansible_play_batch (current batch when using serial)
+    pub fn get_play_batch(&self) -> Vec<String> {
+        // For now, return all hosts. This would be updated during serial execution
+        self.all_hosts.clone()
+    }
+
+    /// Set a group variable
+    pub fn set_group_var(&mut self, group: &str, name: String, value: JsonValue) {
+        let group_data = self
+            .groups
+            .entry(group.to_string())
+            .or_insert_with(InventoryGroup::default);
+        group_data.vars.insert(name, value);
+    }
+
+    /// Get a group variable
+    pub fn get_group_var(&self, group: &str, name: &str) -> Option<&JsonValue> {
+        self.groups.get(group).and_then(|g| g.vars.get(name))
+    }
+
+    /// Get all group variables for a group
+    pub fn get_all_group_vars(&self, group: &str) -> Option<&IndexMap<String, JsonValue>> {
+        self.groups.get(group).map(|g| &g.vars)
+    }
+
+    // =========================================================================
+    // Variable Resolution with Full Precedence
+    // =========================================================================
+
+    /// Get a variable following full Ansible precedence order
+    /// Precedence (lowest to highest):
+    /// 1. Role defaults
+    /// 2. Inventory group vars
+    /// 3. Inventory host vars
+    /// 4. Playbook vars (global_vars)
+    /// 5. Play vars (play_vars)
+    /// 6. Block vars
+    /// 7. Task vars
+    /// 8. Include vars
+    /// 9. Set facts / registered vars
+    /// 10. Role params
+    /// 11. Include params
+    /// 12. Extra vars (highest precedence)
+    pub fn get_var_with_full_precedence(
+        &self,
+        name: &str,
+        host: Option<&str>,
+    ) -> Option<JsonValue> {
+        // Check in order of precedence (highest first)
+
+        // 12. Extra vars (highest)
+        if let Some(v) = self.extra_vars.get(name) {
+            return Some(v.clone());
+        }
+
+        // 11. Include params
+        if let Some(v) = self.include_params.get(name) {
+            return Some(v.clone());
+        }
+
+        // 10. Role params
+        if let Some(v) = self.role_params.get(name) {
+            return Some(v.clone());
+        }
+
+        // 9. Registered variables and set_fact (check host data)
+        if let Some(host_name) = host {
+            if let Some(host_data) = self.host_data.get(host_name) {
+                if let Some(reg) = host_data.get_registered(name) {
+                    return Some(reg.to_json());
+                }
+            }
+        }
+
+        // 8. Include vars
+        if let Some(v) = self.include_vars.get(name) {
+            return Some(v.clone());
+        }
+
+        // 7. Task variables
+        if let Some(v) = self.task_vars.get(name) {
+            return Some(v.clone());
+        }
+
+        // 6. Block vars
+        if let Some(v) = self.block_vars.get(name) {
+            return Some(v.clone());
+        }
+
+        // 5. Play variables
+        if let Some(v) = self.play_vars.get(name) {
+            return Some(v.clone());
+        }
+
+        // 4. Global (playbook) variables
+        if let Some(v) = self.global_vars.get(name) {
+            return Some(v.clone());
+        }
+
+        // 3. Host variables from inventory
+        if let Some(host_name) = host {
+            if let Some(host_data) = self.host_data.get(host_name) {
+                if let Some(v) = host_data.get_var(name) {
+                    return Some(v.clone());
+                }
+            }
+        }
+
+        // 2. Group variables (in order of group hierarchy, more specific last)
+        if let Some(host_name) = host {
+            // Get groups for this host and check their vars
+            for (_group_name, group) in &self.groups {
+                if group.hosts.contains(&host_name.to_string()) {
+                    if let Some(v) = group.vars.get(name) {
+                        return Some(v.clone());
+                    }
+                }
+            }
+        }
+
+        // 1. Role defaults (lowest)
+        if let Some(v) = self.role_defaults.get(name) {
+            return Some(v.clone());
+        }
+
+        // Magic variables (built-in)
+        if let Some(v) = self.magic_vars.get(name) {
+            return Some(v.clone());
+        }
+
+        None
+    }
+
+    /// Build complete context for template rendering
+    /// Returns all variables merged according to precedence with special vars
+    pub fn build_template_context(&self, host: &str) -> IndexMap<String, JsonValue> {
+        let mut context = self.get_merged_vars(host);
+
+        // Add special variables
+        context.insert(
+            "inventory_hostname".to_string(),
+            JsonValue::String(host.to_string()),
+        );
+        context.insert(
+            "inventory_hostname_short".to_string(),
+            JsonValue::String(self.get_inventory_hostname_short(host)),
+        );
+
+        // Add group_names
+        let group_names = self.get_group_names_for_host(host);
+        context.insert(
+            "group_names".to_string(),
+            serde_json::to_value(&group_names).unwrap_or(JsonValue::Array(vec![])),
+        );
+
+        // Add groups dict
+        let groups_dict = self.get_groups_dict();
+        context.insert(
+            "groups".to_string(),
+            serde_json::to_value(&groups_dict).unwrap_or(JsonValue::Object(serde_json::Map::new())),
+        );
+
+        // Add hostvars (lazy - would be accessed via hostvars[hostname])
+        // For template context, we include it as a nested structure
+        let hostvars = self.get_hostvars();
+        context.insert(
+            "hostvars".to_string(),
+            serde_json::to_value(&hostvars).unwrap_or(JsonValue::Object(serde_json::Map::new())),
+        );
+
+        // Add play_hosts
+        context.insert(
+            "ansible_play_hosts".to_string(),
+            serde_json::to_value(&self.all_hosts).unwrap_or(JsonValue::Array(vec![])),
+        );
+        context.insert(
+            "ansible_play_hosts_all".to_string(),
+            serde_json::to_value(&self.all_hosts).unwrap_or(JsonValue::Array(vec![])),
+        );
+
+        // Add ansible_host (connection address)
+        // If set as host var, use it; otherwise use inventory_hostname
+        if !context.contains_key("ansible_host") {
+            context.insert(
+                "ansible_host".to_string(),
+                JsonValue::String(host.to_string()),
+            );
+        }
+
+        context
+    }
 }
 
 /// Thread-safe wrapper for RuntimeContext
@@ -784,6 +1117,273 @@ mod tests {
         assert_eq!(
             merged.get("inventory_hostname"),
             Some(&serde_json::json!("server1"))
+        );
+    }
+
+    #[test]
+    fn test_hostvars_access() {
+        let mut ctx = RuntimeContext::new();
+
+        // Setup hosts
+        ctx.add_host("web1".to_string(), Some("webservers"));
+        ctx.add_host("web2".to_string(), Some("webservers"));
+        ctx.add_host("db1".to_string(), Some("databases"));
+
+        // Set some host-specific variables
+        ctx.set_host_var("web1", "http_port".to_string(), serde_json::json!(80));
+        ctx.set_host_var("web2", "http_port".to_string(), serde_json::json!(8080));
+        ctx.set_host_var("db1", "db_port".to_string(), serde_json::json!(5432));
+
+        // Test hostvars access
+        let hostvars = ctx.get_hostvars();
+
+        assert!(hostvars.contains_key("web1"));
+        assert!(hostvars.contains_key("web2"));
+        assert!(hostvars.contains_key("db1"));
+
+        // Check specific host vars
+        let web1_vars = hostvars.get("web1").unwrap();
+        assert_eq!(web1_vars.get("http_port"), Some(&serde_json::json!(80)));
+
+        let db1_vars = hostvars.get("db1").unwrap();
+        assert_eq!(db1_vars.get("db_port"), Some(&serde_json::json!(5432)));
+    }
+
+    #[test]
+    fn test_hostvars_for_specific_host() {
+        let mut ctx = RuntimeContext::new();
+
+        ctx.add_host("server1".to_string(), Some("webservers"));
+        ctx.set_host_var(
+            "server1",
+            "custom_var".to_string(),
+            serde_json::json!("value1"),
+        );
+
+        let hostvars = ctx.get_hostvars_for_host("server1");
+        assert!(hostvars.is_some());
+        let vars = hostvars.unwrap();
+        assert_eq!(vars.get("custom_var"), Some(&serde_json::json!("value1")));
+
+        // Non-existent host
+        let missing = ctx.get_hostvars_for_host("nonexistent");
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn test_groups_dict() {
+        let mut ctx = RuntimeContext::new();
+
+        ctx.add_host("web1".to_string(), Some("webservers"));
+        ctx.add_host("web2".to_string(), Some("webservers"));
+        ctx.add_host("db1".to_string(), Some("databases"));
+
+        let groups = ctx.get_groups_dict();
+
+        // Check webservers group
+        assert!(groups.contains_key("webservers"));
+        let web_hosts = groups.get("webservers").unwrap();
+        assert!(web_hosts.contains(&"web1".to_string()));
+        assert!(web_hosts.contains(&"web2".to_string()));
+
+        // Check databases group
+        assert!(groups.contains_key("databases"));
+        let db_hosts = groups.get("databases").unwrap();
+        assert!(db_hosts.contains(&"db1".to_string()));
+
+        // Check all group
+        assert!(groups.contains_key("all"));
+        let all_hosts = groups.get("all").unwrap();
+        assert_eq!(all_hosts.len(), 3);
+    }
+
+    #[test]
+    fn test_group_names_for_host() {
+        let mut ctx = RuntimeContext::new();
+
+        ctx.add_host("web1".to_string(), Some("webservers"));
+
+        let group_names = ctx.get_group_names_for_host("web1");
+
+        assert!(group_names.contains(&"webservers".to_string()));
+        assert!(group_names.contains(&"all".to_string()));
+    }
+
+    #[test]
+    fn test_inventory_hostname_short() {
+        let ctx = RuntimeContext::new();
+
+        // Test FQDN
+        assert_eq!(
+            ctx.get_inventory_hostname_short("server1.example.com"),
+            "server1"
+        );
+
+        // Test simple hostname
+        assert_eq!(ctx.get_inventory_hostname_short("server1"), "server1");
+
+        // Test IP address (should return the whole thing)
+        assert_eq!(ctx.get_inventory_hostname_short("192.168.1.1"), "192");
+    }
+
+    #[test]
+    fn test_role_defaults_precedence() {
+        let mut ctx = RuntimeContext::new();
+
+        // Role defaults are lowest precedence
+        ctx.set_role_default("my_var".to_string(), serde_json::json!("default_value"));
+        assert_eq!(
+            ctx.get_var_with_full_precedence("my_var", None),
+            Some(serde_json::json!("default_value"))
+        );
+
+        // Play vars should override
+        ctx.set_play_var("my_var".to_string(), serde_json::json!("play_value"));
+        assert_eq!(
+            ctx.get_var_with_full_precedence("my_var", None),
+            Some(serde_json::json!("play_value"))
+        );
+
+        // Extra vars should override all
+        ctx.set_extra_var("my_var".to_string(), serde_json::json!("extra_value"));
+        assert_eq!(
+            ctx.get_var_with_full_precedence("my_var", None),
+            Some(serde_json::json!("extra_value"))
+        );
+    }
+
+    #[test]
+    fn test_block_vars_scope() {
+        let mut ctx = RuntimeContext::new();
+
+        ctx.set_block_var("block_var".to_string(), serde_json::json!("block_value"));
+        assert_eq!(
+            ctx.get_var_with_full_precedence("block_var", None),
+            Some(serde_json::json!("block_value"))
+        );
+
+        // Clear block vars (simulating exiting a block)
+        ctx.clear_block_vars();
+        assert_eq!(ctx.get_var_with_full_precedence("block_var", None), None);
+    }
+
+    #[test]
+    fn test_include_vars_precedence() {
+        let mut ctx = RuntimeContext::new();
+
+        ctx.set_task_var("my_var".to_string(), serde_json::json!("task_value"));
+        ctx.set_include_var("my_var".to_string(), serde_json::json!("include_value"));
+
+        // Include vars should override task vars
+        assert_eq!(
+            ctx.get_var_with_full_precedence("my_var", None),
+            Some(serde_json::json!("include_value"))
+        );
+    }
+
+    #[test]
+    fn test_role_params_precedence() {
+        let mut ctx = RuntimeContext::new();
+
+        ctx.set_include_var("my_var".to_string(), serde_json::json!("include_value"));
+        ctx.set_role_param("my_var".to_string(), serde_json::json!("role_param_value"));
+
+        // Role params should override include vars
+        assert_eq!(
+            ctx.get_var_with_full_precedence("my_var", None),
+            Some(serde_json::json!("role_param_value"))
+        );
+
+        // Clear role params
+        ctx.clear_role_params();
+        assert_eq!(
+            ctx.get_var_with_full_precedence("my_var", None),
+            Some(serde_json::json!("include_value"))
+        );
+    }
+
+    #[test]
+    fn test_group_vars() {
+        let mut ctx = RuntimeContext::new();
+
+        ctx.add_host("web1".to_string(), Some("webservers"));
+        ctx.set_group_var("webservers", "http_port".to_string(), serde_json::json!(80));
+
+        // Check group var is accessible
+        let group_var = ctx.get_group_var("webservers", "http_port");
+        assert_eq!(group_var, Some(&serde_json::json!(80)));
+
+        // Check through precedence chain
+        let var = ctx.get_var_with_full_precedence("http_port", Some("web1"));
+        assert_eq!(var, Some(serde_json::json!(80)));
+    }
+
+    #[test]
+    fn test_build_template_context() {
+        let mut ctx = RuntimeContext::new();
+
+        ctx.add_host("web1".to_string(), Some("webservers"));
+        ctx.add_host("web2".to_string(), Some("webservers"));
+        ctx.set_host_var("web1", "custom".to_string(), serde_json::json!("value"));
+
+        let context = ctx.build_template_context("web1");
+
+        // Check special variables are present
+        assert_eq!(
+            context.get("inventory_hostname"),
+            Some(&serde_json::json!("web1"))
+        );
+        assert!(context.contains_key("group_names"));
+        assert!(context.contains_key("groups"));
+        assert!(context.contains_key("hostvars"));
+        assert!(context.contains_key("ansible_play_hosts"));
+        assert_eq!(context.get("custom"), Some(&serde_json::json!("value")));
+    }
+
+    #[test]
+    fn test_full_precedence_chain() {
+        let mut ctx = RuntimeContext::new();
+        ctx.add_host("server1".to_string(), Some("webservers"));
+
+        // Set variable at every level
+        ctx.set_role_default("test_var".to_string(), serde_json::json!("role_default"));
+        ctx.set_group_var(
+            "webservers",
+            "test_var".to_string(),
+            serde_json::json!("group_var"),
+        );
+        ctx.set_host_var(
+            "server1",
+            "test_var".to_string(),
+            serde_json::json!("host_var"),
+        );
+        ctx.set_global_var("test_var".to_string(), serde_json::json!("global_var"));
+        ctx.set_play_var("test_var".to_string(), serde_json::json!("play_var"));
+        ctx.set_block_var("test_var".to_string(), serde_json::json!("block_var"));
+        ctx.set_task_var("test_var".to_string(), serde_json::json!("task_var"));
+        ctx.set_include_var("test_var".to_string(), serde_json::json!("include_var"));
+        ctx.set_role_param("test_var".to_string(), serde_json::json!("role_param"));
+        ctx.set_include_param("test_var".to_string(), serde_json::json!("include_param"));
+        ctx.set_extra_var("test_var".to_string(), serde_json::json!("extra_var"));
+
+        // Extra vars should win
+        assert_eq!(
+            ctx.get_var_with_full_precedence("test_var", Some("server1")),
+            Some(serde_json::json!("extra_var"))
+        );
+
+        // Remove extra_var, include_param should win
+        ctx.extra_vars.remove("test_var");
+        assert_eq!(
+            ctx.get_var_with_full_precedence("test_var", Some("server1")),
+            Some(serde_json::json!("include_param"))
+        );
+
+        // Remove include_param, role_param should win
+        ctx.include_params.remove("test_var");
+        assert_eq!(
+            ctx.get_var_with_full_precedence("test_var", Some("server1")),
+            Some(serde_json::json!("role_param"))
         );
     }
 }

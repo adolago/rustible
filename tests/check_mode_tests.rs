@@ -918,7 +918,7 @@ fn test_file_module_diff() {
     assert!(diff.is_some());
     let d = diff.unwrap();
     assert_eq!(d.before, "absent");
-    assert_eq!(d.after, "directory");
+    assert_eq!(d.after, "directory exists");
 }
 
 #[test]

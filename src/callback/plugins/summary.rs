@@ -183,6 +183,7 @@ struct HostStats {
 
 impl HostStats {
     /// Returns the total number of tasks executed for this host.
+    #[allow(dead_code)]
     fn total_tasks(&self) -> u32 {
         self.ok + self.changed + self.failed + self.skipped
     }
@@ -386,7 +387,13 @@ impl SummaryCallback {
     pub fn aggregate_stats(&self) -> (u32, u32, u32, u32, u32) {
         let state = self.state.read();
         let agg = AggregateStats::from_host_stats(&state.host_stats);
-        (agg.ok, agg.changed, agg.failed, agg.skipped, agg.unreachable)
+        (
+            agg.ok,
+            agg.changed,
+            agg.failed,
+            agg.skipped,
+            agg.unreachable,
+        )
     }
 
     // ========================================================================
@@ -641,7 +648,12 @@ impl SummaryCallback {
     }
 
     /// Prints the compact summary format.
-    fn print_compact_summary(&self, playbook_name: &str, success: bool, duration: Option<Duration>) {
+    fn print_compact_summary(
+        &self,
+        playbook_name: &str,
+        success: bool,
+        duration: Option<Duration>,
+    ) {
         let state = self.state.read();
         let agg = AggregateStats::from_host_stats(&state.host_stats);
 
@@ -697,7 +709,12 @@ impl SummaryCallback {
     }
 
     /// Prints the full detailed summary.
-    fn print_detailed_summary(&self, playbook_name: &str, success: bool, duration: Option<Duration>) {
+    fn print_detailed_summary(
+        &self,
+        playbook_name: &str,
+        success: bool,
+        duration: Option<Duration>,
+    ) {
         let state = self.state.read();
         let agg = AggregateStats::from_host_stats(&state.host_stats);
 
@@ -721,7 +738,10 @@ impl SummaryCallback {
         let (playbook_name, success, duration) = {
             let state = self.state.read();
             (
-                state.playbook_name.clone().unwrap_or_else(|| "unknown".to_string()),
+                state
+                    .playbook_name
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
                 state.playbook_success,
                 state.start_time.map(|s| s.elapsed()),
             )
@@ -968,13 +988,16 @@ mod tests {
         let ok_result = create_execution_result("host1", "task1", true, false, false, "ok");
         callback.on_task_complete(&ok_result).await;
 
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
         callback.on_task_complete(&changed_result).await;
 
-        let failed_result = create_execution_result("host2", "task1", false, false, false, "failed");
+        let failed_result =
+            create_execution_result("host2", "task1", false, false, false, "failed");
         callback.on_task_complete(&failed_result).await;
 
-        let skipped_result = create_execution_result("host2", "task2", true, false, true, "skipped");
+        let skipped_result =
+            create_execution_result("host2", "task2", true, false, true, "skipped");
         callback.on_task_complete(&skipped_result).await;
 
         // Verify stats
@@ -1032,7 +1055,8 @@ mod tests {
             .on_play_start("test-play", &["host1".to_string(), "host2".to_string()])
             .await;
 
-        let failed_result = create_execution_result("host1", "task1", false, false, false, "failed");
+        let failed_result =
+            create_execution_result("host1", "task1", false, false, false, "failed");
         callback.on_task_complete(&failed_result).await;
 
         callback
@@ -1046,9 +1070,18 @@ mod tests {
 
     #[test]
     fn test_format_duration() {
-        assert_eq!(SummaryCallback::format_duration(Duration::from_secs(30)), "30.000s");
-        assert_eq!(SummaryCallback::format_duration(Duration::from_secs(90)), "1m 30.000s");
-        assert_eq!(SummaryCallback::format_duration(Duration::from_secs(3700)), "1h 01m 40s");
+        assert_eq!(
+            SummaryCallback::format_duration(Duration::from_secs(30)),
+            "30.000s"
+        );
+        assert_eq!(
+            SummaryCallback::format_duration(Duration::from_secs(90)),
+            "1m 30.000s"
+        );
+        assert_eq!(
+            SummaryCallback::format_duration(Duration::from_secs(3700)),
+            "1h 01m 40s"
+        );
     }
 
     #[test]
@@ -1140,7 +1173,9 @@ mod tests {
 
         // First playbook
         callback.on_playbook_start("playbook1").await;
-        callback.on_play_start("play1", &["host1".to_string()]).await;
+        callback
+            .on_play_start("play1", &["host1".to_string()])
+            .await;
         let result = create_execution_result("host1", "task1", true, true, false, "ok");
         callback.on_task_complete(&result).await;
 

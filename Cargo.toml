@@ -65,6 +65,7 @@ glob = "0.3"
 globset = "0.4"
 walkdir = "2.4"
 shellexpand = "3.1"
+shell-words = "1.1"
 which = "6.0"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 semver = "1.0"
@@ -168,12 +169,49 @@ harness = false
 required-features = []
 
 [[bench]]
+name = "connection_pool_benchmark"
+harness = false
+required-features = ["russh"]
+
+[[bench]]
 name = "callback_benchmark"
+harness = false
+
+[[bench]]
+name = "sprint2_feature_benchmark"
 harness = false
 
 # [[bench]]
 # name = "execution_benchmark"
 # harness = false
+
+[[bench]]
+name = "parallel_benchmark"
+harness = false
+
+[[bench]]
+name = "template_benchmark"
+harness = false
+
+[[bench]]
+name = "strategy_benchmark"
+harness = false
+
+[[bench]]
+name = "module_benchmark"
+harness = false
+
+[[bench]]
+name = "memory_benchmark"
+harness = false
+
+[[bench]]
+name = "performance_benchmark"
+harness = false
+
+[[bench]]
+name = "unified_benchmark"
+harness = false
 
 [profile.release]
 lto = true

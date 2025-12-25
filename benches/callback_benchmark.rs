@@ -58,16 +58,46 @@ use rustible::traits::{ExecutionCallback, ExecutionResult, ModuleResult};
 /// Events that can occur during execution
 #[derive(Debug, Clone)]
 pub enum CallbackEvent {
-    PlaybookStart { playbook: String },
-    PlaybookEnd { playbook: String, duration: Duration, stats: HashMap<String, HostStats> },
-    PlayStart { name: String, hosts_pattern: String },
-    PlayEnd { name: String },
-    TaskStart { name: String, module: String, args: HashMap<String, serde_json::Value> },
-    TaskResult { host: String, task_name: String, result: TaskResultInfo },
-    HandlerStart { name: String },
-    HandlerResult { host: String, handler_name: String, result: TaskResultInfo },
-    Warning { message: String },
-    Debug { host: Option<String>, message: String },
+    PlaybookStart {
+        playbook: String,
+    },
+    PlaybookEnd {
+        playbook: String,
+        duration: Duration,
+        stats: HashMap<String, HostStats>,
+    },
+    PlayStart {
+        name: String,
+        hosts_pattern: String,
+    },
+    PlayEnd {
+        name: String,
+    },
+    TaskStart {
+        name: String,
+        module: String,
+        args: HashMap<String, serde_json::Value>,
+    },
+    TaskResult {
+        host: String,
+        task_name: String,
+        result: TaskResultInfo,
+    },
+    HandlerStart {
+        name: String,
+    },
+    HandlerResult {
+        host: String,
+        handler_name: String,
+        result: TaskResultInfo,
+    },
+    Warning {
+        message: String,
+    },
+    Debug {
+        host: Option<String>,
+        message: String,
+    },
 }
 
 /// Information about a task execution result
@@ -136,7 +166,13 @@ impl HostStats {
     }
 
     pub fn total(&self) -> u32 {
-        self.ok + self.changed + self.failed + self.skipped + self.unreachable + self.rescued + self.ignored
+        self.ok
+            + self.changed
+            + self.failed
+            + self.skipped
+            + self.unreachable
+            + self.rescued
+            + self.ignored
     }
 }
 
@@ -145,10 +181,22 @@ pub trait CallbackPlugin: Send + Sync {
     fn name(&self) -> &'static str;
 
     fn on_playbook_start(&self, _playbook: &str) {}
-    fn on_playbook_end(&self, _playbook: &str, _duration: Duration, _stats: &HashMap<String, HostStats>) {}
+    fn on_playbook_end(
+        &self,
+        _playbook: &str,
+        _duration: Duration,
+        _stats: &HashMap<String, HostStats>,
+    ) {
+    }
     fn on_play_start(&self, _name: &str, _hosts_pattern: &str) {}
     fn on_play_end(&self, _name: &str) {}
-    fn on_task_start(&self, _name: &str, _module: &str, _args: &HashMap<String, serde_json::Value>) {}
+    fn on_task_start(
+        &self,
+        _name: &str,
+        _module: &str,
+        _args: &HashMap<String, serde_json::Value>,
+    ) {
+    }
     fn on_task_result(&self, _host: &str, _task_name: &str, _result: &TaskResultInfo) {}
     fn on_handler_start(&self, _name: &str) {}
     fn on_handler_result(&self, _host: &str, _handler_name: &str, _result: &TaskResultInfo) {}
@@ -158,19 +206,38 @@ pub trait CallbackPlugin: Send + Sync {
     fn on_event(&self, event: &CallbackEvent) {
         match event {
             CallbackEvent::PlaybookStart { playbook } => self.on_playbook_start(playbook),
-            CallbackEvent::PlaybookEnd { playbook, duration, stats } => self.on_playbook_end(playbook, *duration, stats),
-            CallbackEvent::PlayStart { name, hosts_pattern } => self.on_play_start(name, hosts_pattern),
+            CallbackEvent::PlaybookEnd {
+                playbook,
+                duration,
+                stats,
+            } => self.on_playbook_end(playbook, *duration, stats),
+            CallbackEvent::PlayStart {
+                name,
+                hosts_pattern,
+            } => self.on_play_start(name, hosts_pattern),
             CallbackEvent::PlayEnd { name } => self.on_play_end(name),
-            CallbackEvent::TaskStart { name, module, args } => self.on_task_start(name, module, args),
-            CallbackEvent::TaskResult { host, task_name, result } => self.on_task_result(host, task_name, result),
+            CallbackEvent::TaskStart { name, module, args } => {
+                self.on_task_start(name, module, args)
+            }
+            CallbackEvent::TaskResult {
+                host,
+                task_name,
+                result,
+            } => self.on_task_result(host, task_name, result),
             CallbackEvent::HandlerStart { name } => self.on_handler_start(name),
-            CallbackEvent::HandlerResult { host, handler_name, result } => self.on_handler_result(host, handler_name, result),
+            CallbackEvent::HandlerResult {
+                host,
+                handler_name,
+                result,
+            } => self.on_handler_result(host, handler_name, result),
             CallbackEvent::Warning { message } => self.on_warning(message),
             CallbackEvent::Debug { host, message } => self.on_debug(host.as_deref(), message),
         }
     }
 
-    fn is_buffered(&self) -> bool { false }
+    fn is_buffered(&self) -> bool {
+        false
+    }
     fn flush(&self) {}
 }
 
@@ -183,7 +250,9 @@ pub trait CallbackPlugin: Send + Sync {
 struct NoOpCallback;
 
 impl CallbackPlugin for NoOpCallback {
-    fn name(&self) -> &'static str { "noop" }
+    fn name(&self) -> &'static str {
+        "noop"
+    }
 }
 
 /// A minimal callback that only tracks counts - minimal overhead
@@ -194,9 +263,16 @@ struct CountingCallback {
 }
 
 impl CallbackPlugin for CountingCallback {
-    fn name(&self) -> &'static str { "counting" }
+    fn name(&self) -> &'static str {
+        "counting"
+    }
 
-    fn on_task_start(&self, _name: &str, _module: &str, _args: &HashMap<String, serde_json::Value>) {
+    fn on_task_start(
+        &self,
+        _name: &str,
+        _module: &str,
+        _args: &HashMap<String, serde_json::Value>,
+    ) {
         self.task_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -212,25 +288,40 @@ struct BufferingCallback {
 }
 
 impl CallbackPlugin for BufferingCallback {
-    fn name(&self) -> &'static str { "buffering" }
-
-    fn on_playbook_start(&self, playbook: &str) {
-        self.events.write().push(format!("PLAYBOOK START: {}", playbook));
+    fn name(&self) -> &'static str {
+        "buffering"
     }
 
-    fn on_playbook_end(&self, playbook: &str, duration: Duration, stats: &HashMap<String, HostStats>) {
+    fn on_playbook_start(&self, playbook: &str) {
+        self.events
+            .write()
+            .push(format!("PLAYBOOK START: {}", playbook));
+    }
+
+    fn on_playbook_end(
+        &self,
+        playbook: &str,
+        duration: Duration,
+        stats: &HashMap<String, HostStats>,
+    ) {
         self.events.write().push(format!(
             "PLAYBOOK END: {} ({:?}, {} hosts)",
-            playbook, duration, stats.len()
+            playbook,
+            duration,
+            stats.len()
         ));
     }
 
     fn on_play_start(&self, name: &str, hosts_pattern: &str) {
-        self.events.write().push(format!("PLAY: {} on {}", name, hosts_pattern));
+        self.events
+            .write()
+            .push(format!("PLAY: {} on {}", name, hosts_pattern));
     }
 
     fn on_task_start(&self, name: &str, module: &str, _args: &HashMap<String, serde_json::Value>) {
-        self.events.write().push(format!("TASK: {} ({})", name, module));
+        self.events
+            .write()
+            .push(format!("TASK: {} ({})", name, module));
     }
 
     fn on_task_result(&self, host: &str, task_name: &str, result: &TaskResultInfo) {
@@ -240,7 +331,9 @@ impl CallbackPlugin for BufferingCallback {
         ));
     }
 
-    fn is_buffered(&self) -> bool { true }
+    fn is_buffered(&self) -> bool {
+        true
+    }
 
     fn flush(&self) {
         self.events.write().clear();
@@ -254,7 +347,9 @@ struct JsonSerializingCallback {
 }
 
 impl CallbackPlugin for JsonSerializingCallback {
-    fn name(&self) -> &'static str { "json" }
+    fn name(&self) -> &'static str {
+        "json"
+    }
 
     fn on_playbook_start(&self, playbook: &str) {
         self.output.write().push(json!({
@@ -300,20 +395,28 @@ impl ExecutionCallback for AsyncMockCallback {
     }
 
     async fn on_playbook_end(&self, name: &str, success: bool) {
-        self.events.write().push(format!("playbook_end:{}:{}", name, success));
+        self.events
+            .write()
+            .push(format!("playbook_end:{}:{}", name, success));
     }
 
     async fn on_play_start(&self, name: &str, hosts: &[String]) {
-        self.events.write().push(format!("play_start:{}:{}", name, hosts.len()));
+        self.events
+            .write()
+            .push(format!("play_start:{}:{}", name, hosts.len()));
     }
 
     async fn on_play_end(&self, name: &str, success: bool) {
-        self.events.write().push(format!("play_end:{}:{}", name, success));
+        self.events
+            .write()
+            .push(format!("play_end:{}:{}", name, success));
     }
 
     async fn on_task_start(&self, name: &str, host: &str) {
         self.task_count.fetch_add(1, Ordering::Relaxed);
-        self.events.write().push(format!("task_start:{}:{}", name, host));
+        self.events
+            .write()
+            .push(format!("task_start:{}:{}", name, host));
     }
 
     async fn on_task_complete(&self, result: &ExecutionResult) {
@@ -324,11 +427,15 @@ impl ExecutionCallback for AsyncMockCallback {
     }
 
     async fn on_handler_triggered(&self, name: &str) {
-        self.events.write().push(format!("handler_triggered:{}", name));
+        self.events
+            .write()
+            .push(format!("handler_triggered:{}", name));
     }
 
     async fn on_facts_gathered(&self, host: &str, facts: &Facts) {
-        self.events.write().push(format!("facts_gathered:{}:{}", host, facts.all().len()));
+        self.events
+            .write()
+            .push(format!("facts_gathered:{}:{}", host, facts.all().len()));
     }
 }
 
@@ -339,14 +446,21 @@ struct CallbackAggregator {
 
 impl CallbackAggregator {
     fn new() -> Self {
-        Self { callbacks: Vec::new() }
+        Self {
+            callbacks: Vec::new(),
+        }
     }
 
     fn add(&mut self, callback: Arc<dyn CallbackPlugin>) {
         self.callbacks.push(callback);
     }
 
-    fn dispatch_task_start(&self, name: &str, module: &str, args: &HashMap<String, serde_json::Value>) {
+    fn dispatch_task_start(
+        &self,
+        name: &str,
+        module: &str,
+        args: &HashMap<String, serde_json::Value>,
+    ) {
         for callback in &self.callbacks {
             callback.on_task_start(name, module, args);
         }
@@ -461,7 +575,12 @@ fn generate_large_facts() -> Facts {
 
     // Package facts (simulating many packages)
     let packages: HashMap<String, serde_json::Value> = (0..100)
-        .map(|i| (format!("package_{}", i), json!({"version": format!("1.0.{}", i), "arch": "amd64"})))
+        .map(|i| {
+            (
+                format!("package_{}", i),
+                json!({"version": format!("1.0.{}", i), "arch": "amd64"}),
+            )
+        })
         .collect();
     facts.set("ansible_packages", json!(packages));
 
@@ -505,13 +624,21 @@ fn bench_callback_dispatch_overhead(c: &mut Criterion) {
 
     group.bench_function("noop_task_start", |b| {
         b.iter(|| {
-            noop_callback.on_task_start(black_box("Test Task"), black_box("debug"), black_box(&args));
+            noop_callback.on_task_start(
+                black_box("Test Task"),
+                black_box("debug"),
+                black_box(&args),
+            );
         })
     });
 
     group.bench_function("noop_task_result", |b| {
         b.iter(|| {
-            noop_callback.on_task_result(black_box("localhost"), black_box("Test Task"), black_box(&simple_result));
+            noop_callback.on_task_result(
+                black_box("localhost"),
+                black_box("Test Task"),
+                black_box(&simple_result),
+            );
         })
     });
 
@@ -520,13 +647,21 @@ fn bench_callback_dispatch_overhead(c: &mut Criterion) {
 
     group.bench_function("counting_task_start", |b| {
         b.iter(|| {
-            counting_callback.on_task_start(black_box("Test Task"), black_box("debug"), black_box(&args));
+            counting_callback.on_task_start(
+                black_box("Test Task"),
+                black_box("debug"),
+                black_box(&args),
+            );
         })
     });
 
     group.bench_function("counting_task_result", |b| {
         b.iter(|| {
-            counting_callback.on_task_result(black_box("localhost"), black_box("Test Task"), black_box(&simple_result));
+            counting_callback.on_task_result(
+                black_box("localhost"),
+                black_box("Test Task"),
+                black_box(&simple_result),
+            );
         })
     });
 
@@ -535,13 +670,21 @@ fn bench_callback_dispatch_overhead(c: &mut Criterion) {
 
     group.bench_function("buffering_task_start", |b| {
         b.iter(|| {
-            buffering_callback.on_task_start(black_box("Test Task"), black_box("debug"), black_box(&args));
+            buffering_callback.on_task_start(
+                black_box("Test Task"),
+                black_box("debug"),
+                black_box(&args),
+            );
         })
     });
 
     group.bench_function("buffering_task_result", |b| {
         b.iter(|| {
-            buffering_callback.on_task_result(black_box("localhost"), black_box("Test Task"), black_box(&simple_result));
+            buffering_callback.on_task_result(
+                black_box("localhost"),
+                black_box("Test Task"),
+                black_box(&simple_result),
+            );
         })
     });
 
@@ -550,13 +693,21 @@ fn bench_callback_dispatch_overhead(c: &mut Criterion) {
 
     group.bench_function("json_task_start", |b| {
         b.iter(|| {
-            json_callback.on_task_start(black_box("Test Task"), black_box("debug"), black_box(&args));
+            json_callback.on_task_start(
+                black_box("Test Task"),
+                black_box("debug"),
+                black_box(&args),
+            );
         })
     });
 
     group.bench_function("json_task_result", |b| {
         b.iter(|| {
-            json_callback.on_task_result(black_box("localhost"), black_box("Test Task"), black_box(&simple_result));
+            json_callback.on_task_result(
+                black_box("localhost"),
+                black_box("Test Task"),
+                black_box(&simple_result),
+            );
         })
     });
 
@@ -626,7 +777,8 @@ fn bench_async_callback_overhead(c: &mut Criterion) {
             let cb = cb.clone();
             let hosts = hosts.clone();
             async move {
-                cb.on_play_start(black_box("Test Play"), black_box(&hosts)).await;
+                cb.on_play_start(black_box("Test Play"), black_box(&hosts))
+                    .await;
             }
         })
     });
@@ -636,7 +788,8 @@ fn bench_async_callback_overhead(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let cb = cb.clone();
             async move {
-                cb.on_task_start(black_box("Test Task"), black_box("localhost")).await;
+                cb.on_task_start(black_box("Test Task"), black_box("localhost"))
+                    .await;
             }
         })
     });
@@ -686,8 +839,16 @@ fn bench_multiple_plugins(c: &mut Criterion) {
             num_plugins,
             |b, _| {
                 b.iter(|| {
-                    aggregator.dispatch_task_start(black_box("Test Task"), black_box("debug"), black_box(&args));
-                    aggregator.dispatch_task_result(black_box("localhost"), black_box("Test Task"), black_box(&result));
+                    aggregator.dispatch_task_start(
+                        black_box("Test Task"),
+                        black_box("debug"),
+                        black_box(&args),
+                    );
+                    aggregator.dispatch_task_result(
+                        black_box("localhost"),
+                        black_box("Test Task"),
+                        black_box(&result),
+                    );
                 })
             },
         );
@@ -703,8 +864,16 @@ fn bench_multiple_plugins(c: &mut Criterion) {
             num_plugins,
             |b, _| {
                 b.iter(|| {
-                    aggregator.dispatch_task_start(black_box("Test Task"), black_box("debug"), black_box(&args));
-                    aggregator.dispatch_task_result(black_box("localhost"), black_box("Test Task"), black_box(&result));
+                    aggregator.dispatch_task_start(
+                        black_box("Test Task"),
+                        black_box("debug"),
+                        black_box(&args),
+                    );
+                    aggregator.dispatch_task_result(
+                        black_box("localhost"),
+                        black_box("Test Task"),
+                        black_box(&result),
+                    );
                 })
             },
         );
@@ -722,8 +891,16 @@ fn bench_multiple_plugins(c: &mut Criterion) {
             num_plugins,
             |b, _| {
                 b.iter(|| {
-                    aggregator.dispatch_task_start(black_box("Test Task"), black_box("debug"), black_box(&args));
-                    aggregator.dispatch_task_result(black_box("localhost"), black_box("Test Task"), black_box(&result));
+                    aggregator.dispatch_task_start(
+                        black_box("Test Task"),
+                        black_box("debug"),
+                        black_box(&args),
+                    );
+                    aggregator.dispatch_task_result(
+                        black_box("localhost"),
+                        black_box("Test Task"),
+                        black_box(&result),
+                    );
                 })
             },
         );
@@ -749,7 +926,11 @@ fn bench_multiple_plugins(c: &mut Criterion) {
 
     group.bench_function("direct_dispatch_5_plugins", |b| {
         b.iter(|| {
-            aggregator.dispatch_task_start(black_box("Test Task"), black_box("debug"), black_box(&args));
+            aggregator.dispatch_task_start(
+                black_box("Test Task"),
+                black_box("debug"),
+                black_box(&args),
+            );
         })
     });
 
@@ -788,7 +969,10 @@ fn bench_plugin_registration(c: &mut Criterion) {
 
     group.bench_function("find_plugin_by_name", |b| {
         b.iter(|| {
-            let found = aggregator.callbacks.iter().find(|c| c.name() == black_box("buffering"));
+            let found = aggregator
+                .callbacks
+                .iter()
+                .find(|c| c.name() == black_box("buffering"));
             black_box(found)
         })
     });
@@ -810,14 +994,22 @@ fn bench_large_event_data(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("args_size", size), size, |b, _| {
             let callback = BufferingCallback::default();
             b.iter(|| {
-                callback.on_task_start(black_box("Test Task"), black_box("template"), black_box(&args));
+                callback.on_task_start(
+                    black_box("Test Task"),
+                    black_box("template"),
+                    black_box(&args),
+                );
             })
         });
 
         group.bench_with_input(BenchmarkId::new("args_size_json", size), size, |b, _| {
             let callback = JsonSerializingCallback::default();
             b.iter(|| {
-                callback.on_task_start(black_box("Test Task"), black_box("template"), black_box(&args));
+                callback.on_task_start(
+                    black_box("Test Task"),
+                    black_box("template"),
+                    black_box(&args),
+                );
             })
         });
     }
@@ -829,14 +1021,22 @@ fn bench_large_event_data(c: &mut Criterion) {
     group.bench_function("simple_result_dispatch", |b| {
         let callback = JsonSerializingCallback::default();
         b.iter(|| {
-            callback.on_task_result(black_box("localhost"), black_box("Test Task"), black_box(&simple_result));
+            callback.on_task_result(
+                black_box("localhost"),
+                black_box("Test Task"),
+                black_box(&simple_result),
+            );
         })
     });
 
     group.bench_function("complex_result_dispatch", |b| {
         let callback = JsonSerializingCallback::default();
         b.iter(|| {
-            callback.on_task_result(black_box("localhost"), black_box("Test Task"), black_box(&complex_result));
+            callback.on_task_result(
+                black_box("localhost"),
+                black_box("Test Task"),
+                black_box(&complex_result),
+            );
         })
     });
 
@@ -857,12 +1057,20 @@ fn bench_large_event_data(c: &mut Criterion) {
     for num_hosts in [10, 100, 500].iter() {
         let stats = generate_host_stats(*num_hosts);
 
-        group.bench_with_input(BenchmarkId::new("playbook_end_hosts", num_hosts), num_hosts, |b, _| {
-            let callback = BufferingCallback::default();
-            b.iter(|| {
-                callback.on_playbook_end(black_box("test.yml"), black_box(Duration::from_secs(120)), black_box(&stats));
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("playbook_end_hosts", num_hosts),
+            num_hosts,
+            |b, _| {
+                let callback = BufferingCallback::default();
+                b.iter(|| {
+                    callback.on_playbook_end(
+                        black_box("test.yml"),
+                        black_box(Duration::from_secs(120)),
+                        black_box(&stats),
+                    );
+                })
+            },
+        );
     }
 
     group.finish();
@@ -915,7 +1123,11 @@ fn bench_serialization_overhead(c: &mut Criterion) {
     // String formatting overhead
     group.bench_function("format_task_line", |b| {
         b.iter(|| {
-            let line = format!("TASK [{}] {}", black_box("Install nginx"), black_box("*".repeat(50)));
+            let line = format!(
+                "TASK [{}] {}",
+                black_box("Install nginx"),
+                black_box("*".repeat(50))
+            );
             black_box(line)
         })
     });
@@ -949,35 +1161,51 @@ fn bench_callback_state_accumulation(c: &mut Criterion) {
         let args = generate_args(5);
 
         group.throughput(Throughput::Elements(*num_events as u64));
-        group.bench_with_input(BenchmarkId::new("buffer_growth", num_events), num_events, |b, &n| {
-            b.iter(|| {
-                let callback = BufferingCallback::default();
-                for i in 0..n {
-                    callback.on_task_start(black_box(&format!("Task {}", i)), black_box("debug"), black_box(&args));
-                    callback.on_task_result(
-                        black_box(&format!("host_{}", i % 10)),
-                        black_box(&format!("Task {}", i)),
-                        black_box(&result),
-                    );
-                }
-                black_box(callback)
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("buffer_growth", num_events),
+            num_events,
+            |b, &n| {
+                b.iter(|| {
+                    let callback = BufferingCallback::default();
+                    for i in 0..n {
+                        callback.on_task_start(
+                            black_box(&format!("Task {}", i)),
+                            black_box("debug"),
+                            black_box(&args),
+                        );
+                        callback.on_task_result(
+                            black_box(&format!("host_{}", i % 10)),
+                            black_box(&format!("Task {}", i)),
+                            black_box(&result),
+                        );
+                    }
+                    black_box(callback)
+                })
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("json_buffer_growth", num_events), num_events, |b, &n| {
-            b.iter(|| {
-                let callback = JsonSerializingCallback::default();
-                for i in 0..n {
-                    callback.on_task_start(black_box(&format!("Task {}", i)), black_box("debug"), black_box(&args));
-                    callback.on_task_result(
-                        black_box(&format!("host_{}", i % 10)),
-                        black_box(&format!("Task {}", i)),
-                        black_box(&result),
-                    );
-                }
-                black_box(callback)
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("json_buffer_growth", num_events),
+            num_events,
+            |b, &n| {
+                b.iter(|| {
+                    let callback = JsonSerializingCallback::default();
+                    for i in 0..n {
+                        callback.on_task_start(
+                            black_box(&format!("Task {}", i)),
+                            black_box("debug"),
+                            black_box(&args),
+                        );
+                        callback.on_task_result(
+                            black_box(&format!("host_{}", i % 10)),
+                            black_box(&format!("Task {}", i)),
+                            black_box(&result),
+                        );
+                    }
+                    black_box(callback)
+                })
+            },
+        );
     }
 
     group.finish();
@@ -1016,29 +1244,37 @@ fn bench_host_stats_aggregation(c: &mut Criterion) {
 
     // HashMap of host stats
     for num_hosts in [10, 100, 500, 1000].iter() {
-        group.bench_with_input(BenchmarkId::new("aggregate_host_stats", num_hosts), num_hosts, |b, &n| {
-            b.iter(|| {
-                let mut all_stats: HashMap<String, HostStats> = HashMap::new();
-                for i in 0..n {
-                    let mut stats = HostStats::new();
-                    stats.record(TaskStatus::Ok, false);
-                    stats.record(TaskStatus::Changed, true);
-                    all_stats.insert(format!("host_{:04}", i), stats);
-                }
-                black_box(all_stats)
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("aggregate_host_stats", num_hosts),
+            num_hosts,
+            |b, &n| {
+                b.iter(|| {
+                    let mut all_stats: HashMap<String, HostStats> = HashMap::new();
+                    for i in 0..n {
+                        let mut stats = HostStats::new();
+                        stats.record(TaskStatus::Ok, false);
+                        stats.record(TaskStatus::Changed, true);
+                        all_stats.insert(format!("host_{:04}", i), stats);
+                    }
+                    black_box(all_stats)
+                })
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("summarize_host_stats", num_hosts), num_hosts, |b, &n| {
-            let stats = generate_host_stats(n);
-            b.iter(|| {
-                let total_ok: u32 = stats.values().map(|s| s.ok).sum();
-                let total_changed: u32 = stats.values().map(|s| s.changed).sum();
-                let total_failed: u32 = stats.values().map(|s| s.failed).sum();
-                let has_failures = stats.values().any(|s| s.has_failures());
-                black_box((total_ok, total_changed, total_failed, has_failures))
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("summarize_host_stats", num_hosts),
+            num_hosts,
+            |b, &n| {
+                let stats = generate_host_stats(n);
+                b.iter(|| {
+                    let total_ok: u32 = stats.values().map(|s| s.ok).sum();
+                    let total_changed: u32 = stats.values().map(|s| s.changed).sum();
+                    let total_failed: u32 = stats.values().map(|s| s.failed).sum();
+                    let has_failures = stats.values().any(|s| s.has_failures());
+                    black_box((total_ok, total_changed, total_failed, has_failures))
+                })
+            },
+        );
     }
 
     group.finish();
@@ -1059,11 +1295,15 @@ fn bench_buffer_flush(c: &mut Criterion) {
             callback.on_task_result(&format!("host_{}", i % 10), &format!("Task {}", i), &result);
         }
 
-        group.bench_with_input(BenchmarkId::new("flush_buffer", buffer_size), buffer_size, |b, _| {
-            b.iter(|| {
-                callback.flush();
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("flush_buffer", buffer_size),
+            buffer_size,
+            |b, _| {
+                b.iter(|| {
+                    callback.flush();
+                })
+            },
+        );
     }
 
     group.finish();
@@ -1110,7 +1350,11 @@ fn bench_with_without_callbacks(c: &mut Criterion) {
                     cb.on_task_start(&format!("task_{}", task_id), "debug", &args);
                     for host_id in 0..num_hosts {
                         tokio::task::yield_now().await;
-                        cb.on_task_result(&format!("host_{}", host_id), &format!("task_{}", task_id), &result);
+                        cb.on_task_result(
+                            &format!("host_{}", host_id),
+                            &format!("task_{}", task_id),
+                            &result,
+                        );
                     }
                 }
             }
@@ -1132,7 +1376,11 @@ fn bench_with_without_callbacks(c: &mut Criterion) {
                     cb.on_task_start(&format!("task_{}", task_id), "debug", &args);
                     for host_id in 0..num_hosts {
                         tokio::task::yield_now().await;
-                        cb.on_task_result(&format!("host_{}", host_id), &format!("task_{}", task_id), &result);
+                        cb.on_task_result(
+                            &format!("host_{}", host_id),
+                            &format!("task_{}", task_id),
+                            &result,
+                        );
                     }
                 }
             }
@@ -1152,7 +1400,11 @@ fn bench_with_without_callbacks(c: &mut Criterion) {
                     callback.on_task_start(&format!("task_{}", task_id), "debug", &args);
                     for host_id in 0..num_hosts {
                         tokio::task::yield_now().await;
-                        callback.on_task_result(&format!("host_{}", host_id), &format!("task_{}", task_id), &result);
+                        callback.on_task_result(
+                            &format!("host_{}", host_id),
+                            &format!("task_{}", task_id),
+                            &result,
+                        );
                     }
                 }
                 callback.flush();
@@ -1173,7 +1425,11 @@ fn bench_with_without_callbacks(c: &mut Criterion) {
                     callback.on_task_start(&format!("task_{}", task_id), "debug", &args);
                     for host_id in 0..num_hosts {
                         tokio::task::yield_now().await;
-                        callback.on_task_result(&format!("host_{}", host_id), &format!("task_{}", task_id), &result);
+                        callback.on_task_result(
+                            &format!("host_{}", host_id),
+                            &format!("task_{}", task_id),
+                            &result,
+                        );
                     }
                 }
             }
@@ -1197,7 +1453,11 @@ fn bench_with_without_callbacks(c: &mut Criterion) {
                     aggregator.dispatch_task_start(&format!("task_{}", task_id), "debug", &args);
                     for host_id in 0..num_hosts {
                         tokio::task::yield_now().await;
-                        aggregator.dispatch_task_result(&format!("host_{}", host_id), &format!("task_{}", task_id), &result);
+                        aggregator.dispatch_task_result(
+                            &format!("host_{}", host_id),
+                            &format!("task_{}", task_id),
+                            &result,
+                        );
                     }
                 }
             }
@@ -1217,43 +1477,16 @@ fn bench_callback_impact_on_parallelism(c: &mut Criterion) {
     // Test different levels of parallelism
     for concurrency in [1, 5, 10, 20].iter() {
         // Without callbacks
-        group.bench_with_input(BenchmarkId::new("no_callbacks", concurrency), concurrency, |b, &conc| {
-            b.to_async(&rt).iter(|| async move {
-                let mut handles = vec![];
-                for batch in (0..num_tasks).collect::<Vec<_>>().chunks(conc) {
-                    for &task_id in batch {
-                        handles.push(tokio::spawn(async move {
-                            tokio::task::yield_now().await;
-                            task_id
-                        }));
-                    }
-                }
-                for handle in handles {
-                    black_box(handle.await).ok();
-                }
-            })
-        });
-
-        // With buffering callback (thread-safe via RwLock)
-        group.bench_with_input(BenchmarkId::new("with_buffering_callback", concurrency), concurrency, |b, &conc| {
-            let callback = Arc::new(BufferingCallback::default());
-            let args = generate_args(3);
-            let result = generate_simple_result();
-            b.to_async(&rt).iter(|| {
-                let callback = callback.clone();
-                let args = args.clone();
-                let result = result.clone();
-                async move {
+        group.bench_with_input(
+            BenchmarkId::new("no_callbacks", concurrency),
+            concurrency,
+            |b, &conc| {
+                b.to_async(&rt).iter(|| async move {
                     let mut handles = vec![];
                     for batch in (0..num_tasks).collect::<Vec<_>>().chunks(conc) {
                         for &task_id in batch {
-                            let cb = callback.clone();
-                            let args = args.clone();
-                            let result = result.clone();
                             handles.push(tokio::spawn(async move {
-                                cb.on_task_start(&format!("task_{}", task_id), "debug", &args);
                                 tokio::task::yield_now().await;
-                                cb.on_task_result("localhost", &format!("task_{}", task_id), &result);
                                 task_id
                             }));
                         }
@@ -1261,9 +1494,48 @@ fn bench_callback_impact_on_parallelism(c: &mut Criterion) {
                     for handle in handles {
                         black_box(handle.await).ok();
                     }
-                }
-            })
-        });
+                })
+            },
+        );
+
+        // With buffering callback (thread-safe via RwLock)
+        group.bench_with_input(
+            BenchmarkId::new("with_buffering_callback", concurrency),
+            concurrency,
+            |b, &conc| {
+                let callback = Arc::new(BufferingCallback::default());
+                let args = generate_args(3);
+                let result = generate_simple_result();
+                b.to_async(&rt).iter(|| {
+                    let callback = callback.clone();
+                    let args = args.clone();
+                    let result = result.clone();
+                    async move {
+                        let mut handles = vec![];
+                        for batch in (0..num_tasks).collect::<Vec<_>>().chunks(conc) {
+                            for &task_id in batch {
+                                let cb = callback.clone();
+                                let args = args.clone();
+                                let result = result.clone();
+                                handles.push(tokio::spawn(async move {
+                                    cb.on_task_start(&format!("task_{}", task_id), "debug", &args);
+                                    tokio::task::yield_now().await;
+                                    cb.on_task_result(
+                                        "localhost",
+                                        &format!("task_{}", task_id),
+                                        &result,
+                                    );
+                                    task_id
+                                }));
+                            }
+                        }
+                        for handle in handles {
+                            black_box(handle.await).ok();
+                        }
+                    }
+                })
+            },
+        );
     }
 
     group.finish();

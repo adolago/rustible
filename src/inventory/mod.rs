@@ -5,12 +5,109 @@
 //! - Dynamic inventory support (executable scripts)
 //! - Host pattern matching
 //! - Group hierarchy and variable inheritance
+//! - Plugin-based inventory sources (AWS EC2, etc.)
+//! - Inventory caching for improved performance
+//!
+//! # Architecture
+//!
+//! The inventory system consists of several key components:
+//!
+//! - [`Inventory`]: Main inventory structure holding hosts and groups
+//! - [`Host`]: A managed host with connection parameters and variables
+//! - [`Group`]: A logical grouping of hosts with shared variables
+//! - [`InventoryPlugin`]: Trait for custom inventory sources
+//! - [`InventoryCache`]: Caching layer for improved performance
+//!
+//! # Inventory Formats
+//!
+//! ## INI Format
+//! ```ini
+//! [webservers]
+//! web1 ansible_host=10.0.0.1
+//! web2 ansible_host=10.0.0.2
+//!
+//! [webservers:vars]
+//! http_port=80
+//!
+//! [production:children]
+//! webservers
+//! databases
+//! ```
+//!
+//! ## YAML Format
+//! ```yaml
+//! all:
+//!   children:
+//!     webservers:
+//!       hosts:
+//!         web1:
+//!           ansible_host: 10.0.0.1
+//!         web2:
+//!           ansible_host: 10.0.0.2
+//!       vars:
+//!         http_port: 80
+//! ```
+//!
+//! ## JSON Format (Dynamic Inventory)
+//! ```json
+//! {
+//!   "webservers": {
+//!     "hosts": ["web1", "web2"],
+//!     "vars": {"http_port": 80}
+//!   },
+//!   "_meta": {
+//!     "hostvars": {
+//!       "web1": {"ansible_host": "10.0.0.1"}
+//!     }
+//!   }
+//! }
+//! ```
+//!
+//! # Plugin System
+//!
+//! The inventory plugin system allows extending inventory sources:
+//!
+//! ```rust,ignore
+//! use rustible::inventory::plugin::{
+//!     InventoryPluginFactory,
+//!     InventoryPluginConfig,
+//!     InventoryCache,
+//! };
+//! use std::time::Duration;
+//!
+//! // Create an AWS EC2 plugin with caching
+//! let config = InventoryPluginConfig::new()
+//!     .with_option("region", "us-east-1")
+//!     .with_cache_ttl(Duration::from_secs(300));
+//!
+//! let plugin = InventoryPluginFactory::create("aws_ec2", config)?;
+//! let inventory = plugin.parse().await?;
+//! ```
+//!
+//! # Pattern Matching
+//!
+//! The inventory supports powerful pattern matching:
+//!
+//! - `all` - All hosts
+//! - `groupname` - All hosts in a group
+//! - `host1:host2` - Multiple hosts/groups (union)
+//! - `group1:&group2` - Intersection
+//! - `group1:!group2` - Exclusion
+//! - `~regex` - Regex match on hostname
+//! - `web*` - Wildcard match
 
 pub mod group;
 pub mod host;
+pub mod plugin;
 
 pub use group::{Group, GroupBuilder, GroupHierarchy};
 pub use host::{ConnectionParams, ConnectionType, Host, HostParseError, SshParams};
+pub use plugin::{
+    AwsEc2InventoryPlugin, CacheStats, CachedInventoryPlugin, FileInventoryPlugin, InventoryCache,
+    InventoryPlugin, InventoryPluginConfig, InventoryPluginFactory, InventoryPluginRegistry,
+    KeyedGroup, PluginError, PluginErrorKind, PluginInfo, PluginOptionInfo, PluginResult,
+    PluginType, ScriptInventoryPlugin,
+};
 
 use indexmap::IndexMap;
 use regex::Regex;
@@ -141,13 +238,42 @@ impl Inventory {
         match extension.to_lowercase().as_str() {
             "yml" | "yaml" => self.parse_yaml(&content)?,
             "json" => self.parse_json(&content)?,
-            "ini" | _ => {
-                // Try YAML first, then INI
-                if content.trim().starts_with('{') || content.trim().starts_with('[') {
+            "ini" => {
+                // Explicitly INI extension - parse as INI
+                self.parse_ini(&content)?;
+            }
+            _ => {
+                // Try to detect format from content
+                let trimmed = content.trim();
+                // Skip comment lines for detection
+                let first_non_comment: &str = trimmed
+                    .lines()
+                    .find(|line| {
+                        let t = line.trim();
+                        !t.is_empty() && !t.starts_with('#')
+                    })
+                    .unwrap_or(trimmed);
+
+                if trimmed.starts_with('{') {
+                    // Starts with '{' - likely JSON
                     self.parse_json(&content)?;
-                } else if content.contains(':') && !content.contains('[') {
+                } else if first_non_comment.starts_with('[') {
+                    // Check if it looks like INI section header [group] or JSON array
+                    if first_non_comment.ends_with(']') && !first_non_comment.contains('{') {
+                        // INI section like [webservers]
+                        self.parse_ini(&content)?;
+                    } else {
+                        // JSON array
+                        self.parse_json(&content)?;
+                    }
+                } else if first_non_comment.contains(':') && !first_non_comment.contains('=') {
+                    // Looks like YAML (has colons but no INI-style equals)
                     self.parse_yaml(&content)?;
+                } else if first_non_comment.contains('=') {
+                    // INI-style key=value
+                    self.parse_ini(&content)?;
                 } else {
+                    // Default to INI
                     self.parse_ini(&content)?;
                 }
             }
@@ -327,7 +453,7 @@ impl Inventory {
 
     /// Parse a YAML group definition
     fn parse_yaml_group(&mut self, name: &str, value: &serde_yaml::Value) -> InventoryResult<()> {
-        let group = self
+        let _group = self
             .groups
             .entry(name.to_string())
             .or_insert_with(|| Group::new(name));
@@ -338,33 +464,66 @@ impl Inventory {
                 if let serde_yaml::Value::Mapping(hosts_map) = hosts {
                     for (host_key, host_value) in hosts_map {
                         if let serde_yaml::Value::String(host_name) = host_key {
-                            let mut host = Host::new(host_name.clone());
+                            // Check if host already exists
+                            let host_exists = self.hosts.contains_key(host_name);
 
-                            // Parse host variables
-                            if let serde_yaml::Value::Mapping(host_vars) = host_value {
-                                for (var_key, var_value) in host_vars {
-                                    if let serde_yaml::Value::String(key) = var_key {
-                                        self.apply_host_var(&mut host, key, var_value.clone());
+                            if host_exists {
+                                // Host exists - just add it to this group and merge vars
+                                if let Some(existing_host) = self.hosts.get_mut(host_name) {
+                                    existing_host.add_to_group(name.to_string());
+
+                                    // Parse and merge host variables
+                                    if let serde_yaml::Value::Mapping(host_vars) = host_value {
+                                        for (var_key, var_value) in host_vars {
+                                            if let serde_yaml::Value::String(key) = var_key {
+                                                Self::apply_host_var_static(
+                                                    existing_host,
+                                                    key,
+                                                    var_value.clone(),
+                                                );
+                                            }
+                                        }
                                     }
                                 }
-                            }
 
-                            host.add_to_group(name.to_string());
-
-                            // Get mutable reference to group and add host
-                            if let Some(g) = self.groups.get_mut(name) {
-                                g.add_host(host_name.clone());
-                            }
-
-                            // Add to all group
-                            if name != "all" {
-                                host.add_to_group("all".to_string());
-                                if let Some(all_group) = self.groups.get_mut("all") {
-                                    all_group.add_host(host_name.clone());
+                                // Add host to group
+                                if let Some(g) = self.groups.get_mut(name) {
+                                    g.add_host(host_name.clone());
                                 }
-                            }
+                            } else {
+                                // New host - create it
+                                let mut host = Host::new(host_name.clone());
 
-                            self.hosts.insert(host_name.clone(), host);
+                                // Parse host variables
+                                if let serde_yaml::Value::Mapping(host_vars) = host_value {
+                                    for (var_key, var_value) in host_vars {
+                                        if let serde_yaml::Value::String(key) = var_key {
+                                            Self::apply_host_var_static(
+                                                &mut host,
+                                                key,
+                                                var_value.clone(),
+                                            );
+                                        }
+                                    }
+                                }
+
+                                host.add_to_group(name.to_string());
+
+                                // Get mutable reference to group and add host
+                                if let Some(g) = self.groups.get_mut(name) {
+                                    g.add_host(host_name.clone());
+                                }
+
+                                // Add to all group
+                                if name != "all" {
+                                    host.add_to_group("all".to_string());
+                                    if let Some(all_group) = self.groups.get_mut("all") {
+                                        all_group.add_host(host_name.clone());
+                                    }
+                                }
+
+                                self.hosts.insert(host_name.clone(), host);
+                            }
                         }
                     }
                 }
@@ -807,6 +966,11 @@ impl Inventory {
     /// Get all hosts
     pub fn hosts(&self) -> impl Iterator<Item = &Host> {
         self.hosts.values()
+    }
+
+    /// Get all hosts as a vector
+    pub fn get_all_hosts(&self) -> Vec<&Host> {
+        self.hosts.values().collect()
     }
 
     /// Get all groups

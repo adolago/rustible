@@ -1,0 +1,51 @@
+[package]
+name = "rustible-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.rustible]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_callback_event"
+path = "fuzz_targets/fuzz_callback_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_callback_config"
+path = "fuzz_targets/fuzz_callback_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_plugin_resolution"
+path = "fuzz_targets/fuzz_plugin_resolution.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_large_event_data"
+path = "fuzz_targets/fuzz_large_event_data.rs"
+test = false
+doc = false
+bench = false

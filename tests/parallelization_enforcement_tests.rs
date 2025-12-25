@@ -44,7 +44,9 @@ async fn test_host_exclusive_enforcement() {
             .acquire(ParallelizationHint::HostExclusive, host, module)
             .await;
         let wait_time = start.elapsed();
-        log2.lock().await.push(format!("Task2 started after {:?}", wait_time));
+        log2.lock()
+            .await
+            .push(format!("Task2 started after {:?}", wait_time));
         tokio::time::sleep(Duration::from_millis(50)).await;
         log2.lock().await.push(format!("Task2 finished"));
     });
@@ -118,7 +120,11 @@ async fn test_global_exclusive_enforcement() {
     let log1 = execution_log.clone();
     let handle1 = tokio::spawn(async move {
         let _guard = manager1
-            .acquire(ParallelizationHint::GlobalExclusive, "host1", "cluster_config")
+            .acquire(
+                ParallelizationHint::GlobalExclusive,
+                "host1",
+                "cluster_config",
+            )
             .await;
         log1.lock().await.push(format!("host1 started"));
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -133,10 +139,16 @@ async fn test_global_exclusive_enforcement() {
     let start = Instant::now();
     let handle2 = tokio::spawn(async move {
         let _guard = manager2
-            .acquire(ParallelizationHint::GlobalExclusive, "host2", "cluster_config")
+            .acquire(
+                ParallelizationHint::GlobalExclusive,
+                "host2",
+                "cluster_config",
+            )
             .await;
         let wait_time = start.elapsed();
-        log2.lock().await.push(format!("host2 started after {:?}", wait_time));
+        log2.lock()
+            .await
+            .push(format!("host2 started after {:?}", wait_time));
         tokio::time::sleep(Duration::from_millis(50)).await;
         log2.lock().await.push(format!("host2 finished"));
     });
@@ -208,7 +220,11 @@ async fn test_fully_parallel_no_restrictions() {
         let manager = manager.clone();
         let handle = tokio::spawn(async move {
             let _guard = manager
-                .acquire(ParallelizationHint::FullyParallel, "host1", &format!("module{}", i))
+                .acquire(
+                    ParallelizationHint::FullyParallel,
+                    "host1",
+                    &format!("module{}", i),
+                )
                 .await;
             tokio::time::sleep(Duration::from_millis(50)).await;
         });

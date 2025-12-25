@@ -1,0 +1,19 @@
+# Example tasks file for testing include_tasks
+
+- name: Create application directory
+  file:
+    path: /opt/myapp
+    state: directory
+    mode: '0755'
+
+- name: Copy application files
+  copy:
+    src: "{{ app_source }}"
+    dest: /opt/myapp/
+
+- name: Set application permissions
+  file:
+    path: /opt/myapp
+    owner: "{{ app_user | default('nobody') }}"
+    group: "{{ app_group | default('nogroup') }}"
+    recurse: yes

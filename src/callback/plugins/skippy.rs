@@ -364,7 +364,10 @@ impl SkippyCallback {
             _ => String::new(),
         };
 
-        format!("{}: [{}]{}{}", status_str, host_str, timing_str, message_str)
+        format!(
+            "{}: [{}]{}{}",
+            status_str, host_str, timing_str, message_str
+        )
     }
 
     /// Formats the recap line for a single host.
@@ -418,9 +421,10 @@ impl SkippyCallback {
 
         if let Some(task) = current.take() {
             // Check if we have any non-skipped results
-            let has_visible_results = task.results.iter().any(|r| {
-                r.status != TaskHostStatus::Skipped || self.config.verbosity >= 1
-            });
+            let has_visible_results = task
+                .results
+                .iter()
+                .any(|r| r.status != TaskHostStatus::Skipped || self.config.verbosity >= 1);
 
             let all_skipped = task
                 .results
@@ -612,10 +616,7 @@ impl ExecutionCallback for SkippyCallback {
         // Check if this is a new task
         let current = self.current_task.write().await;
 
-        let is_new_task = current
-            .as_ref()
-            .map(|t| t.name != name)
-            .unwrap_or(true);
+        let is_new_task = current.as_ref().map(|t| t.name != name).unwrap_or(true);
 
         if is_new_task {
             // Flush previous task if exists
@@ -662,10 +663,9 @@ impl ExecutionCallback for SkippyCallback {
 
         if let Some(task) = current.as_mut() {
             // Check if we need to print header immediately for failures
-            let should_print_header = matches!(
-                status,
-                TaskHostStatus::Failed | TaskHostStatus::Unreachable
-            ) && !task.header_printed;
+            let should_print_header =
+                matches!(status, TaskHostStatus::Failed | TaskHostStatus::Unreachable)
+                    && !task.header_printed;
 
             if should_print_header {
                 println!("{}", self.format_task_header(&task.name));
@@ -684,10 +684,7 @@ impl ExecutionCallback for SkippyCallback {
             };
 
             // For failures, print immediately
-            if matches!(
-                status,
-                TaskHostStatus::Failed | TaskHostStatus::Unreachable
-            ) {
+            if matches!(status, TaskHostStatus::Failed | TaskHostStatus::Unreachable) {
                 println!("{}", self.format_host_result(&host_result));
             }
 
@@ -757,7 +754,8 @@ mod tests {
 
         // Skipped task
         callback.on_task_start("skipped-task", "host1").await;
-        let skipped = create_execution_result("host1", "skipped-task", true, false, true, "skipped");
+        let skipped =
+            create_execution_result("host1", "skipped-task", true, false, true, "skipped");
         callback.on_task_complete(&skipped).await;
 
         assert_eq!(callback.total_skipped().await, 1);
@@ -818,11 +816,13 @@ mod tests {
 
         // Task skipped on all hosts
         callback.on_task_start("all-skipped", "host1").await;
-        let skipped1 = create_execution_result("host1", "all-skipped", true, false, true, "skipped");
+        let skipped1 =
+            create_execution_result("host1", "all-skipped", true, false, true, "skipped");
         callback.on_task_complete(&skipped1).await;
 
         callback.on_task_start("all-skipped", "host2").await;
-        let skipped2 = create_execution_result("host2", "all-skipped", true, false, true, "skipped");
+        let skipped2 =
+            create_execution_result("host2", "all-skipped", true, false, true, "skipped");
         callback.on_task_complete(&skipped2).await;
 
         // Flush to process

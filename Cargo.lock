@@ -3981,6 +3981,7 @@ dependencies = [
  "serial_test",
  "sha1",
  "sha2",
+ "shell-words",
  "shellexpand",
  "similar",
  "ssh2",

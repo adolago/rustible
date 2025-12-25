@@ -364,8 +364,7 @@ async fn test_mixed_callback_events_from_threads() {
         + callback.facts_gathered_count();
 
     assert_eq!(
-        total_typed,
-        expected_total as u64,
+        total_typed, expected_total as u64,
         "Event type counts should sum to total"
     );
 
@@ -1217,8 +1216,7 @@ async fn test_performance_under_high_contention() {
             barrier.wait().await;
 
             for i in 0..events_per_thread {
-                cb.on_task_start(&format!("task_{}_{}", t, i), "host")
-                    .await;
+                cb.on_task_start(&format!("task_{}_{}", t, i), "host").await;
             }
         }));
     }

@@ -593,7 +593,11 @@ impl ContextCallback {
                     }
                 }
                 if let Some(msg) = obj.get("msg") {
-                    println!("    {}: {}", "msg".bright_black(), self.format_value(msg, 0));
+                    println!(
+                        "    {}: {}",
+                        "msg".bright_black(),
+                        self.format_value(msg, 0)
+                    );
                 }
 
                 // Show other fields in verbose mode
@@ -838,18 +842,15 @@ impl ExecutionCallback for ContextCallback {
             let ctx = contexts.entry(result.host.clone()).or_default();
 
             // Store the result under the task name for display purposes
-            ctx.registered.insert(result.task_name.clone(), data.clone());
+            ctx.registered
+                .insert(result.task_name.clone(), data.clone());
         }
     }
 
     /// Called when a handler is triggered.
     async fn on_handler_triggered(&self, name: &str) {
         if self.config.verbosity >= ContextVerbosity::Verbose {
-            println!(
-                "{}: {}",
-                "HANDLER NOTIFIED".magenta(),
-                name.bright_white()
-            );
+            println!("{}: {}", "HANDLER NOTIFIED".magenta(), name.bright_white());
         }
     }
 
@@ -1101,7 +1102,8 @@ mod tests {
         let ok_result = create_execution_result("host1", "task1", true, false, false, "ok");
         callback.on_task_complete(&ok_result).await;
 
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
         callback.on_task_complete(&changed_result).await;
 
         let failed_result =

@@ -802,7 +802,8 @@ mod tests {
         let ok_result = create_execution_result("host1", "task1", true, false, false, "ok");
         callback.on_task_complete(&ok_result).await;
 
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
         callback.on_task_complete(&changed_result).await;
 
         let failed_result =
@@ -918,7 +919,10 @@ mod tests {
 
         // Both should share the same underlying state
         assert!(Arc::ptr_eq(&callback1.host_stats, &callback2.host_stats));
-        assert!(Arc::ptr_eq(&callback1.has_failures, &callback2.has_failures));
+        assert!(Arc::ptr_eq(
+            &callback1.has_failures,
+            &callback2.has_failures
+        ));
     }
 
     #[test]

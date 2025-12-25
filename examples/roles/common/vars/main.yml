@@ -1,0 +1,9 @@
+---
+# Role vars (higher precedence than defaults)
+# These values override defaults but can still be overridden by play vars or extra vars
+
+sysctl_settings:
+  net.core.somaxconn: 65535
+  vm.swappiness: 10
+
+internal_config_version: "1.0.0"

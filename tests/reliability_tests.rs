@@ -775,7 +775,10 @@ fn test_error_recovery_classification() {
     };
     assert!(!task_failed.is_recoverable());
 
-    let module_not_found = Error::ModuleNotFound("nonexistent".to_string());
+    let module_not_found = Error::ModuleNotFound {
+        module: "nonexistent".to_string(),
+        available: "apt, yum, copy".to_string(),
+    };
     assert!(!module_not_found.is_recoverable());
 }
 
@@ -795,6 +798,7 @@ fn test_error_exit_codes() {
     let connection_failed = Error::ConnectionFailed {
         host: "host".to_string(),
         message: "refused".to_string(),
+        suggestions: "Check network connectivity.".to_string(),
     };
     assert_eq!(connection_failed.exit_code(), 3);
 
@@ -1389,7 +1393,10 @@ fn test_connection_error_messages() {
 fn test_main_error_messages() {
     let errors: Vec<(Error, &str)> = vec![
         (
-            Error::ModuleNotFound("custom_module".to_string()),
+            Error::ModuleNotFound {
+                module: "custom_module".to_string(),
+                available: "apt, yum".to_string(),
+            },
             "custom_module",
         ),
         (
@@ -1397,7 +1404,10 @@ fn test_main_error_messages() {
             "missing_handler",
         ),
         (
-            Error::HostNotFound("unknown_host".to_string()),
+            Error::HostNotFound {
+                host: "unknown_host".to_string(),
+                suggestion: "Check inventory".to_string(),
+            },
             "unknown_host",
         ),
         (

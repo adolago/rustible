@@ -585,21 +585,8 @@ impl StatsState {
 
         // RemoteCommand modules (Tier 3)
         for module in &[
-            "command",
-            "shell",
-            "raw",
-            "script",
-            "service",
-            "systemd",
-            "apt",
-            "yum",
-            "dnf",
-            "package",
-            "pip",
-            "user",
-            "group",
-            "git",
-            "cron",
+            "command", "shell", "raw", "script", "service", "systemd", "apt", "yum", "dnf",
+            "package", "pip", "user", "group", "git", "cron",
         ] {
             map.insert(module.to_string(), ModuleClassification::RemoteCommand);
         }
@@ -925,12 +912,7 @@ impl StatsCallback {
     }
 
     /// Record module execution with explicit module name.
-    pub fn record_module_execution(
-        &self,
-        module: &str,
-        result: &ModuleResult,
-        duration: Duration,
-    ) {
+    pub fn record_module_execution(&self, module: &str, result: &ModuleResult, duration: Duration) {
         let duration_ms = duration.as_millis() as u64;
         let mut state = self.state.write();
 
@@ -1006,7 +988,9 @@ impl ExecutionCallback for StatsCallback {
         let mut state = self.state.write();
 
         // Get duration before borrowing current_stats mutably
-        let duration_secs = state.playbook_start.map(|start| start.elapsed().as_secs_f64());
+        let duration_secs = state
+            .playbook_start
+            .map(|start| start.elapsed().as_secs_f64());
 
         if let Some(ref mut playbook_stats) = state.current_stats {
             playbook_stats.end_time_ms = Some(
@@ -1370,8 +1354,16 @@ mod tests {
 
         let result = ModuleResult::changed("installed");
         callback.record_module_execution("apt", &result, Duration::from_millis(1500));
-        callback.record_module_execution("apt", &ModuleResult::ok("ok"), Duration::from_millis(500));
-        callback.record_module_execution("debug", &ModuleResult::ok("msg"), Duration::from_millis(1));
+        callback.record_module_execution(
+            "apt",
+            &ModuleResult::ok("ok"),
+            Duration::from_millis(500),
+        );
+        callback.record_module_execution(
+            "debug",
+            &ModuleResult::ok("msg"),
+            Duration::from_millis(1),
+        );
 
         let stats = callback.current_stats().unwrap();
 

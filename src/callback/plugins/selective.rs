@@ -453,11 +453,7 @@ impl SelectiveCallback {
 
     /// Format a matched result for output.
     fn format_match(&self, result: &ExecutionResult) -> String {
-        let prefix = self
-            .config
-            .match_prefix
-            .as_deref()
-            .unwrap_or("[MATCHED]");
+        let prefix = self.config.match_prefix.as_deref().unwrap_or("[MATCHED]");
 
         let status_str = if result.result.skipped {
             "skipped".cyan()
@@ -937,7 +933,8 @@ mod tests {
         let callback = SelectiveCallback::changes_only();
 
         let ok_result = create_execution_result("host1", "task1", true, false, false, "ok");
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
 
         assert!(!callback.result_matches(&ok_result));
         assert!(callback.result_matches(&changed_result));
@@ -945,9 +942,7 @@ mod tests {
 
     #[test]
     fn test_selective_callback_tag_filter() {
-        let callback = SelectiveCallback::builder()
-            .tags(&["deploy"])
-            .build();
+        let callback = SelectiveCallback::builder().tags(&["deploy"]).build();
 
         // Register tags for tasks
         callback.register_task_tags("Install nginx", vec!["deploy".to_string()]);
@@ -988,7 +983,8 @@ mod tests {
         let changes_filter = StatusFilter::changes();
 
         let ok_result = create_execution_result("host1", "task1", true, false, false, "ok");
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
         let failed_result = create_execution_result("host1", "task3", false, false, false, "error");
 
         assert!(!failures_filter.matches(&ok_result));
@@ -1017,10 +1013,7 @@ mod tests {
         assert!(callback.config.status_filter.failures_only);
         assert!(callback.config.verbose);
         assert!(callback.config.always_recap);
-        assert_eq!(
-            callback.config.match_prefix,
-            Some("[FILTER]".to_string())
-        );
+        assert_eq!(callback.config.match_prefix, Some("[FILTER]".to_string()));
     }
 
     #[test]
@@ -1030,7 +1023,10 @@ mod tests {
 
         // Both should share the same underlying state
         assert!(Arc::ptr_eq(&callback1.host_stats, &callback2.host_stats));
-        assert!(Arc::ptr_eq(&callback1.has_failures, &callback2.has_failures));
+        assert!(Arc::ptr_eq(
+            &callback1.has_failures,
+            &callback2.has_failures
+        ));
         assert!(Arc::ptr_eq(&callback1.match_count, &callback2.match_count));
     }
 
@@ -1044,7 +1040,8 @@ mod tests {
         assert!(output.contains("task1"));
         assert!(output.contains("MATCHED"));
 
-        let failed_result = create_execution_result("host1", "task1", false, false, false, "error msg");
+        let failed_result =
+            create_execution_result("host1", "task1", false, false, false, "error msg");
         let output = callback.format_match(&failed_result);
         assert!(output.contains("error msg"));
     }

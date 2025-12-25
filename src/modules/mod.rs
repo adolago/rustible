@@ -8,6 +8,7 @@ pub mod assert;
 pub mod blockinfile;
 pub mod command;
 pub mod copy;
+pub mod cron;
 pub mod debug;
 pub mod dnf;
 // TODO: facts module needs to be converted to sync Module trait
@@ -15,7 +16,10 @@ pub mod dnf;
 pub mod file;
 pub mod git;
 pub mod group;
+pub mod hostname;
+pub mod include_vars;
 pub mod lineinfile;
+pub mod mount;
 pub mod package;
 pub mod pip;
 pub mod python;
@@ -23,6 +27,7 @@ pub mod service;
 pub mod set_fact;
 pub mod shell;
 pub mod stat;
+pub mod sysctl;
 pub mod template;
 pub mod user;
 pub mod yum;
@@ -89,6 +94,114 @@ pub fn validate_package_name(name: &str) -> ModuleResult<()> {
     Ok(())
 }
 
+/// Validates a path for use in creates/removes parameters.
+///
+/// This function performs security checks on paths to prevent:
+/// - Null byte injection attacks
+/// - Empty paths
+/// - Paths containing shell metacharacters that could be dangerous
+///
+/// Note: This does NOT prevent path traversal (../) as that is a valid
+/// use case for creates/removes. The path is only used for existence checks,
+/// not for execution.
+///
+/// # Arguments
+///
+/// * `path` - The path string to validate
+/// * `param_name` - The parameter name for error messages (e.g., "creates" or "removes")
+///
+/// # Returns
+///
+/// * `Ok(())` if the path is valid
+/// * `Err(ModuleError::InvalidParameter)` if the path contains dangerous characters
+///
+/// # Examples
+///
+/// ```
+/// use rustible::modules::validate_path_param;
+///
+/// assert!(validate_path_param("/tmp/marker.txt", "creates").is_ok());
+/// assert!(validate_path_param("../relative/path", "removes").is_ok());
+/// assert!(validate_path_param("/path/with\0null", "creates").is_err());
+/// assert!(validate_path_param("", "creates").is_err());
+/// ```
+pub fn validate_path_param(path: &str, param_name: &str) -> ModuleResult<()> {
+    // Reject empty paths
+    if path.is_empty() {
+        return Err(ModuleError::InvalidParameter(format!(
+            "{} path cannot be empty",
+            param_name
+        )));
+    }
+
+    // Reject paths with null bytes (injection attack vector)
+    if path.contains('\0') {
+        return Err(ModuleError::InvalidParameter(format!(
+            "{} path contains invalid null byte",
+            param_name
+        )));
+    }
+
+    // Reject paths with newlines (could be used for log injection)
+    if path.contains('\n') || path.contains('\r') {
+        return Err(ModuleError::InvalidParameter(format!(
+            "{} path contains invalid newline characters",
+            param_name
+        )));
+    }
+
+    Ok(())
+}
+
+/// Validates an environment variable name.
+///
+/// Environment variable names should only contain alphanumeric characters
+/// and underscores, and should not start with a digit.
+///
+/// # Arguments
+///
+/// * `name` - The environment variable name to validate
+///
+/// # Returns
+///
+/// * `Ok(())` if the name is valid
+/// * `Err(ModuleError::InvalidParameter)` if the name is invalid
+pub fn validate_env_var_name(name: &str) -> ModuleResult<()> {
+    if name.is_empty() {
+        return Err(ModuleError::InvalidParameter(
+            "Environment variable name cannot be empty".to_string(),
+        ));
+    }
+
+    // Environment variable names should not start with a digit
+    if name.chars().next().unwrap().is_ascii_digit() {
+        return Err(ModuleError::InvalidParameter(format!(
+            "Environment variable name '{}' cannot start with a digit",
+            name
+        )));
+    }
+
+    // Check for valid characters (alphanumeric and underscore only)
+    for c in name.chars() {
+        if !c.is_ascii_alphanumeric() && c != '_' {
+            return Err(ModuleError::InvalidParameter(format!(
+                "Environment variable name '{}' contains invalid character '{}'",
+                name, c
+            )));
+        }
+    }
+
+    // Reject null bytes
+    if name.contains('\0') {
+        return Err(ModuleError::InvalidParameter(format!(
+            "Environment variable name '{}' contains null byte",
+            name
+        )));
+    }
+
+    Ok(())
+}
+
 /// Errors that can occur during module execution
 #[derive(Error, Debug)]
 pub enum ModuleError {
@@ -124,6 +237,9 @@ pub enum ModuleError {
 
     #[error("Ansible module not found: {0}")]
     ModuleNotFound(String),
+
+    #[error("Validation failed: {0}")]
+    ValidationFailed(String),
 }
 
 /// Result type for module operations
@@ -664,8 +780,12 @@ impl ModuleRegistry {
         registry.register(Arc::new(template::TemplateModule));
 
         // System management modules
+        registry.register(Arc::new(cron::CronModule));
         registry.register(Arc::new(group::GroupModule));
+        registry.register(Arc::new(hostname::HostnameModule));
+        registry.register(Arc::new(mount::MountModule));
         registry.register(Arc::new(service::ServiceModule));
+        registry.register(Arc::new(sysctl::SysctlModule));
         registry.register(Arc::new(user::UserModule));
 
         // Source control modules
@@ -674,6 +794,7 @@ impl ModuleRegistry {
         // Logic/utility modules
         registry.register(Arc::new(assert::AssertModule));
         registry.register(Arc::new(debug::DebugModule));
+        registry.register(Arc::new(include_vars::IncludeVarsModule));
         registry.register(Arc::new(set_fact::SetFactModule));
         registry.register(Arc::new(stat::StatModule));
 

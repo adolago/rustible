@@ -39,14 +39,18 @@ fn test_plan_flag_shows_execution_plan() {
         .assert()
         .success()
         .stdout(predicate::str::contains("EXECUTION PLAN"))
-        .stdout(predicate::str::contains("Rustible will perform the following actions"))
+        .stdout(predicate::str::contains(
+            "Rustible will perform the following actions",
+        ))
         .stdout(predicate::str::contains("Test Play"))
         .stdout(predicate::str::contains("Install nginx"))
         .stdout(predicate::str::contains("will install package: nginx"))
         .stdout(predicate::str::contains("Start nginx service"))
         .stdout(predicate::str::contains("will started service: nginx"))
         .stdout(predicate::str::contains("PLAN SUMMARY"))
-        .stdout(predicate::str::contains("To execute this plan, run the same command without --plan"));
+        .stdout(predicate::str::contains(
+            "To execute this plan, run the same command without --plan",
+        ));
 }
 
 #[test]
@@ -121,11 +125,17 @@ fn test_plan_shows_module_details() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Module: copy"))
-        .stdout(predicate::str::contains("will copy /tmp/source.txt to /tmp/dest.txt"))
+        .stdout(predicate::str::contains(
+            "will copy /tmp/source.txt to /tmp/dest.txt",
+        ))
         .stdout(predicate::str::contains("Module: command"))
-        .stdout(predicate::str::contains("will execute: echo \"Hello World\""))
+        .stdout(predicate::str::contains(
+            "will execute: echo \"Hello World\"",
+        ))
         .stdout(predicate::str::contains("Module: file"))
-        .stdout(predicate::str::contains("will ensure /tmp/testdir exists as directory"));
+        .stdout(predicate::str::contains(
+            "will ensure /tmp/testdir exists as directory",
+        ));
 }
 
 #[test]
@@ -154,7 +164,9 @@ fn test_plan_shows_conditional_tasks() {
         .arg("--plan")
         .assert()
         .success()
-        .stdout(predicate::str::contains("When: ansible_os_family == \"Debian\""));
+        .stdout(predicate::str::contains(
+            "When: ansible_os_family == \"Debian\"",
+        ));
 }
 
 #[test]
@@ -195,7 +207,9 @@ fn test_plan_shows_notify_handlers() {
         .arg("--plan")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Notify: restart app, reload config"));
+        .stdout(predicate::str::contains(
+            "Notify: restart app, reload config",
+        ));
 }
 
 #[test]
@@ -397,7 +411,9 @@ fn test_plan_user_and_group_modules() {
         .assert()
         .success()
         .stdout(predicate::str::contains("will create/update user: appuser"))
-        .stdout(predicate::str::contains("will create/update group: appgroup"))
+        .stdout(predicate::str::contains(
+            "will create/update group: appgroup",
+        ))
         .stdout(predicate::str::contains("will remove user: olduser"));
 }
 
@@ -427,7 +443,9 @@ fn test_plan_git_module() {
         .arg("--plan")
         .assert()
         .success()
-        .stdout(predicate::str::contains("will clone/update https://github.com/example/repo.git to /opt/app"));
+        .stdout(predicate::str::contains(
+            "will clone/update https://github.com/example/repo.git to /opt/app",
+        ));
 }
 
 #[test]
@@ -456,7 +474,9 @@ fn test_plan_template_module() {
         .arg("--plan")
         .assert()
         .success()
-        .stdout(predicate::str::contains("will render template config.j2 to /etc/app/config.yml"));
+        .stdout(predicate::str::contains(
+            "will render template config.j2 to /etc/app/config.yml",
+        ));
 }
 
 #[test]
@@ -513,7 +533,9 @@ fn test_plan_warning_message() {
         .arg("--plan")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Running in PLAN MODE - showing execution plan only"));
+        .stdout(predicate::str::contains(
+            "Running in PLAN MODE - showing execution plan only",
+        ));
 }
 
 #[test]

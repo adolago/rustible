@@ -151,8 +151,13 @@ impl HostStats {
 
     /// Get total task count
     pub fn total(&self) -> u32 {
-        self.ok + self.changed + self.failed + self.skipped + self.unreachable
-            + self.rescued + self.ignored
+        self.ok
+            + self.changed
+            + self.failed
+            + self.skipped
+            + self.unreachable
+            + self.rescued
+            + self.ignored
     }
 }
 
@@ -559,7 +564,8 @@ impl ExecutionCallback for DefaultCallback {
                 // Format each stat
                 let ok = self.format_stat("ok", host_stats.ok, Color::Green);
                 let changed = self.format_stat("changed", host_stats.changed, Color::Yellow);
-                let unreachable = self.format_stat("unreachable", host_stats.unreachable, Color::Red);
+                let unreachable =
+                    self.format_stat("unreachable", host_stats.unreachable, Color::Red);
                 let failed = self.format_stat("failed", host_stats.failed, Color::Red);
                 let skipped = self.format_stat("skipped", host_stats.skipped, Color::Cyan);
                 let rescued = self.format_stat("rescued", host_stats.rescued, Color::Magenta);
@@ -593,11 +599,7 @@ impl ExecutionCallback for DefaultCallback {
 
             println!();
             if self.use_color() {
-                println!(
-                    "Playbook {} in {}",
-                    status,
-                    duration_str.bright_white()
-                );
+                println!("Playbook {} in {}", status, duration_str.bright_white());
             } else {
                 println!("Playbook {} in {}", status, duration_str);
             }
@@ -733,11 +735,7 @@ impl ExecutionCallback for DefaultCallback {
     async fn on_facts_gathered(&self, host: &str, _facts: &Facts) {
         if self.verbosity() >= Verbosity::Debug {
             if self.use_color() {
-                println!(
-                    "{}: [{}]",
-                    "ok".green(),
-                    host.bright_white().bold()
-                );
+                println!("{}: [{}]", "ok".green(), host.bright_white().bold());
             } else {
                 println!("ok: [{}]", host);
             }
@@ -859,10 +857,22 @@ mod tests {
 
     #[test]
     fn test_format_duration() {
-        assert_eq!(DefaultCallback::format_duration(Duration::from_millis(500)), "500ms");
-        assert_eq!(DefaultCallback::format_duration(Duration::from_secs(5)), "5.00s");
-        assert_eq!(DefaultCallback::format_duration(Duration::from_secs(65)), "1m 5s");
-        assert_eq!(DefaultCallback::format_duration(Duration::from_secs(3665)), "1h 1m 5s");
+        assert_eq!(
+            DefaultCallback::format_duration(Duration::from_millis(500)),
+            "500ms"
+        );
+        assert_eq!(
+            DefaultCallback::format_duration(Duration::from_secs(5)),
+            "5.00s"
+        );
+        assert_eq!(
+            DefaultCallback::format_duration(Duration::from_secs(65)),
+            "1m 5s"
+        );
+        assert_eq!(
+            DefaultCallback::format_duration(Duration::from_secs(3665)),
+            "1h 1m 5s"
+        );
     }
 
     #[test]

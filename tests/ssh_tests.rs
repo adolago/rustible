@@ -1,4 +1,4 @@
-//! Comprehensive SSH-specific tests for Rustible
+//! Comprehensive SSH-specific tests for Rustible (ssh2-backend)
 //!
 //! This test module covers advanced SSH functionality including:
 //! - SSH connection establishment and authentication
@@ -9,6 +9,13 @@
 //! - SSH key management
 //! - SSH performance and connection pooling
 //! - SSH error handling and edge cases
+//!
+//! NOTE: This test file requires the ssh2-backend feature. Run with:
+//! ```bash
+//! cargo test --test ssh_tests --features ssh2-backend
+//! ```
+
+#![cfg(feature = "ssh2-backend")]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

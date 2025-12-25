@@ -63,8 +63,8 @@ pub struct EncryptArgs {
     pub file: PathBuf,
 
     /// Output file (default: overwrite input)
-    #[arg(short, long)]
-    pub output: Option<PathBuf>,
+    #[arg(short = 'O', long = "output-file")]
+    pub output_file: Option<PathBuf>,
 
     /// Vault password file
     #[arg(long)]
@@ -82,8 +82,8 @@ pub struct DecryptArgs {
     pub file: PathBuf,
 
     /// Output file (default: overwrite input)
-    #[arg(short, long)]
-    pub output: Option<PathBuf>,
+    #[arg(short = 'O', long = "output-file")]
+    pub output_file: Option<PathBuf>,
 
     /// Vault password file
     #[arg(long)]
@@ -365,7 +365,7 @@ impl VaultArgs {
 
                 let encrypted = engine.encrypt(&content)?;
 
-                let output_path = args.output.as_ref().unwrap_or(&args.file);
+                let output_path = args.output_file.as_ref().unwrap_or(&args.file);
                 fs::write(output_path, &encrypted)
                     .with_context(|| format!("Failed to write file: {}", output_path.display()))?;
 
@@ -388,7 +388,7 @@ impl VaultArgs {
 
                 let decrypted = engine.decrypt(&content)?;
 
-                let output_path = args.output.as_ref().unwrap_or(&args.file);
+                let output_path = args.output_file.as_ref().unwrap_or(&args.file);
                 fs::write(output_path, &decrypted)
                     .with_context(|| format!("Failed to write file: {}", output_path.display()))?;
 

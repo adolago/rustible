@@ -14,10 +14,10 @@
 //! This test module is self-contained and implements its own factory pattern
 //! to validate the design, independent of any internal crate implementation.
 
+use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
-use std::cmp::Ordering as CmpOrdering;
 
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -187,7 +187,12 @@ pub enum PluginFactoryError {
     /// Required configuration missing
     MissingConfig { plugin: String, key: String },
     /// Configuration value has wrong type
-    TypeMismatch { plugin: String, key: String, expected: String, got: String },
+    TypeMismatch {
+        plugin: String,
+        key: String,
+        expected: String,
+        got: String,
+    },
 }
 
 impl std::fmt::Display for PluginFactoryError {
@@ -203,9 +208,18 @@ impl std::fmt::Display for PluginFactoryError {
                 write!(f, "Failed to initialize plugin '{}': {}", plugin, cause)
             }
             PluginFactoryError::MissingConfig { plugin, key } => {
-                write!(f, "Missing required config '{}' for plugin '{}'", key, plugin)
+                write!(
+                    f,
+                    "Missing required config '{}' for plugin '{}'",
+                    key, plugin
+                )
             }
-            PluginFactoryError::TypeMismatch { plugin, key, expected, got } => {
+            PluginFactoryError::TypeMismatch {
+                plugin,
+                key,
+                expected,
+                got,
+            } => {
                 write!(
                     f,
                     "Type mismatch for '{}' in plugin '{}': expected {}, got {}",
@@ -928,7 +942,10 @@ fn test_factory_whitespace_only_name() {
     let result = factory.create("   ");
 
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), PluginFactoryError::UnknownPlugin(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        PluginFactoryError::UnknownPlugin(_)
+    ));
 }
 
 #[test]
@@ -1184,7 +1201,10 @@ fn test_factory_default_to_invalid_plugin_fails() {
     let result = factory.create_default();
 
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), PluginFactoryError::UnknownPlugin(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        PluginFactoryError::UnknownPlugin(_)
+    ));
 }
 
 #[test]
@@ -1410,8 +1430,7 @@ fn test_factory_config_with_empty_values() {
 #[test]
 fn test_factory_config_with_null_values() {
     let factory = PluginFactory::new();
-    let config = PluginConfig::new()
-        .with_value("show_per_task", serde_json::Value::Null);
+    let config = PluginConfig::new().with_value("show_per_task", serde_json::Value::Null);
 
     // Null values should be treated as missing (use default)
     let plugin = factory.create_with_config("timer", config).unwrap();

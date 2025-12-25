@@ -112,9 +112,7 @@ impl ExecutionCallback for TrackingCallback {
 
     async fn on_facts_gathered(&self, host: &str, _facts: &Facts) {
         self.facts_gathered.fetch_add(1, Ordering::SeqCst);
-        self.events
-            .write()
-            .push(format!("facts_gathered:{}", host));
+        self.events.write().push(format!("facts_gathered:{}", host));
     }
 }
 
@@ -465,24 +463,24 @@ async fn test_unicode_task_names() {
 
     // Various Unicode task names
     let unicode_names = vec![
-        "Install nginx",                                    // English
-        "Instalar nginx",                                   // Spanish
-        "Nginx installieren",                               // German (with umlaut)
-        "Installer nginx",                                  // French
-        "Instalacja nginx",                                 // Polish
-        "nginx",                                            // Russian
-        "nginx",                                            // Japanese
-        "nginx",                                            // Chinese
-        "nginx",                                            // Korean
-        "emoji: Deploy",                                    // Emoji
-        "nginx",                                            // Arabic
-        "nginx",                                            // Hebrew
-        "Install",                                          // Thai
-        "Deploy\u{200B}Service",                            // Zero-width space
-        "Task\u{FEFF}Name",                                 // BOM character
-        "\u{202E}Right-to-Left Override",                   // RTL override
-        "Combining\u{0301} Character",                      // Combining accent
-        "\u{1F4BB} Computer Task",                          // Extended emoji
+        "Install nginx",                  // English
+        "Instalar nginx",                 // Spanish
+        "Nginx installieren",             // German (with umlaut)
+        "Installer nginx",                // French
+        "Instalacja nginx",               // Polish
+        "nginx",                          // Russian
+        "nginx",                          // Japanese
+        "nginx",                          // Chinese
+        "nginx",                          // Korean
+        "emoji: Deploy",                  // Emoji
+        "nginx",                          // Arabic
+        "nginx",                          // Hebrew
+        "Install",                        // Thai
+        "Deploy\u{200B}Service",          // Zero-width space
+        "Task\u{FEFF}Name",               // BOM character
+        "\u{202E}Right-to-Left Override", // RTL override
+        "Combining\u{0301} Character",    // Combining accent
+        "\u{1F4BB} Computer Task",        // Extended emoji
     ];
 
     for name in &unicode_names {
@@ -507,13 +505,13 @@ async fn test_unicode_hostnames() {
 
     let unicode_hosts = vec![
         "localhost",
-        "server-",                                     // Russian server
-        "",                                            // Japanese host
-        "",                                            // Chinese host
+        "server-", // Russian server
+        "",        // Japanese host
+        "",        // Chinese host
         "host-with-emoji-",
         "server.example.com",
         "192.168.1.1",
-        "::1",                                         // IPv6
+        "::1", // IPv6
         "host_with_underscore",
         "host-with-dash",
         "UPPERCASE.HOST.COM",
@@ -536,15 +534,15 @@ async fn test_unicode_in_output_messages() {
 
     let unicode_messages = vec![
         "Operation successful",
-        " ",                                           // CJK unified
-        " ",                                           // Cyrillic
-        "Processed 100 items",                         // Mixed
-        "Error:\n\tTab\r\nNewlines",                   // Control characters
-        "\x00Null\x00Character\x00",                   // Null bytes
-        "",                                            // Empty
-        " ",                                           // Just whitespace
-        "\u{FFFD}Replacement\u{FFFD}",                 // Replacement character
-        "Emoji: ",                                     // Emoji sequence
+        " ",                           // CJK unified
+        " ",                           // Cyrillic
+        "Processed 100 items",         // Mixed
+        "Error:\n\tTab\r\nNewlines",   // Control characters
+        "\x00Null\x00Character\x00",   // Null bytes
+        "",                            // Empty
+        " ",                           // Just whitespace
+        "\u{FFFD}Replacement\u{FFFD}", // Replacement character
+        "Emoji: ",                     // Emoji sequence
     ];
 
     for (i, message) in unicode_messages.iter().enumerate() {
@@ -564,10 +562,10 @@ async fn test_unicode_playbook_names() {
 
     let unicode_playbooks = vec![
         "deploy.yml",
-        "- .yml",                  // Mixed emoji
-        "-.yml",                   // Japanese
-        "-.yml",                   // Russian
-        "path/to/.yml",            // Chinese in path
+        "- .yml",       // Mixed emoji
+        "-.yml",        // Japanese
+        "-.yml",        // Russian
+        "path/to/.yml", // Chinese in path
     ];
 
     for name in &unicode_playbooks {
@@ -595,7 +593,13 @@ async fn test_concurrent_task_completions() {
     for i in 0..100 {
         let cb = callback.clone();
         let handle = tokio::spawn(async move {
-            let result = create_result(&format!("host{}", i), &format!("task{}", i), true, false, "ok");
+            let result = create_result(
+                &format!("host{}", i),
+                &format!("task{}", i),
+                true,
+                false,
+                "ok",
+            );
             cb.on_task_complete(&result).await;
         });
         handles.push(handle);
@@ -650,7 +654,13 @@ async fn test_concurrent_mixed_callbacks() {
         let b = barrier.clone();
         handles.push(tokio::spawn(async move {
             b.wait().await;
-            let result = create_result(&format!("host{}", i), &format!("task{}", i), true, false, "ok");
+            let result = create_result(
+                &format!("host{}", i),
+                &format!("task{}", i),
+                true,
+                false,
+                "ok",
+            );
             cb.on_task_complete(&result).await;
         }));
     }
@@ -682,9 +692,7 @@ async fn test_rapid_sequential_callbacks() {
     // Rapid fire callbacks without any async yielding
     for _ in 0..1000 {
         callback.on_playbook_start("playbook").await;
-        callback
-            .on_play_start("play", &["host1".to_string()])
-            .await;
+        callback.on_play_start("play", &["host1".to_string()]).await;
         callback.on_task_start("task", "host1").await;
         let result = create_result("host1", "task", true, false, "ok");
         callback.on_task_complete(&result).await;
@@ -1113,7 +1121,11 @@ async fn test_many_hosts_with_failures() {
                 "critical_task",
                 !should_fail,
                 false,
-                if should_fail { "Connection refused" } else { "ok" },
+                if should_fail {
+                    "Connection refused"
+                } else {
+                    "ok"
+                },
             );
             cb.on_task_complete(&result).await;
         });
@@ -1215,7 +1227,9 @@ async fn test_very_long_names() {
     callback
         .on_play_start("play", &[long_host_name.clone()])
         .await;
-    callback.on_task_start(&long_task_name, &long_host_name).await;
+    callback
+        .on_task_start(&long_task_name, &long_host_name)
+        .await;
 
     let result = create_result(&long_host_name, &long_task_name, true, false, "ok");
     callback.on_task_complete(&result).await;

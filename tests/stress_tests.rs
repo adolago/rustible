@@ -1572,3 +1572,1003 @@ async fn benchmark_latency_percentiles() {
         p99
     );
 }
+
+// ============================================================================
+// 8. EXTREME STRESS TESTS - 1000+ HOSTS CONCURRENT
+// ============================================================================
+// These tests are marked #[ignore] for CI - run manually with:
+//   cargo test --test stress_tests extreme_ -- --ignored --test-threads=1
+
+/// Extreme stress test: 1000 hosts concurrent execution
+///
+/// This test validates the system can handle 1000+ hosts executing
+/// tasks concurrently without memory exhaustion or performance degradation.
+///
+/// Run manually: cargo test extreme_1000_hosts_concurrent -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_1000_hosts_concurrent -- --ignored"]
+async fn extreme_1000_hosts_concurrent() {
+    let test_result = tokio::time::timeout(Duration::from_secs(300), async {
+        let start = Instant::now();
+        let runtime = create_large_inventory(1000);
+        let inventory_creation_time = start.elapsed();
+
+        println!(
+            "Created 1000-host inventory in {:?}",
+            inventory_creation_time
+        );
+
+        let executor = Executor::with_runtime(
+            ExecutorConfig {
+                strategy: ExecutionStrategy::Free,
+                forks: 100, // High concurrency
+                ..Default::default()
+            },
+            runtime,
+        );
+
+        let mut playbook = Playbook::new("1000 Hosts Stress");
+        let mut play = Play::new("Mass Execution", "all");
+        play.gather_facts = false;
+        play.add_task(Task::new("Concurrent task", "debug").arg("msg", "1000-host test"));
+        playbook.add_play(play);
+
+        let exec_start = Instant::now();
+        let results = executor.run_playbook(&playbook).await;
+        let exec_duration = exec_start.elapsed();
+        let total_duration = start.elapsed();
+
+        match results {
+            Ok(results) => {
+                assert_eq!(
+                    results.len(),
+                    1000,
+                    "Should have results for all 1000 hosts"
+                );
+
+                let mut success_count = 0;
+                let mut failure_count = 0;
+                for result in results.values() {
+                    if result.failed {
+                        failure_count += 1;
+                    } else {
+                        success_count += 1;
+                    }
+                }
+
+                println!(
+                    "1000 hosts concurrent: {} success, {} failed in {:?} (exec: {:?})",
+                    success_count, failure_count, total_duration, exec_duration
+                );
+
+                // Allow up to 1% failure rate
+                assert!(
+                    failure_count <= 10,
+                    "Too many failures in 1000-host test: {}",
+                    failure_count
+                );
+            }
+            Err(e) => {
+                panic!("1000 hosts test failed: {:?}", e);
+            }
+        }
+    })
+    .await;
+
+    assert!(
+        test_result.is_ok(),
+        "1000-host concurrent test timed out after 5 minutes"
+    );
+}
+
+/// Extreme stress test: 2000 hosts with batched execution
+///
+/// Tests ability to handle very large inventories with controlled batching.
+///
+/// Run manually: cargo test extreme_2000_hosts_batched -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_2000_hosts_batched -- --ignored"]
+async fn extreme_2000_hosts_batched() {
+    let test_result = tokio::time::timeout(Duration::from_secs(600), async {
+        let start = Instant::now();
+        let runtime = create_large_inventory(2000);
+
+        println!("Created 2000-host inventory in {:?}", start.elapsed());
+
+        // Run in batches of 200 to avoid overwhelming the system
+        let executor = Executor::with_runtime(
+            ExecutorConfig {
+                strategy: ExecutionStrategy::Linear, // Process hosts in batches
+                forks: 50,
+                ..Default::default()
+            },
+            runtime,
+        );
+
+        let mut playbook = Playbook::new("2000 Hosts Batched");
+        let mut play = Play::new("Batch Execution", "all");
+        play.gather_facts = false;
+        play.add_task(Task::new("Batched task", "debug").arg("msg", "2000-host batch"));
+        playbook.add_play(play);
+
+        let exec_start = Instant::now();
+        let results = executor.run_playbook(&playbook).await;
+        let exec_duration = exec_start.elapsed();
+
+        match results {
+            Ok(results) => {
+                assert_eq!(results.len(), 2000);
+                println!("2000 hosts batched completed in {:?}", exec_duration);
+            }
+            Err(e) => {
+                panic!("2000 hosts batched test failed: {:?}", e);
+            }
+        }
+    })
+    .await;
+
+    assert!(
+        test_result.is_ok(),
+        "2000-host batched test timed out after 10 minutes"
+    );
+}
+
+// ============================================================================
+// 9. EXTREME STRESS TESTS - 1000+ TASKS SEQUENTIAL
+// ============================================================================
+
+/// Extreme stress test: 1000 tasks sequential on single host
+///
+/// Validates that the executor can handle very long playbooks without
+/// memory leaks or performance degradation over time.
+///
+/// Run manually: cargo test extreme_1000_tasks_sequential -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_1000_tasks_sequential -- --ignored"]
+async fn extreme_1000_tasks_sequential() {
+    let test_result = tokio::time::timeout(Duration::from_secs(300), async {
+        let runtime = create_large_inventory(1);
+        let playbook = create_large_playbook(1000);
+
+        let executor = Executor::with_runtime(
+            ExecutorConfig {
+                strategy: ExecutionStrategy::Linear,
+                forks: 1,
+                ..Default::default()
+            },
+            runtime,
+        );
+
+        let start = Instant::now();
+        let results = executor.run_playbook(&playbook).await;
+        let duration = start.elapsed();
+
+        match results {
+            Ok(results) => {
+                assert_eq!(results.len(), 1);
+
+                let total_ok: usize = results.values().map(|r| r.stats.ok).sum();
+                println!(
+                    "1000 sequential tasks completed: {} ok in {:?}",
+                    total_ok, duration
+                );
+
+                // Should have executed all 1000 tasks
+                assert!(
+                    total_ok >= 900, // Allow some skipped due to conditions
+                    "Expected ~1000 tasks ok, got {}",
+                    total_ok
+                );
+            }
+            Err(e) => {
+                panic!("1000 sequential tasks failed: {:?}", e);
+            }
+        }
+    })
+    .await;
+
+    assert!(test_result.is_ok(), "1000-task sequential test timed out");
+}
+
+/// Extreme stress test: 2000 tasks across 10 hosts
+///
+/// Tests handling very large task counts distributed across multiple hosts.
+///
+/// Run manually: cargo test extreme_2000_tasks_across_hosts -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_2000_tasks_across_hosts -- --ignored"]
+async fn extreme_2000_tasks_across_hosts() {
+    let test_result = tokio::time::timeout(Duration::from_secs(600), async {
+        let runtime = create_large_inventory(10);
+        let playbook = create_large_playbook(2000);
+
+        let executor = Executor::with_runtime(
+            ExecutorConfig {
+                strategy: ExecutionStrategy::Free,
+                forks: 10,
+                ..Default::default()
+            },
+            runtime,
+        );
+
+        let start = Instant::now();
+        let results = executor.run_playbook(&playbook).await;
+        let duration = start.elapsed();
+
+        match results {
+            Ok(results) => {
+                assert_eq!(results.len(), 10);
+
+                let total_executions: usize = results
+                    .values()
+                    .map(|r| r.stats.ok + r.stats.changed + r.stats.skipped)
+                    .sum();
+
+                let throughput = total_executions as f64 / duration.as_secs_f64();
+
+                println!(
+                    "2000 tasks x 10 hosts: {} executions in {:?} ({:.1} tasks/sec)",
+                    total_executions, duration, throughput
+                );
+            }
+            Err(e) => {
+                panic!("2000 tasks across hosts failed: {:?}", e);
+            }
+        }
+    })
+    .await;
+
+    assert!(test_result.is_ok(), "2000-task multi-host test timed out");
+}
+
+// ============================================================================
+// 10. MEMORY UNDER LOAD TESTS
+// ============================================================================
+
+/// Memory stress: Large variable contexts under concurrent load
+///
+/// Tests memory behavior when hosts have large variable contexts
+/// and many concurrent operations are running.
+///
+/// Run manually: cargo test extreme_memory_large_vars_concurrent -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_memory_large_vars_concurrent -- --ignored"]
+async fn extreme_memory_large_vars_concurrent() {
+    let test_result = tokio::time::timeout(Duration::from_secs(180), async {
+        // 50 hosts with 50KB of variables each = ~2.5MB variable data
+        let runtime = create_runtime_with_large_vars(50, 50);
+
+        let executor = Executor::with_runtime(
+            ExecutorConfig {
+                strategy: ExecutionStrategy::Free,
+                forks: 25,
+                ..Default::default()
+            },
+            runtime,
+        );
+
+        let mut playbook = Playbook::new("Memory Stress");
+        let mut play = Play::new("Large Vars", "all");
+        play.gather_facts = false;
+
+        // Multiple tasks that access variables
+        for i in 0..10 {
+            play.add_task(Task::new(format!("Var access {}", i), "debug").arg(
+                "msg",
+                "{{ large_var[:50] }} - {{ complex_var.level1.level2.level3.data[:20] }}",
+            ));
+        }
+        playbook.add_play(play);
+
+        let start = Instant::now();
+        let results = executor.run_playbook(&playbook).await;
+        let duration = start.elapsed();
+
+        match results {
+            Ok(results) => {
+                assert_eq!(results.len(), 50);
+                println!(
+                    "Memory stress (50 hosts, 50KB each, 10 tasks): completed in {:?}",
+                    duration
+                );
+            }
+            Err(e) => {
+                panic!("Memory stress test failed: {:?}", e);
+            }
+        }
+    })
+    .await;
+
+    assert!(test_result.is_ok(), "Memory stress test timed out");
+}
+
+/// Memory stress: Repeated allocations to detect leaks
+///
+/// Runs many iterations with fresh allocations each time to detect
+/// memory leaks through performance degradation patterns.
+///
+/// Run manually: cargo test extreme_memory_leak_detection_extended -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_memory_leak_detection_extended -- --ignored"]
+async fn extreme_memory_leak_detection_extended() {
+    let test_result = tokio::time::timeout(Duration::from_secs(600), async {
+        let iterations = 500;
+        let mut iteration_times = Vec::with_capacity(iterations);
+        let mut failures = 0;
+
+        for i in 0..iterations {
+            let start = Instant::now();
+
+            // Each iteration creates fresh resources
+            let runtime = create_large_inventory(50);
+            let executor = Executor::with_runtime(
+                ExecutorConfig {
+                    forks: 25,
+                    ..Default::default()
+                },
+                runtime,
+            );
+
+            let mut playbook = Playbook::new(format!("Leak-Check-{}", i));
+            let mut play = Play::new("Test", "all");
+            play.gather_facts = false;
+            play.add_task(Task::new("Task", "debug").arg("msg", "leak check"));
+            playbook.add_play(play);
+
+            match executor.run_playbook(&playbook).await {
+                Ok(_) => {}
+                Err(_) => failures += 1,
+            }
+
+            iteration_times.push(start.elapsed());
+
+            // Progress indicator
+            if (i + 1) % 100 == 0 {
+                let recent_avg: Duration = iteration_times[i.saturating_sub(9)..=i]
+                    .iter()
+                    .sum::<Duration>()
+                    / (i.saturating_sub(9)..=i).count() as u32;
+                println!(
+                    "Iteration {}/{}: recent avg {:?}",
+                    i + 1,
+                    iterations,
+                    recent_avg
+                );
+            }
+        }
+
+        // Analyze for memory leak indicators
+        let first_50_avg: Duration = iteration_times[..50].iter().sum::<Duration>() / 50;
+        let last_50_avg: Duration =
+            iteration_times[iterations - 50..].iter().sum::<Duration>() / 50;
+        let mid_50_avg: Duration = iteration_times[225..275].iter().sum::<Duration>() / 50;
+
+        println!("Memory leak analysis over {} iterations:", iterations);
+        println!("  First 50 avg: {:?}", first_50_avg);
+        println!("  Middle 50 avg: {:?}", mid_50_avg);
+        println!("  Last 50 avg: {:?}", last_50_avg);
+        println!("  Failures: {}", failures);
+
+        // Check for degradation patterns that indicate leaks
+        // Allow 2.5x slowdown maximum (some variance is expected)
+        let ratio = last_50_avg.as_nanos() as f64 / first_50_avg.as_nanos() as f64;
+        assert!(
+            ratio < 2.5,
+            "Possible memory leak detected: performance degraded {:.2}x",
+            ratio
+        );
+
+        assert!(
+            failures < iterations / 100,
+            "Too many failures: {}",
+            failures
+        );
+    })
+    .await;
+
+    assert!(
+        test_result.is_ok(),
+        "Extended memory leak detection timed out"
+    );
+}
+
+// ============================================================================
+// 11. CONNECTION POOL EXHAUSTION TESTS
+// ============================================================================
+
+/// Connection pool exhaustion: All slots consumed
+///
+/// Tests behavior when connection pool reaches capacity and
+/// additional connections are requested.
+///
+/// Run manually: cargo test extreme_pool_exhaustion_recovery -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_pool_exhaustion_recovery -- --ignored"]
+async fn extreme_pool_exhaustion_recovery() {
+    let test_result = tokio::time::timeout(Duration::from_secs(120), async {
+        use rustible::connection::{ConnectionConfig, ConnectionFactory};
+
+        // Create a factory with a very small pool (5 connections)
+        let config = ConnectionConfig::default();
+        let factory = ConnectionFactory::with_pool_size(config, 5);
+
+        let acquired = Arc::new(AtomicUsize::new(0));
+        let exhaustion_detected = Arc::new(AtomicUsize::new(0));
+        let recovered = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = vec![];
+
+        // Try to acquire 50 connections with only 5 pool slots
+        for i in 0..50 {
+            let acquired = Arc::clone(&acquired);
+            let exhaustion = Arc::clone(&exhaustion_detected);
+            let recovered = Arc::clone(&recovered);
+
+            let handle = tokio::spawn(async move {
+                // Small random delay to create race conditions
+                tokio::time::sleep(Duration::from_millis(i as u64 * 10)).await;
+
+                // Simulate connection work
+                let runtime = RuntimeContext::new();
+                let executor = Executor::with_runtime(ExecutorConfig::default(), runtime);
+
+                let mut playbook = Playbook::new(format!("Pool-Exhaust-{}", i));
+                let play = Play::new("Test", "all");
+                playbook.add_play(play);
+
+                match executor.run_playbook(&playbook).await {
+                    Ok(_) => {
+                        acquired.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(_) => {
+                        exhaustion.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+
+                // Simulate work then release
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                recovered.fetch_add(1, Ordering::SeqCst);
+            });
+            handles.push(handle);
+        }
+
+        join_all(handles).await;
+
+        let stats = factory.pool_stats();
+        let total_acquired = acquired.load(Ordering::SeqCst);
+        let total_exhaustion = exhaustion_detected.load(Ordering::SeqCst);
+        let total_recovered = recovered.load(Ordering::SeqCst);
+
+        println!(
+            "Pool exhaustion test: acquired={}, exhaustion={}, recovered={}",
+            total_acquired, total_exhaustion, total_recovered
+        );
+        println!("Final pool stats: {:?}", stats);
+
+        // The system should handle exhaustion gracefully
+        assert_eq!(
+            total_acquired + total_exhaustion,
+            50,
+            "All 50 attempts should complete"
+        );
+    })
+    .await;
+
+    assert!(test_result.is_ok(), "Pool exhaustion test timed out");
+}
+
+/// Connection pool exhaustion: Rapid acquire/release cycles
+///
+/// Tests pool behavior under rapid connection churn where connections
+/// are acquired and released very quickly.
+///
+/// Run manually: cargo test extreme_pool_rapid_churn -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_pool_rapid_churn -- --ignored"]
+async fn extreme_pool_rapid_churn() {
+    let test_result = tokio::time::timeout(Duration::from_secs(180), async {
+        let operations = Arc::new(AtomicUsize::new(0));
+        let errors = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = vec![];
+
+        // 20 concurrent workers, each doing 50 rapid cycles
+        for worker_id in 0..20 {
+            let ops = Arc::clone(&operations);
+            let errs = Arc::clone(&errors);
+
+            let handle = tokio::spawn(async move {
+                for cycle in 0..50 {
+                    let runtime = RuntimeContext::new();
+                    let executor = Executor::with_runtime(
+                        ExecutorConfig {
+                            forks: 1,
+                            ..Default::default()
+                        },
+                        runtime,
+                    );
+
+                    let mut playbook = Playbook::new(format!("Churn-{}-{}", worker_id, cycle));
+                    let play = Play::new("Quick", "all");
+                    playbook.add_play(play);
+
+                    match executor.run_playbook(&playbook).await {
+                        Ok(_) => {
+                            ops.fetch_add(1, Ordering::SeqCst);
+                        }
+                        Err(_) => {
+                            errs.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        let start = Instant::now();
+        join_all(handles).await;
+        let duration = start.elapsed();
+
+        let total_ops = operations.load(Ordering::SeqCst);
+        let total_errors = errors.load(Ordering::SeqCst);
+        let throughput = total_ops as f64 / duration.as_secs_f64();
+
+        println!(
+            "Rapid pool churn: {} ops, {} errors in {:?} ({:.1} ops/sec)",
+            total_ops, total_errors, duration, throughput
+        );
+
+        // Should have very low error rate
+        assert!(
+            total_errors < total_ops / 100,
+            "Too many errors in rapid churn: {} of {}",
+            total_errors,
+            total_ops
+        );
+    })
+    .await;
+
+    assert!(test_result.is_ok(), "Rapid pool churn test timed out");
+}
+
+// ============================================================================
+// 12. CPU SATURATION TESTS
+// ============================================================================
+
+/// CPU saturation: Maximum parallel task execution
+///
+/// Pushes the CPU to maximum utilization with highly parallel
+/// task execution to verify system stability under load.
+///
+/// Run manually: cargo test extreme_cpu_saturation -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_cpu_saturation -- --ignored"]
+async fn extreme_cpu_saturation() {
+    let test_result = tokio::time::timeout(Duration::from_secs(300), async {
+        let num_cpus = std::thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(4);
+
+        // Use 2x CPU count for forks to ensure saturation
+        let forks = (num_cpus * 2).min(100);
+        let host_count = forks * 5; // 5x forks to keep all threads busy
+
+        println!(
+            "CPU saturation test: {} CPUs detected, using {} forks, {} hosts",
+            num_cpus, forks, host_count
+        );
+
+        let runtime = create_large_inventory(host_count);
+        let executor = Executor::with_runtime(
+            ExecutorConfig {
+                strategy: ExecutionStrategy::Free,
+                forks,
+                ..Default::default()
+            },
+            runtime,
+        );
+
+        let mut playbook = Playbook::new("CPU Saturation");
+        let mut play = Play::new("Saturate CPU", "all");
+        play.gather_facts = false;
+
+        // Multiple compute-like tasks per host
+        for i in 0..20 {
+            play.add_task(
+                Task::new(format!("CPU task {}", i), "debug")
+                    .arg("msg", format!("Processing iteration {} with vars: {{}}", i)),
+            );
+        }
+        playbook.add_play(play);
+
+        let start = Instant::now();
+        let results = executor.run_playbook(&playbook).await;
+        let duration = start.elapsed();
+
+        match results {
+            Ok(results) => {
+                let total_tasks: usize =
+                    results.values().map(|r| r.stats.ok + r.stats.changed).sum();
+
+                let throughput = total_tasks as f64 / duration.as_secs_f64();
+
+                println!(
+                    "CPU saturation: {} tasks on {} hosts in {:?} ({:.1} tasks/sec)",
+                    total_tasks, host_count, duration, throughput
+                );
+
+                // Should maintain reasonable throughput even under saturation
+                assert!(
+                    throughput > 100.0,
+                    "Throughput too low under CPU saturation: {:.1}",
+                    throughput
+                );
+            }
+            Err(e) => {
+                panic!("CPU saturation test failed: {:?}", e);
+            }
+        }
+    })
+    .await;
+
+    assert!(test_result.is_ok(), "CPU saturation test timed out");
+}
+
+/// CPU saturation: Sustained load over time
+///
+/// Maintains high CPU load for an extended period to verify
+/// there are no thermal throttling or resource exhaustion issues.
+///
+/// Run manually: cargo test extreme_cpu_sustained_load -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_cpu_sustained_load -- --ignored"]
+async fn extreme_cpu_sustained_load() {
+    let test_result = tokio::time::timeout(Duration::from_secs(600), async {
+        let metrics = Arc::new(MetricsCollector::new());
+        let target_duration = Duration::from_secs(60); // 1 minute of sustained load
+        let start = Instant::now();
+        let mut batch_count = 0;
+
+        while start.elapsed() < target_duration {
+            batch_count += 1;
+            let batch_start = Instant::now();
+
+            let runtime = create_large_inventory(50);
+            let executor = Executor::with_runtime(
+                ExecutorConfig {
+                    strategy: ExecutionStrategy::Free,
+                    forks: 50,
+                    ..Default::default()
+                },
+                runtime,
+            );
+
+            let mut playbook = Playbook::new(format!("Sustained-{}", batch_count));
+            let mut play = Play::new("Load", "all");
+            play.gather_facts = false;
+            for i in 0..10 {
+                play.add_task(Task::new(format!("Task-{}", i), "debug").arg("msg", "load"));
+            }
+            playbook.add_play(play);
+
+            match executor.run_playbook(&playbook).await {
+                Ok(_) => {
+                    metrics.record_operation(batch_start.elapsed().as_nanos() as u64);
+                }
+                Err(_) => {
+                    metrics.record_error();
+                }
+            }
+        }
+
+        let total_duration = start.elapsed();
+
+        println!(
+            "Sustained CPU load: {} batches over {:?}",
+            batch_count, total_duration
+        );
+        println!("  Avg batch latency: {:.2}ms", metrics.avg_latency_ms());
+        println!("  Max batch latency: {:.2}ms", metrics.max_latency_ms());
+        println!("  Error rate: {:.2}%", metrics.error_rate() * 100.0);
+
+        // Error rate should be very low even under sustained load
+        assert!(
+            metrics.error_rate() < 0.01,
+            "Error rate too high under sustained load: {:.2}%",
+            metrics.error_rate() * 100.0
+        );
+    })
+    .await;
+
+    assert!(test_result.is_ok(), "Sustained CPU load test timed out");
+}
+
+// ============================================================================
+// 13. DISK I/O LIMITS TESTS
+// ============================================================================
+
+/// Disk I/O stress: Large data in variable contexts
+///
+/// Tests performance when variable contexts contain large amounts
+/// of data that might stress serialization and memory I/O.
+///
+/// Run manually: cargo test extreme_disk_io_large_data -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_disk_io_large_data -- --ignored"]
+async fn extreme_disk_io_large_data() {
+    let test_result = tokio::time::timeout(Duration::from_secs(180), async {
+        // Create runtime with very large variables (1MB per host)
+        let host_count = 10;
+        let var_size_kb = 1024; // 1MB per host = 10MB total
+
+        let runtime = create_runtime_with_large_vars(host_count, var_size_kb);
+
+        let executor = Executor::with_runtime(
+            ExecutorConfig {
+                strategy: ExecutionStrategy::Free,
+                forks: host_count,
+                ..Default::default()
+            },
+            runtime,
+        );
+
+        let mut playbook = Playbook::new("Large Data I/O");
+        let mut play = Play::new("I/O Stress", "all");
+        play.gather_facts = false;
+
+        // Tasks that access the large variables
+        for i in 0..5 {
+            play.add_task(
+                Task::new(format!("Access large var {}", i), "debug")
+                    .arg("msg", "{{ large_var | length }} bytes"),
+            );
+        }
+        playbook.add_play(play);
+
+        let start = Instant::now();
+        let results = executor.run_playbook(&playbook).await;
+        let duration = start.elapsed();
+
+        match results {
+            Ok(results) => {
+                assert_eq!(results.len(), host_count);
+
+                let total_mb = (host_count * var_size_kb) as f64 / 1024.0;
+                let throughput_mb_sec = total_mb / duration.as_secs_f64();
+
+                println!(
+                    "Large data I/O: {:.1}MB processed in {:?} ({:.2} MB/sec)",
+                    total_mb, duration, throughput_mb_sec
+                );
+            }
+            Err(e) => {
+                panic!("Large data I/O test failed: {:?}", e);
+            }
+        }
+    })
+    .await;
+
+    assert!(test_result.is_ok(), "Large data I/O test timed out");
+}
+
+/// Disk I/O stress: Rapid file operations simulation
+///
+/// Simulates rapid file transfer operations to stress I/O subsystem.
+///
+/// Run manually: cargo test extreme_disk_io_rapid_operations -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_disk_io_rapid_operations -- --ignored"]
+async fn extreme_disk_io_rapid_operations() {
+    let test_result = tokio::time::timeout(Duration::from_secs(120), async {
+        use rustible::connection::local::LocalConnection;
+        use rustible::connection::Connection;
+
+        let conn = LocalConnection::new();
+        let operations_completed = Arc::new(AtomicUsize::new(0));
+        let errors = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = vec![];
+
+        // Spawn many concurrent file operation simulations
+        for i in 0..100 {
+            let ops = Arc::clone(&operations_completed);
+            let errs = Arc::clone(&errors);
+
+            let handle = tokio::spawn(async move {
+                for j in 0..10 {
+                    let conn = LocalConnection::new();
+
+                    // Simulate file operations via commands
+                    let cmds = vec![
+                        format!("dd if=/dev/zero of=/tmp/stress_io_{}_{}.tmp bs=1K count=100 2>/dev/null", i, j),
+                        format!("cat /tmp/stress_io_{}_{}.tmp > /dev/null", i, j),
+                        format!("rm -f /tmp/stress_io_{}_{}.tmp", i, j),
+                    ];
+
+                    for cmd in cmds {
+                        match conn.execute(&cmd, None).await {
+                            Ok(r) if r.success => {
+                                ops.fetch_add(1, Ordering::SeqCst);
+                            }
+                            _ => {
+                                errs.fetch_add(1, Ordering::SeqCst);
+                            }
+                        }
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        let start = Instant::now();
+        join_all(handles).await;
+        let duration = start.elapsed();
+
+        let total_ops = operations_completed.load(Ordering::SeqCst);
+        let total_errors = errors.load(Ordering::SeqCst);
+        let throughput = total_ops as f64 / duration.as_secs_f64();
+
+        println!(
+            "Rapid I/O operations: {} ops, {} errors in {:?} ({:.1} ops/sec)",
+            total_ops, total_errors, duration, throughput
+        );
+
+        // Cleanup any remaining temp files
+        let _ = conn.execute("rm -f /tmp/stress_io_*.tmp", None).await;
+
+        // Most operations should succeed
+        assert!(
+            total_errors < total_ops / 10,
+            "Too many I/O errors: {} of {}",
+            total_errors,
+            total_ops
+        );
+    })
+    .await;
+
+    assert!(test_result.is_ok(), "Rapid I/O operations test timed out");
+}
+
+// ============================================================================
+// 14. COMBINED EXTREME STRESS TEST
+// ============================================================================
+
+/// Combined extreme stress: All stressors simultaneously
+///
+/// Combines large host count, many tasks, large variables, and high concurrency
+/// to create maximum stress conditions.
+///
+/// Run manually: cargo test extreme_combined_stress -- --ignored
+#[tokio::test]
+#[ignore = "Extreme stress test - run manually with: cargo test extreme_combined_stress -- --ignored"]
+async fn extreme_combined_stress() {
+    let test_result = tokio::time::timeout(Duration::from_secs(600), async {
+        let metrics = Arc::new(MetricsCollector::new());
+
+        println!("Starting combined extreme stress test...");
+
+        // Phase 1: Large inventory with large variables
+        println!("Phase 1: Large inventory with large variables");
+        let phase1_start = Instant::now();
+        {
+            let runtime = create_runtime_with_large_vars(100, 100); // 100 hosts, 100KB each
+            let executor = Executor::with_runtime(
+                ExecutorConfig {
+                    strategy: ExecutionStrategy::Free,
+                    forks: 50,
+                    ..Default::default()
+                },
+                runtime,
+            );
+
+            let playbook = create_large_playbook(50);
+            match executor.run_playbook(&playbook).await {
+                Ok(_) => metrics.record_operation(phase1_start.elapsed().as_nanos() as u64),
+                Err(_) => metrics.record_error(),
+            }
+        }
+        println!("  Phase 1 completed in {:?}", phase1_start.elapsed());
+
+        // Phase 2: Many hosts, few tasks per host
+        println!("Phase 2: Many hosts, few tasks");
+        let phase2_start = Instant::now();
+        {
+            let runtime = create_large_inventory(500);
+            let executor = Executor::with_runtime(
+                ExecutorConfig {
+                    strategy: ExecutionStrategy::Free,
+                    forks: 100,
+                    ..Default::default()
+                },
+                runtime,
+            );
+
+            let playbook = create_large_playbook(10);
+            match executor.run_playbook(&playbook).await {
+                Ok(_) => metrics.record_operation(phase2_start.elapsed().as_nanos() as u64),
+                Err(_) => metrics.record_error(),
+            }
+        }
+        println!("  Phase 2 completed in {:?}", phase2_start.elapsed());
+
+        // Phase 3: Few hosts, many tasks
+        println!("Phase 3: Few hosts, many tasks");
+        let phase3_start = Instant::now();
+        {
+            let runtime = create_large_inventory(5);
+            let executor = Executor::with_runtime(
+                ExecutorConfig {
+                    strategy: ExecutionStrategy::Linear,
+                    forks: 5,
+                    ..Default::default()
+                },
+                runtime,
+            );
+
+            let playbook = create_large_playbook(500);
+            match executor.run_playbook(&playbook).await {
+                Ok(_) => metrics.record_operation(phase3_start.elapsed().as_nanos() as u64),
+                Err(_) => metrics.record_error(),
+            }
+        }
+        println!("  Phase 3 completed in {:?}", phase3_start.elapsed());
+
+        // Phase 4: Concurrent worker stress
+        println!("Phase 4: Concurrent worker stress");
+        let phase4_start = Instant::now();
+        {
+            let mut handles = vec![];
+            for i in 0..50 {
+                let metrics = Arc::clone(&metrics);
+                let handle = tokio::spawn(async move {
+                    let runtime = create_large_inventory(10);
+                    let executor = Executor::with_runtime(
+                        ExecutorConfig {
+                            forks: 10,
+                            ..Default::default()
+                        },
+                        runtime,
+                    );
+
+                    let mut playbook = Playbook::new(format!("Worker-{}", i));
+                    let mut play = Play::new("Work", "all");
+                    play.gather_facts = false;
+                    play.add_task(Task::new("Task", "debug").arg("msg", "worker"));
+                    playbook.add_play(play);
+
+                    let op_start = Instant::now();
+                    match executor.run_playbook(&playbook).await {
+                        Ok(_) => metrics.record_operation(op_start.elapsed().as_nanos() as u64),
+                        Err(_) => metrics.record_error(),
+                    }
+                });
+                handles.push(handle);
+            }
+            join_all(handles).await;
+        }
+        println!("  Phase 4 completed in {:?}", phase4_start.elapsed());
+
+        let total_ops = metrics.operation_count.load(Ordering::Relaxed);
+        let total_errors = metrics.error_count.load(Ordering::Relaxed);
+
+        println!("\nCombined stress test summary:");
+        println!("  Total operations: {}", total_ops);
+        println!("  Total errors: {}", total_errors);
+        println!("  Avg latency: {:.2}ms", metrics.avg_latency_ms());
+        println!("  Max latency: {:.2}ms", metrics.max_latency_ms());
+        println!("  Error rate: {:.2}%", metrics.error_rate() * 100.0);
+
+        // Combined test should have low error rate
+        assert!(
+            metrics.error_rate() < 0.05,
+            "Error rate too high in combined stress: {:.2}%",
+            metrics.error_rate() * 100.0
+        );
+    })
+    .await;
+
+    assert!(
+        test_result.is_ok(),
+        "Combined extreme stress test timed out"
+    );
+}

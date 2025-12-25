@@ -2,10 +2,14 @@
 //!
 //! Compares performance of russh (async, pure Rust) vs ssh2 (sync, libssh2)
 //!
-//! Run with:
+//! Run with both SSH backends enabled:
 //! ```bash
-//! cargo test --test ssh_benchmark --features russh -- --test-threads=1 --nocapture
+//! cargo test --test ssh_benchmark --features "russh,ssh2-backend" -- --test-threads=1 --nocapture
 //! ```
+//!
+//! NOTE: This benchmark requires both russh and ssh2-backend features.
+
+#![cfg(all(feature = "russh", feature = "ssh2-backend"))]
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

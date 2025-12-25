@@ -2317,3 +2317,1694 @@ fn test_force_handlers() {
     let pb = playbook.unwrap();
     assert!(pb.plays[0].force_handlers);
 }
+
+// ============================================================================
+// 28. Variable Precedence Tests (Ansible Compatibility)
+// ============================================================================
+//
+// These tests verify that Rustible follows Ansible's variable precedence
+// rules (from lowest to highest priority):
+// 1. role defaults
+// 2. inventory group vars
+// 3. playbook group_vars/all
+// 4. playbook group_vars/*
+// 5. inventory host vars
+// 6. playbook host_vars/*
+// 7. host facts
+// 8. play vars
+// 9. play vars_files
+// 10. role vars
+// 11. block vars
+// 12. task vars
+// 13. include vars
+// 14. set_facts
+// 15. role params
+// 16. include params
+// 17. extra vars (-e)
+
+#[test]
+fn test_var_precedence_levels_defined() {
+    // Verify that VarPrecedence enum has all 20 levels as documented
+    use rustible::vars::VarPrecedence;
+
+    // Test all precedence levels are accessible
+    let levels: Vec<VarPrecedence> = VarPrecedence::all().collect();
+    assert_eq!(levels.len(), 20, "Should have 20 precedence levels");
+
+    // Verify ordering (lower number = lower priority)
+    assert!(VarPrecedence::RoleDefaults.level() < VarPrecedence::ExtraVars.level());
+    assert!(VarPrecedence::PlayVars.level() < VarPrecedence::ExtraVars.level());
+    assert!(VarPrecedence::SetFacts.level() < VarPrecedence::ExtraVars.level());
+    assert!(VarPrecedence::TaskVars.level() < VarPrecedence::SetFacts.level());
+    assert!(VarPrecedence::BlockVars.level() < VarPrecedence::TaskVars.level());
+}
+
+#[test]
+fn test_var_precedence_extra_vars_highest() {
+    // Extra vars (-e) should always have highest precedence
+    use rustible::vars::{VarPrecedence, VarStore};
+    use serde_yaml::Value;
+
+    let mut store = VarStore::new();
+
+    // Set at different precedence levels
+    store.set(
+        "myvar",
+        Value::String("role_default".to_string()),
+        VarPrecedence::RoleDefaults,
+    );
+    store.set(
+        "myvar",
+        Value::String("play_var".to_string()),
+        VarPrecedence::PlayVars,
+    );
+    store.set(
+        "myvar",
+        Value::String("set_fact".to_string()),
+        VarPrecedence::SetFacts,
+    );
+    store.set(
+        "myvar",
+        Value::String("extra_var".to_string()),
+        VarPrecedence::ExtraVars,
+    );
+
+    // Extra vars should win
+    let result = store.get("myvar");
+    assert_eq!(result, Some(&Value::String("extra_var".to_string())));
+}
+
+#[test]
+fn test_var_precedence_set_fact_overrides_play_vars() {
+    use rustible::vars::{VarPrecedence, VarStore};
+    use serde_yaml::Value;
+
+    let mut store = VarStore::new();
+
+    store.set(
+        "myvar",
+        Value::String("play_var".to_string()),
+        VarPrecedence::PlayVars,
+    );
+    store.set(
+        "myvar",
+        Value::String("set_fact_value".to_string()),
+        VarPrecedence::SetFacts,
+    );
+
+    let result = store.get("myvar");
+    assert_eq!(result, Some(&Value::String("set_fact_value".to_string())));
+}
+
+#[test]
+fn test_var_precedence_task_vars_override_block_vars() {
+    use rustible::vars::{VarPrecedence, VarStore};
+    use serde_yaml::Value;
+
+    let mut store = VarStore::new();
+
+    store.set(
+        "myvar",
+        Value::String("block_var".to_string()),
+        VarPrecedence::BlockVars,
+    );
+    store.set(
+        "myvar",
+        Value::String("task_var".to_string()),
+        VarPrecedence::TaskVars,
+    );
+
+    let result = store.get("myvar");
+    assert_eq!(result, Some(&Value::String("task_var".to_string())));
+}
+
+#[test]
+fn test_var_precedence_role_vars_override_role_defaults() {
+    use rustible::vars::{VarPrecedence, VarStore};
+    use serde_yaml::Value;
+
+    let mut store = VarStore::new();
+
+    store.set(
+        "myvar",
+        Value::String("role_default".to_string()),
+        VarPrecedence::RoleDefaults,
+    );
+    store.set(
+        "myvar",
+        Value::String("role_var".to_string()),
+        VarPrecedence::RoleVars,
+    );
+
+    let result = store.get("myvar");
+    assert_eq!(result, Some(&Value::String("role_var".to_string())));
+}
+
+#[test]
+fn test_var_precedence_inventory_host_vars_override_group_vars() {
+    use rustible::vars::{VarPrecedence, VarStore};
+    use serde_yaml::Value;
+
+    let mut store = VarStore::new();
+
+    store.set(
+        "myvar",
+        Value::String("group_var".to_string()),
+        VarPrecedence::InventoryGroupVars,
+    );
+    store.set(
+        "myvar",
+        Value::String("host_var".to_string()),
+        VarPrecedence::InventoryHostVars,
+    );
+
+    let result = store.get("myvar");
+    assert_eq!(result, Some(&Value::String("host_var".to_string())));
+}
+
+#[test]
+fn test_var_precedence_display_names() {
+    use rustible::vars::VarPrecedence;
+
+    // Verify display names match Ansible terminology
+    assert_eq!(format!("{}", VarPrecedence::RoleDefaults), "role defaults");
+    assert_eq!(format!("{}", VarPrecedence::ExtraVars), "extra vars");
+    assert_eq!(format!("{}", VarPrecedence::PlayVars), "play vars");
+    assert_eq!(format!("{}", VarPrecedence::SetFacts), "set_facts");
+    assert_eq!(format!("{}", VarPrecedence::TaskVars), "task vars");
+    assert_eq!(format!("{}", VarPrecedence::BlockVars), "block vars");
+}
+
+// ============================================================================
+// 29. Conditional Evaluation Tests (Ansible when: Compatibility)
+// ============================================================================
+
+#[test]
+fn test_when_condition_is_defined_syntax() {
+    let yaml = r#"
+- name: Test is defined
+  hosts: all
+  vars:
+    defined_var: "value"
+  tasks:
+    - name: Run if defined
+      debug:
+        msg: "Variable is defined"
+      when: defined_var is defined
+
+    - name: Skip if not defined
+      debug:
+        msg: "This should run"
+      when: undefined_var is not defined
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks.len(), 2);
+
+    // Check the when conditions are parsed correctly
+    if let Some(When::Single(cond)) = &pb.plays[0].tasks[0].when {
+        assert!(cond.contains("is defined"));
+    } else {
+        panic!("Expected single when condition");
+    }
+}
+
+#[test]
+fn test_when_condition_comparison_operators() {
+    let yaml = r#"
+- name: Test comparisons
+  hosts: all
+  vars:
+    number_var: 42
+    string_var: "hello"
+  tasks:
+    - name: Test greater than
+      debug:
+        msg: "number > 40"
+      when: number_var > 40
+
+    - name: Test less than
+      debug:
+        msg: "number < 50"
+      when: number_var < 50
+
+    - name: Test equals
+      debug:
+        msg: "string equals hello"
+      when: string_var == "hello"
+
+    - name: Test not equals
+      debug:
+        msg: "number not 0"
+      when: number_var != 0
+
+    - name: Test greater or equal
+      debug:
+        msg: "number >= 42"
+      when: number_var >= 42
+
+    - name: Test less or equal
+      debug:
+        msg: "number <= 42"
+      when: number_var <= 42
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks.len(), 6);
+}
+
+#[test]
+fn test_when_condition_boolean_operators() {
+    let yaml = r#"
+- name: Test boolean operators
+  hosts: all
+  vars:
+    var_a: true
+    var_b: false
+    os_family: "Debian"
+    version: 20
+  tasks:
+    - name: Test and condition
+      debug:
+        msg: "Both true"
+      when: var_a and os_family == "Debian"
+
+    - name: Test or condition
+      debug:
+        msg: "One is true"
+      when: var_a or var_b
+
+    - name: Test not condition
+      debug:
+        msg: "Not false"
+      when: not var_b
+
+    - name: Test complex condition
+      debug:
+        msg: "Complex"
+      when: (var_a and not var_b) or version > 18
+
+    - name: Test multiple conditions list (implicit and)
+      debug:
+        msg: "All conditions met"
+      when:
+        - os_family == "Debian"
+        - version >= 20
+        - var_a
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks.len(), 5);
+
+    // Check that multiple conditions are parsed as list (implicit AND)
+    if let Some(When::Multiple(conditions)) = &pb.plays[0].tasks[4].when {
+        assert_eq!(conditions.len(), 3);
+        assert!(conditions[0].contains("Debian"));
+        assert!(conditions[1].contains("20"));
+        assert!(conditions[2].contains("var_a"));
+    } else {
+        panic!("Expected multiple when conditions");
+    }
+}
+
+#[test]
+fn test_when_condition_in_operator() {
+    let yaml = r#"
+- name: Test in operator
+  hosts: all
+  vars:
+    my_list:
+      - item1
+      - item2
+      - item3
+    my_value: "item2"
+  tasks:
+    - name: Test in list
+      debug:
+        msg: "Value in list"
+      when: my_value in my_list
+
+    - name: Test not in list
+      debug:
+        msg: "Value not in list"
+      when: "'item4' not in my_list"
+
+    - name: Test string in string
+      debug:
+        msg: "Substring found"
+      when: "'item' in my_value"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks.len(), 3);
+}
+
+#[test]
+fn test_when_with_registered_variable() {
+    let yaml = r#"
+- name: Test registered variable in condition
+  hosts: all
+  tasks:
+    - name: Run command
+      command: echo "test"
+      register: cmd_result
+
+    - name: Check result success
+      debug:
+        msg: "Command succeeded"
+      when: cmd_result.rc == 0
+
+    - name: Check result changed
+      debug:
+        msg: "Command changed something"
+      when: cmd_result.changed
+
+    - name: Check stdout
+      debug:
+        msg: "Expected output found"
+      when: "'test' in cmd_result.stdout"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks.len(), 4);
+    assert!(pb.plays[0].tasks[0].register.is_some());
+    assert_eq!(
+        pb.plays[0].tasks[0].register,
+        Some("cmd_result".to_string())
+    );
+}
+
+// ============================================================================
+// 30. Loop Behavior Tests (Ansible loop: Compatibility)
+// ============================================================================
+
+#[test]
+fn test_loop_basic_list() {
+    let yaml = r#"
+- name: Test basic loop
+  hosts: all
+  tasks:
+    - name: Loop over items
+      debug:
+        msg: "Item: {{ item }}"
+      loop:
+        - first
+        - second
+        - third
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    let task = &pb.plays[0].tasks[0];
+    assert!(task.loop_.is_some());
+
+    let items = task.loop_.as_ref().unwrap().as_array().unwrap();
+    assert_eq!(items.len(), 3);
+}
+
+#[test]
+fn test_with_items_legacy_syntax() {
+    let yaml = r#"
+- name: Test with_items (legacy)
+  hosts: all
+  tasks:
+    - name: Loop with with_items
+      debug:
+        msg: "Item: {{ item }}"
+      with_items:
+        - alpha
+        - beta
+        - gamma
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    let task = &pb.plays[0].tasks[0];
+    assert!(task.with_items.is_some());
+}
+
+#[test]
+fn test_loop_with_dict_items() {
+    let yaml = r#"
+- name: Test loop with dicts
+  hosts: all
+  tasks:
+    - name: Create users
+      user:
+        name: "{{ item.name }}"
+        uid: "{{ item.uid }}"
+        groups: "{{ item.groups }}"
+      loop:
+        - name: alice
+          uid: 1001
+          groups:
+            - wheel
+            - developers
+        - name: bob
+          uid: 1002
+          groups:
+            - developers
+        - name: charlie
+          uid: 1003
+          groups:
+            - users
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    let task = &pb.plays[0].tasks[0];
+    let items = task.loop_.as_ref().unwrap().as_array().unwrap();
+    assert_eq!(items.len(), 3);
+
+    // Verify dict structure is preserved
+    assert!(items[0].is_object());
+    assert!(items[0].get("name").is_some());
+    assert!(items[0].get("uid").is_some());
+}
+
+#[test]
+fn test_loop_control_full() {
+    let yaml = r#"
+- name: Test loop_control
+  hosts: all
+  tasks:
+    - name: Full loop control
+      debug:
+        msg: "{{ idx }}: {{ pkg }} ({{ outer_item }})"
+      loop:
+        - nginx
+        - redis
+        - postgresql
+      loop_control:
+        loop_var: pkg
+        index_var: idx
+        pause: 2
+        label: "Installing {{ pkg }}"
+        extended: true
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    let task = &pb.plays[0].tasks[0];
+
+    assert!(task.loop_control.is_some());
+    let lc = task.loop_control.as_ref().unwrap();
+    assert_eq!(lc.loop_var, "pkg");
+    assert_eq!(lc.index_var, Some("idx".to_string()));
+    assert_eq!(lc.pause, Some(2));
+    assert_eq!(lc.extended, Some(true));
+}
+
+#[test]
+fn test_loop_with_when_filter() {
+    let yaml = r#"
+- name: Test loop with when
+  hosts: all
+  tasks:
+    - name: Selective loop
+      debug:
+        msg: "Processing {{ item.name }}"
+      loop:
+        - name: enabled_item
+          enabled: true
+        - name: disabled_item
+          enabled: false
+        - name: another_enabled
+          enabled: true
+      when: item.enabled
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    let task = &pb.plays[0].tasks[0];
+    assert!(task.loop_.is_some());
+    assert!(task.when.is_some());
+}
+
+#[test]
+fn test_loop_with_register() {
+    let yaml = r#"
+- name: Test loop register
+  hosts: all
+  tasks:
+    - name: Loop and register
+      command: echo "{{ item }}"
+      loop:
+        - one
+        - two
+        - three
+      register: loop_results
+
+    - name: Use registered loop results
+      debug:
+        msg: "Result {{ item.item }}: {{ item.stdout }}"
+      loop: "{{ loop_results.results }}"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(
+        pb.plays[0].tasks[0].register,
+        Some("loop_results".to_string())
+    );
+}
+
+#[test]
+fn test_loop_variable_from_playbook_var() {
+    let yaml = r#"
+- name: Test loop from variable
+  hosts: all
+  vars:
+    packages_to_install:
+      - nginx
+      - vim
+      - curl
+  tasks:
+    - name: Install from variable
+      package:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ packages_to_install }}"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    let task = &pb.plays[0].tasks[0];
+    // Loop referencing a variable should be stored as template string
+    assert!(task.loop_.is_some());
+}
+
+// ============================================================================
+// 31. Handler Notification Tests (Ansible notify/listen Compatibility)
+// ============================================================================
+
+#[test]
+fn test_handler_simple_notify() {
+    let yaml = r#"
+- name: Test handler notify
+  hosts: all
+  tasks:
+    - name: Update config
+      copy:
+        src: config.txt
+        dest: /etc/app/config.txt
+      notify: restart app
+
+  handlers:
+    - name: restart app
+      service:
+        name: myapp
+        state: restarted
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks[0].notify.len(), 1);
+    assert_eq!(pb.plays[0].tasks[0].notify[0], "restart app");
+    assert_eq!(pb.plays[0].handlers.len(), 1);
+    assert_eq!(pb.plays[0].handlers[0].name, "restart app");
+}
+
+#[test]
+fn test_handler_multiple_notify() {
+    let yaml = r#"
+- name: Test multiple notify
+  hosts: all
+  tasks:
+    - name: Update everything
+      copy:
+        src: config.tar.gz
+        dest: /etc/app/
+      notify:
+        - restart app
+        - reload nginx
+        - clear cache
+        - update metrics
+
+  handlers:
+    - name: restart app
+      service:
+        name: myapp
+        state: restarted
+
+    - name: reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: clear cache
+      command: /usr/bin/clear-cache
+
+    - name: update metrics
+      command: /usr/bin/update-metrics
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks[0].notify.len(), 4);
+    assert_eq!(pb.plays[0].handlers.len(), 4);
+}
+
+#[test]
+fn test_handler_listen_syntax() {
+    let yaml = r#"
+- name: Test handler listen
+  hosts: all
+  tasks:
+    - name: Update app files
+      copy:
+        src: app.jar
+        dest: /opt/app/
+      notify: application updated
+
+  handlers:
+    - name: restart backend
+      service:
+        name: backend
+        state: restarted
+      listen: application updated
+
+    - name: restart frontend
+      service:
+        name: frontend
+        state: restarted
+      listen: application updated
+
+    - name: clear caches
+      command: /usr/bin/clear-caches
+      listen: application updated
+
+    - name: send notification
+      debug:
+        msg: "App was updated"
+      listen: application updated
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].handlers.len(), 4);
+
+    // All handlers should listen to "application updated"
+    for handler in &pb.plays[0].handlers {
+        assert!(handler.listen.contains(&"application updated".to_string()));
+    }
+}
+
+#[test]
+fn test_handler_with_when_condition() {
+    let yaml = r#"
+- name: Test conditional handler
+  hosts: all
+  vars:
+    enable_restart: true
+  tasks:
+    - name: Update config
+      copy:
+        src: config.txt
+        dest: /etc/app/
+      notify: maybe restart
+
+  handlers:
+    - name: maybe restart
+      service:
+        name: myapp
+        state: restarted
+      when: enable_restart
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert!(pb.plays[0].handlers[0].when.is_some());
+}
+
+#[test]
+fn test_handler_flush_handlers_meta() {
+    let yaml = r#"
+- name: Test flush handlers
+  hosts: all
+  tasks:
+    - name: Update config
+      copy:
+        src: config.txt
+        dest: /etc/app/
+      notify: restart app
+
+    - name: Flush handlers now
+      meta: flush_handlers
+
+    - name: Continue after handlers
+      debug:
+        msg: "Handlers have run"
+
+  handlers:
+    - name: restart app
+      service:
+        name: myapp
+        state: restarted
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks.len(), 3);
+
+    // Second task should be meta module
+    assert_eq!(pb.plays[0].tasks[1].module_name(), "meta");
+}
+
+#[test]
+fn test_handler_listen_multiple_names() {
+    let yaml = r#"
+- name: Test multiple listen names
+  hosts: all
+  tasks:
+    - name: Update web config
+      copy:
+        src: web.conf
+        dest: /etc/web/
+      notify: web config changed
+
+    - name: Update app config
+      copy:
+        src: app.conf
+        dest: /etc/app/
+      notify: app config changed
+
+  handlers:
+    - name: restart services
+      debug:
+        msg: "Restarting all services"
+      listen:
+        - web config changed
+        - app config changed
+        - any config changed
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    let handler = &pb.plays[0].handlers[0];
+    assert_eq!(handler.listen.len(), 3);
+}
+
+// ============================================================================
+// 32. Block/Rescue/Always Tests (Ansible Error Handling Compatibility)
+// ============================================================================
+
+#[test]
+fn test_block_basic_structure() {
+    let yaml = r#"
+- name: Test basic block
+  hosts: all
+  tasks:
+    - name: Grouped tasks
+      block:
+        - name: Task 1 in block
+          debug:
+            msg: "First task"
+        - name: Task 2 in block
+          debug:
+            msg: "Second task"
+        - name: Task 3 in block
+          debug:
+            msg: "Third task"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+#[test]
+fn test_block_rescue_always() {
+    let yaml = r#"
+- name: Test block/rescue/always
+  hosts: all
+  tasks:
+    - name: Handle potential failure
+      block:
+        - name: Risky operation
+          command: /usr/bin/risky-command
+        - name: Another risky operation
+          command: /usr/bin/more-risk
+
+      rescue:
+        - name: Handle failure
+          debug:
+            msg: "An error occurred, recovering..."
+        - name: Rollback changes
+          command: /usr/bin/rollback
+        - name: Send alert
+          debug:
+            msg: "Alert sent!"
+
+      always:
+        - name: Always cleanup
+          command: /usr/bin/cleanup
+        - name: Log completion
+          debug:
+            msg: "Block execution completed"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(
+        playbook.is_ok(),
+        "Block/rescue/always should parse successfully"
+    );
+}
+
+#[test]
+fn test_block_with_when_condition() {
+    let yaml = r#"
+- name: Test conditional block
+  hosts: all
+  vars:
+    run_risky_tasks: true
+  tasks:
+    - name: Conditional block
+      block:
+        - name: Risky task 1
+          command: /usr/bin/risky1
+        - name: Risky task 2
+          command: /usr/bin/risky2
+      when: run_risky_tasks
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+#[test]
+fn test_block_with_become() {
+    let yaml = r#"
+- name: Test block with become
+  hosts: all
+  tasks:
+    - name: Privileged block
+      block:
+        - name: Install package
+          package:
+            name: nginx
+            state: present
+        - name: Configure service
+          copy:
+            src: nginx.conf
+            dest: /etc/nginx/
+      become: true
+      become_user: root
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+#[test]
+fn test_nested_blocks() {
+    let yaml = r#"
+- name: Test nested blocks
+  hosts: all
+  tasks:
+    - name: Outer block
+      block:
+        - name: Inner block 1
+          block:
+            - name: Deep task 1
+              debug:
+                msg: "Deep 1"
+          rescue:
+            - name: Handle inner failure
+              debug:
+                msg: "Inner rescue"
+
+        - name: After inner block
+          debug:
+            msg: "After inner"
+
+      rescue:
+        - name: Outer rescue
+          debug:
+            msg: "Outer rescue"
+
+      always:
+        - name: Outer always
+          debug:
+            msg: "Outer always"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+#[test]
+fn test_block_with_notify() {
+    let yaml = r#"
+- name: Test block with notify
+  hosts: all
+  tasks:
+    - name: Config block
+      block:
+        - name: Update config
+          copy:
+            src: config.txt
+            dest: /etc/app/
+      notify: restart services
+
+  handlers:
+    - name: restart services
+      debug:
+        msg: "Restarting..."
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+// ============================================================================
+// 33. Role Loading Tests (Ansible Roles Compatibility)
+// ============================================================================
+
+#[test]
+fn test_role_simple_string() {
+    let yaml = r#"
+- name: Test simple role reference
+  hosts: all
+  roles:
+    - common
+    - webserver
+    - database
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].roles.len(), 3);
+    assert_eq!(pb.plays[0].roles[0].name(), "common");
+    assert_eq!(pb.plays[0].roles[1].name(), "webserver");
+    assert_eq!(pb.plays[0].roles[2].name(), "database");
+}
+
+#[test]
+fn test_role_with_vars() {
+    let yaml = r#"
+- name: Test role with variables
+  hosts: all
+  roles:
+    - role: nginx
+      vars:
+        nginx_port: 8080
+        nginx_workers: 4
+        nginx_user: www-data
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].roles.len(), 1);
+    assert_eq!(pb.plays[0].roles[0].name(), "nginx");
+}
+
+#[test]
+fn test_role_with_when() {
+    let yaml = r#"
+- name: Test conditional role
+  hosts: all
+  vars:
+    install_docker: true
+  roles:
+    - role: docker
+      when: install_docker
+    - role: kubernetes
+      when: install_docker and use_k8s is defined
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].roles.len(), 2);
+}
+
+#[test]
+fn test_role_with_tags() {
+    let yaml = r#"
+- name: Test role with tags
+  hosts: all
+  roles:
+    - role: nginx
+      tags:
+        - webserver
+        - proxy
+    - role: postgresql
+      tags:
+        - database
+        - postgres
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].roles.len(), 2);
+}
+
+#[test]
+fn test_role_with_become() {
+    let yaml = r#"
+- name: Test role with become
+  hosts: all
+  roles:
+    - role: system-update
+      become: true
+      become_user: root
+    - role: app-deploy
+      become: true
+      become_user: deploy
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].roles.len(), 2);
+}
+
+#[test]
+fn test_role_mixed_format() {
+    let yaml = r#"
+- name: Test mixed role formats
+  hosts: all
+  roles:
+    # Simple string reference
+    - common
+
+    # Full role spec with name
+    - name: nginx
+      vars:
+        port: 80
+
+    # Role key format
+    - role: postgresql
+      vars:
+        db_name: myapp
+
+    # With all options
+    - role: app
+      vars:
+        app_version: "1.0.0"
+      when: deploy_app | default(true)
+      tags:
+        - application
+        - deploy
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].roles.len(), 4);
+}
+
+#[test]
+fn test_role_delegate_to() {
+    let yaml = r#"
+- name: Test role delegation
+  hosts: webservers
+  roles:
+    - role: loadbalancer-config
+      delegate_to: lb_host
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+// ============================================================================
+// 34. Serial Execution Tests
+// ============================================================================
+
+#[test]
+fn test_serial_single_value() {
+    let yaml = r#"
+- name: Test serial single value
+  hosts: all
+  serial: 2
+  tasks:
+    - name: Rolling update
+      package:
+        name: nginx
+        state: latest
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert!(pb.plays[0].serial.is_some());
+}
+
+#[test]
+fn test_serial_percentage() {
+    let yaml = r#"
+- name: Test serial percentage
+  hosts: all
+  serial: "25%"
+  tasks:
+    - name: Gradual rollout
+      command: /deploy.sh
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+#[test]
+fn test_serial_list() {
+    let yaml = r#"
+- name: Test serial list
+  hosts: all
+  serial:
+    - 1
+    - 5
+    - 10
+    - "25%"
+  tasks:
+    - name: Staged rollout
+      command: /deploy.sh
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+// ============================================================================
+// 35. Include/Import Tests (Enhanced)
+// ============================================================================
+
+#[test]
+fn test_include_tasks_with_vars() {
+    let yaml = r#"
+- name: Test include_tasks with vars
+  hosts: all
+  tasks:
+    - name: Include with variables
+      include_tasks: tasks/configure.yml
+      vars:
+        config_file: /etc/app/config.yml
+        restart_service: true
+        settings:
+          debug: true
+          log_level: info
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    let task = &pb.plays[0].tasks[0];
+    assert!(task.vars.as_map().contains_key("config_file"));
+}
+
+#[test]
+fn test_import_tasks_static() {
+    let yaml = r#"
+- name: Test import_tasks (static)
+  hosts: all
+  tasks:
+    - name: Import common tasks
+      import_tasks: tasks/common.yml
+
+    - name: Import with tags
+      import_tasks: tasks/web.yml
+      tags:
+        - webserver
+        - deploy
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks.len(), 2);
+}
+
+#[test]
+fn test_include_tasks_loop() {
+    let yaml = r#"
+- name: Test include_tasks in loop
+  hosts: all
+  tasks:
+    - name: Include for each environment
+      include_tasks: "tasks/{{ item }}.yml"
+      loop:
+        - development
+        - staging
+        - production
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+#[test]
+fn test_include_vars_module() {
+    let yaml = r#"
+- name: Test include_vars
+  hosts: all
+  tasks:
+    - name: Include simple vars file
+      include_vars: vars/common.yml
+
+    - name: Include vars with namespace
+      include_vars:
+        file: vars/database.yml
+        name: db_config
+
+    - name: Include vars from directory
+      include_vars:
+        dir: vars/services/
+        extensions:
+          - yml
+          - yaml
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks.len(), 3);
+}
+
+// ============================================================================
+// 36. Delegation Tests (Enhanced)
+// ============================================================================
+
+#[test]
+fn test_delegate_to_localhost() {
+    let yaml = r#"
+- name: Test delegate to localhost
+  hosts: webservers
+  tasks:
+    - name: Run locally
+      command: echo "Running on controller"
+      delegate_to: localhost
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(
+        pb.plays[0].tasks[0].delegate_to,
+        Some("localhost".to_string())
+    );
+}
+
+#[test]
+fn test_delegate_facts() {
+    let yaml = r#"
+- name: Test delegate_facts
+  hosts: webservers
+  tasks:
+    - name: Gather facts from database
+      setup:
+      delegate_to: "{{ groups['databases'][0] }}"
+      delegate_facts: true
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks[0].delegate_facts, Some(true));
+}
+
+// ============================================================================
+// 37. Strategy Tests
+// ============================================================================
+
+#[test]
+fn test_strategy_linear() {
+    let yaml = r#"
+- name: Test linear strategy
+  hosts: all
+  strategy: linear
+  tasks:
+    - name: Task in linear mode
+      debug:
+        msg: "Running linearly"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].strategy, Some("linear".to_string()));
+}
+
+#[test]
+fn test_strategy_free() {
+    let yaml = r#"
+- name: Test free strategy
+  hosts: all
+  strategy: free
+  tasks:
+    - name: Task in free mode
+      debug:
+        msg: "Running freely"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].strategy, Some("free".to_string()));
+}
+
+// ============================================================================
+// 38. Jinja2 Filter Compatibility Tests
+// ============================================================================
+
+#[test]
+fn test_jinja2_default_filter_syntax() {
+    let yaml = r#"
+- name: Test default filter
+  hosts: all
+  tasks:
+    - name: Use default for undefined
+      debug:
+        msg: "Value: {{ undefined_var | default('fallback') }}"
+
+    - name: Use default with empty check
+      debug:
+        msg: "Value: {{ empty_var | default('fallback', true) }}"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+#[test]
+fn test_jinja2_string_filters_syntax() {
+    let yaml = r#"
+- name: Test string filters
+  hosts: all
+  vars:
+    my_string: "  Hello World  "
+  tasks:
+    - name: Upper filter
+      debug:
+        msg: "{{ my_string | upper }}"
+
+    - name: Lower filter
+      debug:
+        msg: "{{ my_string | lower }}"
+
+    - name: Trim filter
+      debug:
+        msg: "{{ my_string | trim }}"
+
+    - name: Replace filter
+      debug:
+        msg: "{{ my_string | replace('World', 'Ansible') }}"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+#[test]
+fn test_jinja2_list_filters_syntax() {
+    let yaml = r#"
+- name: Test list filters
+  hosts: all
+  vars:
+    my_list:
+      - one
+      - two
+      - three
+  tasks:
+    - name: First filter
+      debug:
+        msg: "{{ my_list | first }}"
+
+    - name: Last filter
+      debug:
+        msg: "{{ my_list | last }}"
+
+    - name: Length filter
+      debug:
+        msg: "{{ my_list | length }}"
+
+    - name: Join filter
+      debug:
+        msg: "{{ my_list | join(', ') }}"
+
+    - name: Sort filter
+      debug:
+        msg: "{{ my_list | sort }}"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+}
+
+// ============================================================================
+// 39. Error Handling Edge Cases
+// ============================================================================
+
+#[test]
+fn test_any_errors_fatal() {
+    let yaml = r#"
+- name: Test any_errors_fatal
+  hosts: all
+  any_errors_fatal: true
+  tasks:
+    - name: Risky task
+      command: /bin/might-fail
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert!(pb.plays[0].any_errors_fatal);
+}
+
+#[test]
+fn test_fail_module() {
+    let yaml = r#"
+- name: Test fail module
+  hosts: all
+  tasks:
+    - name: Check condition
+      fail:
+        msg: "This task intentionally fails"
+      when: some_condition
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks[0].module_name(), "fail");
+}
+
+#[test]
+fn test_assert_module() {
+    let yaml = r#"
+- name: Test assert module
+  hosts: all
+  vars:
+    my_version: "2.0"
+  tasks:
+    - name: Validate configuration
+      assert:
+        that:
+          - my_version is defined
+          - "my_version | version('1.0', '>=')"
+        fail_msg: "Invalid version configuration"
+        success_msg: "Configuration validated successfully"
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok());
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays[0].tasks[0].module_name(), "assert");
+}
+
+// ============================================================================
+// 40. Complex Real-World Scenario Tests
+// ============================================================================
+
+#[test]
+fn test_full_production_deploy_playbook() {
+    let yaml = r#"
+---
+- name: Pre-deployment checks
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Check deployment prerequisites
+      assert:
+        that:
+          - deploy_version is defined
+          - deploy_env in ['staging', 'production']
+        fail_msg: "Missing required deployment variables"
+
+- name: Deploy to webservers
+  hosts: webservers
+  become: true
+  serial: "25%"
+  max_fail_percentage: 10
+  any_errors_fatal: false
+
+  pre_tasks:
+    - name: Check disk space
+      command: df -h /opt
+      register: disk_check
+      changed_when: false
+
+  roles:
+    - role: common
+      tags: [always]
+    - role: app-deploy
+      vars:
+        app_version: "{{ deploy_version }}"
+      tags: [deploy]
+
+  tasks:
+    - name: Deploy application
+      block:
+        - name: Stop old version
+          service:
+            name: myapp
+            state: stopped
+
+        - name: Copy new version
+          copy:
+            src: "app-{{ deploy_version }}.tar.gz"
+            dest: /opt/myapp/
+
+        - name: Start new version
+          service:
+            name: myapp
+            state: started
+
+      rescue:
+        - name: Rollback on failure
+          command: /opt/myapp/rollback.sh
+
+        - name: Send failure alert
+          debug:
+            msg: "Deployment failed, rollback completed"
+
+      always:
+        - name: Clean up temp files
+          file:
+            path: /tmp/deploy-*
+            state: absent
+
+      notify:
+        - reload nginx
+        - clear cache
+
+  post_tasks:
+    - name: Health check
+      uri:
+        url: "http://{{ inventory_hostname }}:8080/health"
+        status_code: 200
+      retries: 10
+      delay: 5
+      register: health
+      until: health.status == 200
+
+  handlers:
+    - name: reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: clear cache
+      command: /opt/myapp/clear-cache.sh
+      listen: cache operations
+
+- name: Post-deployment validation
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Run integration tests
+      command: /tests/run-integration.sh
+      delegate_to: test-runner
+      register: test_result
+
+    - name: Notify success
+      debug:
+        msg: "Deployment {{ deploy_version }} completed successfully"
+      when: test_result.rc == 0
+"#;
+
+    let playbook = Playbook::from_yaml(yaml, None);
+    assert!(playbook.is_ok(), "Complex production playbook should parse");
+
+    let pb = playbook.unwrap();
+    assert_eq!(pb.plays.len(), 3, "Should have 3 plays");
+
+    // First play - pre-deployment checks
+    assert_eq!(pb.plays[0].name, "Pre-deployment checks");
+    assert!(!pb.plays[0].gather_facts);
+
+    // Second play - main deployment
+    assert_eq!(pb.plays[1].name, "Deploy to webservers");
+    assert_eq!(pb.plays[1].r#become, Some(true));
+    assert!(pb.plays[1].serial.is_some());
+    assert_eq!(pb.plays[1].max_fail_percentage, Some(10));
+    assert!(!pb.plays[1].any_errors_fatal); // Default or explicit false
+    assert_eq!(pb.plays[1].pre_tasks.len(), 1);
+    assert_eq!(pb.plays[1].roles.len(), 2);
+    assert_eq!(pb.plays[1].post_tasks.len(), 1);
+    assert_eq!(pb.plays[1].handlers.len(), 2);
+
+    // Third play - post-deployment
+    assert_eq!(pb.plays[2].name, "Post-deployment validation");
+}

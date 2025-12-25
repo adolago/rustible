@@ -1,0 +1,25 @@
+# Site configuration for {{ site_name }}
+# Generated from webserver role
+
+server {
+    listen {{ nginx_port }};
+    server_name {{ server_name }};
+
+    root {{ document_root }};
+    index index.html index.htm;
+
+{% if enable_access_log %}
+    access_log {{ nginx_log_dir }}/{{ site_name }}_access.log;
+{% endif %}
+    error_log {{ nginx_log_dir }}/{{ site_name }}_error.log;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+{% if ssl_enabled %}
+    listen {{ nginx_ssl_port }} ssl;
+    ssl_certificate {{ ssl_certificate }};
+    ssl_certificate_key {{ ssl_certificate_key }};
+{% endif %}
+}

@@ -391,9 +391,7 @@ async fn test_executor_with_callback_manager() {
 
     // Simulate task execution
     for host in &hosts {
-        callback_manager
-            .on_task_start("Install nginx", host)
-            .await;
+        callback_manager.on_task_start("Install nginx", host).await;
 
         let result = ExecutionResult {
             host: host.clone(),
@@ -543,7 +541,10 @@ async fn test_callback_ordering() {
         events[7],
         CallbackEvent::HandlerTriggered("handler1".to_string())
     );
-    assert_eq!(events[8], CallbackEvent::PlayEnd("Play 1".to_string(), true));
+    assert_eq!(
+        events[8],
+        CallbackEvent::PlayEnd("Play 1".to_string(), true)
+    );
     assert_eq!(
         events[9],
         CallbackEvent::PlayStart("Play 2".to_string(), hosts.clone())
@@ -556,7 +557,10 @@ async fn test_callback_ordering() {
         events[11],
         CallbackEvent::TaskComplete("Task 2.1".to_string(), "localhost".to_string(), true)
     );
-    assert_eq!(events[12], CallbackEvent::PlayEnd("Play 2".to_string(), true));
+    assert_eq!(
+        events[12],
+        CallbackEvent::PlayEnd("Play 2".to_string(), true)
+    );
     assert_eq!(
         events[13],
         CallbackEvent::PlaybookEnd("ordered_playbook".to_string(), true)
@@ -584,7 +588,9 @@ async fn test_multiple_plugins_receive_all_events() {
     callback_manager.add_callback(stats.clone());
 
     // Run a simple playbook
-    callback_manager.on_playbook_start("multi_plugin_test").await;
+    callback_manager
+        .on_playbook_start("multi_plugin_test")
+        .await;
 
     let hosts = vec!["server1".to_string()];
     callback_manager.on_play_start("Test Play", &hosts).await;
@@ -600,7 +606,9 @@ async fn test_multiple_plugins_receive_all_events() {
     callback_manager.on_task_complete(&result).await;
 
     callback_manager.on_play_end("Test Play", true).await;
-    callback_manager.on_playbook_end("multi_plugin_test", true).await;
+    callback_manager
+        .on_playbook_end("multi_plugin_test", true)
+        .await;
 
     // All recording callbacks should have the same events
     let events1 = recording1.events();
@@ -720,10 +728,16 @@ async fn test_complex_multi_host_playbook() {
         "db1".to_string(),
     ];
 
-    callback_manager.on_playbook_start("production_deploy").await;
+    callback_manager
+        .on_playbook_start("production_deploy")
+        .await;
 
     // Play 1: Configure web servers
-    let web_hosts: Vec<String> = hosts.iter().filter(|h| h.starts_with("web")).cloned().collect();
+    let web_hosts: Vec<String> = hosts
+        .iter()
+        .filter(|h| h.starts_with("web"))
+        .cloned()
+        .collect();
     callback_manager
         .on_play_start("Configure web servers", &web_hosts)
         .await;
@@ -750,7 +764,9 @@ async fn test_complex_multi_host_playbook() {
 
     // Configure nginx
     for host in &web_hosts {
-        callback_manager.on_task_start("Configure nginx", host).await;
+        callback_manager
+            .on_task_start("Configure nginx", host)
+            .await;
         let result = ExecutionResult {
             host: host.clone(),
             task_name: "Configure nginx".to_string(),
@@ -768,7 +784,11 @@ async fn test_complex_multi_host_playbook() {
         .await;
 
     // Play 2: Configure database
-    let db_hosts: Vec<String> = hosts.iter().filter(|h| h.starts_with("db")).cloned().collect();
+    let db_hosts: Vec<String> = hosts
+        .iter()
+        .filter(|h| h.starts_with("db"))
+        .cloned()
+        .collect();
     callback_manager
         .on_play_start("Configure database", &db_hosts)
         .await;
@@ -850,7 +870,9 @@ async fn test_failed_task_callbacks() {
     callback_manager.on_task_complete(&result).await;
 
     // Failed task
-    callback_manager.on_task_start("Failing Task", "server1").await;
+    callback_manager
+        .on_task_start("Failing Task", "server1")
+        .await;
     let result = ExecutionResult {
         host: "server1".to_string(),
         task_name: "Failing Task".to_string(),
@@ -861,7 +883,9 @@ async fn test_failed_task_callbacks() {
     callback_manager.on_task_complete(&result).await;
 
     callback_manager.on_play_end("Failing play", false).await;
-    callback_manager.on_playbook_end("failing_playbook", false).await;
+    callback_manager
+        .on_playbook_end("failing_playbook", false)
+        .await;
 
     // Verify stats captured the failure
     assert_eq!(stats.total_tasks.load(Ordering::SeqCst), 2);
@@ -874,14 +898,12 @@ async fn test_failed_task_callbacks() {
         e,
         CallbackEvent::TaskComplete(name, _, false) if name == "Failing Task"
     )));
-    assert!(events.iter().any(|e| matches!(
-        e,
-        CallbackEvent::PlayEnd(_, false)
-    )));
-    assert!(events.iter().any(|e| matches!(
-        e,
-        CallbackEvent::PlaybookEnd(_, false)
-    )));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, CallbackEvent::PlayEnd(_, false))));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, CallbackEvent::PlaybookEnd(_, false))));
 }
 
 // ============================================================================
@@ -897,7 +919,9 @@ async fn test_skipped_task_callbacks() {
     callback_manager.add_callback(stats.clone());
     callback_manager.add_callback(recording.clone());
 
-    callback_manager.on_playbook_start("conditional_playbook").await;
+    callback_manager
+        .on_playbook_start("conditional_playbook")
+        .await;
     callback_manager
         .on_play_start("Conditional play", &vec!["host1".to_string()])
         .await;
@@ -944,22 +968,23 @@ async fn test_handler_callbacks() {
         .await;
 
     // Task that notifies a handler
-    callback_manager.on_task_start("Install nginx", "host1").await;
+    callback_manager
+        .on_task_start("Install nginx", "host1")
+        .await;
     let result = ExecutionResult {
         host: "host1".to_string(),
         task_name: "Install nginx".to_string(),
         result: ModuleResult::changed("installed"),
         duration: Duration::from_secs(1),
-        notify: vec![
-            "restart nginx".to_string(),
-            "reload systemd".to_string(),
-        ],
+        notify: vec!["restart nginx".to_string(), "reload systemd".to_string()],
     };
     callback_manager.on_task_complete(&result).await;
 
     // Multiple handlers triggered
     callback_manager.on_handler_triggered("restart nginx").await;
-    callback_manager.on_handler_triggered("reload systemd").await;
+    callback_manager
+        .on_handler_triggered("reload systemd")
+        .await;
 
     callback_manager.on_play_end("Handler play", true).await;
     callback_manager.on_playbook_end("handler_test", true).await;
@@ -999,7 +1024,10 @@ async fn test_facts_gathering_callbacks() {
     // Gather different facts for each host
     for (i, host) in hosts.iter().enumerate() {
         let mut facts = Facts::new();
-        facts.set("os_family", json!(if i % 2 == 0 { "Debian" } else { "RedHat" }));
+        facts.set(
+            "os_family",
+            json!(if i % 2 == 0 { "Debian" } else { "RedHat" }),
+        );
         facts.set("memory_mb", json!(8192 * (i + 1)));
         facts.set("cpu_count", json!(4 * (i + 1)));
         callback_manager.on_facts_gathered(host, &facts).await;
@@ -1075,7 +1103,9 @@ async fn test_empty_playbook_callbacks() {
 
     // Playbook with no plays
     callback_manager.on_playbook_start("empty_playbook").await;
-    callback_manager.on_playbook_end("empty_playbook", true).await;
+    callback_manager
+        .on_playbook_end("empty_playbook", true)
+        .await;
 
     let events = recording.events();
     assert_eq!(events.len(), 2);
@@ -1135,7 +1165,9 @@ async fn test_large_scale_playbook() {
             .await;
     }
 
-    callback_manager.on_playbook_end("large_scale_test", true).await;
+    callback_manager
+        .on_playbook_end("large_scale_test", true)
+        .await;
 
     // Verify counts
     let expected_total_tasks = num_hosts * num_tasks_per_play * num_plays;

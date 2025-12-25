@@ -1,0 +1,109 @@
+# E2E Test Playbook: Web Server Setup
+# Tests: file, copy, template, command, service modules
+---
+- name: Web Server Setup
+  hosts: webservers
+  become: true
+  gather_facts: true
+  vars:
+    nginx_user: www-data
+    nginx_worker_processes: auto
+    nginx_worker_connections: 1024
+    server_name: "{{ inventory_hostname }}.example.com"
+    document_root: /var/www/html
+    http_port: 80
+
+  tasks:
+    - name: Gather facts about the system
+      setup:
+        gather_subset:
+          - all
+
+    - name: Ensure nginx directories exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /etc/nginx
+        - /etc/nginx/sites-available
+        - /etc/nginx/sites-enabled
+        - /etc/nginx/conf.d
+        - /var/log/nginx
+        - "{{ document_root }}"
+
+    - name: Create nginx configuration
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: validate nginx config
+
+    - name: Create default site configuration
+      template:
+        src: default-site.conf.j2
+        dest: /etc/nginx/sites-available/default
+        owner: root
+        group: root
+        mode: "0644"
+      notify: validate nginx config
+
+    - name: Enable default site
+      file:
+        src: /etc/nginx/sites-available/default
+        dest: /etc/nginx/sites-enabled/default
+        state: link
+      notify: reload nginx
+
+    - name: Deploy index.html
+      copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head><title>Welcome to {{ server_name }}</title></head>
+          <body>
+            <h1>Server: {{ inventory_hostname }}</h1>
+            <p>Deployed by Rustible at {{ ansible_date_time.iso8601 | default('unknown') }}</p>
+          </body>
+          </html>
+        dest: "{{ document_root }}/index.html"
+        owner: "{{ nginx_user }}"
+        group: "{{ nginx_user }}"
+        mode: "0644"
+
+    - name: Create robots.txt
+      copy:
+        content: |
+          User-agent: *
+          Disallow: /admin/
+          Allow: /
+        dest: "{{ document_root }}/robots.txt"
+        mode: "0644"
+
+    - name: Create health check endpoint
+      copy:
+        content: '{"status": "ok", "hostname": "{{ inventory_hostname }}"}'
+        dest: "{{ document_root }}/health.json"
+        mode: "0644"
+
+    - name: Verify document root permissions
+      command: ls -la {{ document_root }}
+      register: docroot_perms
+      changed_when: false
+
+    - name: Debug document root contents
+      debug:
+        var: docroot_perms.stdout_lines
+
+  handlers:
+    - name: validate nginx config
+      command: echo "nginx config validation simulated"
+      listen: validate nginx config
+
+    - name: reload nginx
+      command: echo "nginx reload simulated"
+      listen: reload nginx

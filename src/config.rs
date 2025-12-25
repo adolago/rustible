@@ -677,26 +677,31 @@ impl Config {
     }
 
     /// Get the effective inventory path
+    #[allow(dead_code)]
     pub fn inventory_path(&self) -> Option<&PathBuf> {
         self.defaults.inventory.as_ref()
     }
 
     /// Get the effective remote user
+    #[allow(dead_code)]
     pub fn remote_user(&self) -> Option<&str> {
         self.defaults.remote_user.as_deref()
     }
 
     /// Check if become is enabled
+    #[allow(dead_code)]
     pub fn become_enabled(&self) -> bool {
         self.privilege_escalation.r#become
     }
 
     /// Get vault password file path
+    #[allow(dead_code)]
     pub fn vault_password_file(&self) -> Option<&PathBuf> {
         self.vault.password_file.as_ref()
     }
 
     /// Load from a specific file (legacy compatibility)
+    #[allow(dead_code)]
     pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let path_buf = path.as_ref().to_path_buf();
         Config::default().merge_from_file(&path_buf)

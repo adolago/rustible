@@ -82,16 +82,16 @@ mod oneline;
 mod summary;
 
 // Visual plugins
+mod dense;
 pub mod diff;
 mod progress;
-mod dense;
 mod tree;
 
 // Timing & analysis plugins
 mod context;
 mod counter;
-mod timer;
 mod stats;
+mod timer;
 
 // Filtering plugins
 mod actionable;
@@ -135,36 +135,39 @@ pub use summary::{
 // Visual Plugin Exports
 // ============================================================================
 
+pub use dense::{DenseCallback, DenseConfig};
 pub use diff::{
     count_changes, generate_diff, has_changes, CompositeCallback, DiffCallback, DiffConfig,
 };
 pub use progress::{ProgressCallback, ProgressCallbackBuilder, ProgressConfig};
-pub use dense::{DenseCallback, DenseConfig};
 pub use tree::{
-    TreeCallback, TreeConfig, TreeHostStats, TreeHostSummary, TreePlaybookSummary,
-    TreeUnreachableCallback, TaskMetadata, TaskResultData,
+    TaskMetadata, TaskResultData, TreeCallback, TreeConfig, TreeHostStats, TreeHostSummary,
+    TreePlaybookSummary, TreeUnreachableCallback,
 };
 
 // ============================================================================
 // Timing & Analysis Plugin Exports
 // ============================================================================
 
-pub use context::{ContextCallback, ContextCallbackBuilder, ContextCallbackConfig, ContextVerbosity};
-pub use counter::{CounterCallback, CounterCallbackBuilder, CounterConfig};
-pub use timer::{TimerCallback, TimerCallbackBuilder, TimerConfig, TimerTaskTiming};
-pub use stats::{
-    StatsCallback, StatsConfig, PlayStats, PlaybookStats, ModuleStats,
-    ModuleClassification, DurationHistogram, MemorySnapshot,
-    HostStats as StatsHostStats,
+pub use context::{
+    ContextCallback, ContextCallbackBuilder, ContextCallbackConfig, ContextVerbosity,
 };
+pub use counter::{CounterCallback, CounterCallbackBuilder, CounterConfig};
+pub use stats::{
+    DurationHistogram, HostStats as StatsHostStats, MemorySnapshot, ModuleClassification,
+    ModuleStats, PlayStats, PlaybookStats, StatsCallback, StatsConfig,
+};
+pub use timer::{TimerCallback, TimerCallbackBuilder, TimerConfig, TimerTaskTiming};
 
 // ============================================================================
 // Filtering Plugin Exports
 // ============================================================================
 
 pub use actionable::{ActionableCallback, ActionableConfig, ActionableUnreachableCallback};
-pub use full_skip::{FullSkipCallback, FullSkipConfig, SkipPattern, SkippedTask, HostSkipStats};
-pub use selective::{FilterMode, SelectiveBuilder, SelectiveCallback, SelectiveConfig, StatusFilter};
+pub use full_skip::{FullSkipCallback, FullSkipConfig, HostSkipStats, SkipPattern, SkippedTask};
+pub use selective::{
+    FilterMode, SelectiveBuilder, SelectiveCallback, SelectiveConfig, StatusFilter,
+};
 pub use skippy::{SkippyCallback, SkippyConfig};
 
 // ============================================================================
@@ -172,11 +175,15 @@ pub use skippy::{SkippyCallback, SkippyConfig};
 // ============================================================================
 
 pub use debug::{DebugCallback, DebugConfig};
-pub use json::{JsonCallback, JsonCallbackBuilder, JsonEvent, TaskResultJson, HostStats as JsonHostStats};
-pub use logfile::{LogFileCallback, LogFileConfig, LogFileConfigBuilder, LogEvent, LogEntry, HostLogStats};
+pub use json::{
+    HostStats as JsonHostStats, JsonCallback, JsonCallbackBuilder, JsonEvent, TaskResultJson,
+};
+pub use logfile::{
+    HostLogStats, LogEntry, LogEvent, LogFileCallback, LogFileConfig, LogFileConfigBuilder,
+};
 pub use syslog::{
-    SyslogCallback, SyslogConfig, SyslogConfigBuilder, SyslogError, SyslogFacility,
-    SyslogFormat, SyslogResult, SyslogSeverity, SyslogStats, SeverityMapping,
+    SeverityMapping, SyslogCallback, SyslogConfig, SyslogConfigBuilder, SyslogError,
+    SyslogFacility, SyslogFormat, SyslogResult, SyslogSeverity, SyslogStats,
 };
 pub use yaml::{YamlCallback, YamlConfig, YamlConfigBuilder};
 
@@ -184,7 +191,9 @@ pub use yaml::{YamlCallback, YamlConfig, YamlConfigBuilder};
 // Integration Plugin Exports
 // ============================================================================
 
-pub use forked::{ForkedCallback, ForkedCallbackBuilder, ForkedConfig, ForkedUnreachableCallback, HostState};
+pub use forked::{
+    ForkedCallback, ForkedCallbackBuilder, ForkedConfig, ForkedUnreachableCallback, HostState,
+};
 pub use junit::JUnitCallback;
 pub use junit::UnreachableCallback as JUnitUnreachableCallback;
 pub use mail::{MailCallback, MailConfig, MailConfigBuilder, MailUnreachableCallback, TlsMode};

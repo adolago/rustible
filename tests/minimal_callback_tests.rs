@@ -17,8 +17,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 
-use rustible::callback::plugins::{MinimalCallback, UnreachableCallback};
 use rustible::callback::plugins::ExecutionCallback;
+use rustible::callback::plugins::{MinimalCallback, UnreachableCallback};
 use rustible::facts::Facts;
 use rustible::traits::{ExecutionResult, ModuleResult};
 
@@ -193,23 +193,25 @@ async fn test_tracks_multiple_hosts() {
     callback
         .on_play_start(
             "test-play",
-            &[
-                "web1".to_string(),
-                "web2".to_string(),
-                "db1".to_string(),
-            ],
+            &["web1".to_string(), "web2".to_string(), "db1".to_string()],
         )
         .await;
 
     // Different results for different hosts
     callback.on_task_complete(&ok_result("web1", "task1")).await;
-    callback.on_task_complete(&changed_result("web1", "task2")).await;
+    callback
+        .on_task_complete(&changed_result("web1", "task2"))
+        .await;
 
     callback.on_task_complete(&ok_result("web2", "task1")).await;
-    callback.on_task_complete(&failed_result("web2", "task2", "error")).await;
+    callback
+        .on_task_complete(&failed_result("web2", "task2", "error"))
+        .await;
 
     callback.on_task_complete(&ok_result("db1", "task1")).await;
-    callback.on_task_complete(&skipped_result("db1", "task2")).await;
+    callback
+        .on_task_complete(&skipped_result("db1", "task2"))
+        .await;
 
     // One host had a failure
     assert!(callback.has_failures().await);
@@ -225,16 +227,26 @@ async fn test_tracks_mixed_results() {
         .await;
 
     // Mix of all result types
-    callback.on_task_complete(&ok_result("host1", "task1")).await;
-    callback.on_task_complete(&changed_result("host1", "task2")).await;
-    callback.on_task_complete(&skipped_result("host1", "task3")).await;
-    callback.on_task_complete(&ok_result("host1", "task4")).await;
+    callback
+        .on_task_complete(&ok_result("host1", "task1"))
+        .await;
+    callback
+        .on_task_complete(&changed_result("host1", "task2"))
+        .await;
+    callback
+        .on_task_complete(&skipped_result("host1", "task3"))
+        .await;
+    callback
+        .on_task_complete(&ok_result("host1", "task4"))
+        .await;
 
     // No failures yet
     assert!(!callback.has_failures().await);
 
     // Now add a failure
-    callback.on_task_complete(&failed_result("host1", "task5", "error")).await;
+    callback
+        .on_task_complete(&failed_result("host1", "task5", "error"))
+        .await;
 
     // Now we have failures
     assert!(callback.has_failures().await);
@@ -340,10 +352,7 @@ async fn test_unreachable_multiple_hosts() {
 
     callback.on_playbook_start("test-playbook").await;
     callback
-        .on_play_start(
-            "test-play",
-            &["host1".to_string(), "host2".to_string()],
-        )
+        .on_play_start("test-play", &["host1".to_string(), "host2".to_string()])
         .await;
 
     // Multiple hosts become unreachable
@@ -436,7 +445,9 @@ async fn test_playbook_start_clears_state() {
     callback
         .on_play_start("play1", &["host1".to_string()])
         .await;
-    callback.on_task_complete(&failed_result("host1", "task1", "error")).await;
+    callback
+        .on_task_complete(&failed_result("host1", "task1", "error"))
+        .await;
 
     assert!(callback.has_failures().await);
 
@@ -466,9 +477,15 @@ async fn test_on_play_start_initializes_hosts() {
 
     // All hosts should be tracked even before any tasks complete
     // (verified implicitly by completing tasks for these hosts)
-    callback.on_task_complete(&ok_result("host1", "task1")).await;
-    callback.on_task_complete(&ok_result("host2", "task1")).await;
-    callback.on_task_complete(&ok_result("host3", "task1")).await;
+    callback
+        .on_task_complete(&ok_result("host1", "task1"))
+        .await;
+    callback
+        .on_task_complete(&ok_result("host2", "task1"))
+        .await;
+    callback
+        .on_task_complete(&ok_result("host3", "task1"))
+        .await;
 
     assert!(!callback.has_failures().await);
 }
@@ -603,7 +620,10 @@ async fn test_multiple_plays() {
 
     // Play 1
     callback
-        .on_play_start("Play 1: Web Servers", &["web1".to_string(), "web2".to_string()])
+        .on_play_start(
+            "Play 1: Web Servers",
+            &["web1".to_string(), "web2".to_string()],
+        )
         .await;
     callback.on_task_complete(&ok_result("web1", "task1")).await;
     callback.on_task_complete(&ok_result("web2", "task1")).await;
@@ -613,7 +633,9 @@ async fn test_multiple_plays() {
     callback
         .on_play_start("Play 2: Database Servers", &["db1".to_string()])
         .await;
-    callback.on_task_complete(&changed_result("db1", "task1")).await;
+    callback
+        .on_task_complete(&changed_result("db1", "task1"))
+        .await;
     callback.on_play_end("Play 2: Database Servers", true).await;
 
     // Playbook end
@@ -632,14 +654,18 @@ async fn test_multiple_plays_with_failure_in_second() {
     callback
         .on_play_start("Play 1", &["host1".to_string()])
         .await;
-    callback.on_task_complete(&ok_result("host1", "task1")).await;
+    callback
+        .on_task_complete(&ok_result("host1", "task1"))
+        .await;
     callback.on_play_end("Play 1", true).await;
 
     // Play 2 - failure
     callback
         .on_play_start("Play 2", &["host2".to_string()])
         .await;
-    callback.on_task_complete(&failed_result("host2", "task1", "error")).await;
+    callback
+        .on_task_complete(&failed_result("host2", "task1", "error"))
+        .await;
     callback.on_play_end("Play 2", false).await;
 
     callback.on_playbook_end("multi-play-playbook", false).await;
@@ -713,7 +739,8 @@ async fn test_concurrent_mixed_results() {
 
             // Only host0 has a failure
             if i == 0 {
-                cb.on_task_complete(&failed_result(&host, "task3", "error")).await;
+                cb.on_task_complete(&failed_result(&host, "task3", "error"))
+                    .await;
             } else {
                 cb.on_task_complete(&ok_result(&host, "task3")).await;
             }
@@ -748,28 +775,42 @@ async fn test_complete_successful_workflow() {
 
     // Play 1
     callback
-        .on_play_start("Install Dependencies", &["web1".to_string(), "web2".to_string()])
+        .on_play_start(
+            "Install Dependencies",
+            &["web1".to_string(), "web2".to_string()],
+        )
         .await;
 
     callback.on_task_start("Install nginx", "web1").await;
-    callback.on_task_complete(&changed_result("web1", "Install nginx")).await;
+    callback
+        .on_task_complete(&changed_result("web1", "Install nginx"))
+        .await;
 
     callback.on_task_start("Install nginx", "web2").await;
-    callback.on_task_complete(&changed_result("web2", "Install nginx")).await;
+    callback
+        .on_task_complete(&changed_result("web2", "Install nginx"))
+        .await;
 
     callback.on_handler_triggered("Restart nginx").await;
     callback.on_play_end("Install Dependencies", true).await;
 
     // Play 2
     callback
-        .on_play_start("Configure Application", &["web1".to_string(), "web2".to_string()])
+        .on_play_start(
+            "Configure Application",
+            &["web1".to_string(), "web2".to_string()],
+        )
         .await;
 
     callback.on_task_start("Copy config", "web1").await;
-    callback.on_task_complete(&ok_result("web1", "Copy config")).await;
+    callback
+        .on_task_complete(&ok_result("web1", "Copy config"))
+        .await;
 
     callback.on_task_start("Copy config", "web2").await;
-    callback.on_task_complete(&ok_result("web2", "Copy config")).await;
+    callback
+        .on_task_complete(&ok_result("web2", "Copy config"))
+        .await;
 
     callback.on_play_end("Configure Application", true).await;
 
@@ -786,20 +827,27 @@ async fn test_complete_failed_workflow() {
     callback.on_playbook_start("deploy-application").await;
 
     callback
-        .on_play_start("Install Dependencies", &["web1".to_string(), "web2".to_string()])
+        .on_play_start(
+            "Install Dependencies",
+            &["web1".to_string(), "web2".to_string()],
+        )
         .await;
 
     // web1 succeeds
     callback.on_task_start("Install nginx", "web1").await;
-    callback.on_task_complete(&changed_result("web1", "Install nginx")).await;
+    callback
+        .on_task_complete(&changed_result("web1", "Install nginx"))
+        .await;
 
     // web2 fails
     callback.on_task_start("Install nginx", "web2").await;
-    callback.on_task_complete(&failed_result(
-        "web2",
-        "Install nginx",
-        "Package installation failed: apt-get returned 100",
-    )).await;
+    callback
+        .on_task_complete(&failed_result(
+            "web2",
+            "Install nginx",
+            "Package installation failed: apt-get returned 100",
+        ))
+        .await;
 
     callback.on_play_end("Install Dependencies", false).await;
     callback.on_playbook_end("deploy-application", false).await;
@@ -813,7 +861,10 @@ async fn test_complete_workflow_with_unreachable() {
 
     callback.on_playbook_start("deploy-application").await;
     callback
-        .on_play_start("Install Dependencies", &["web1".to_string(), "web2".to_string()])
+        .on_play_start(
+            "Install Dependencies",
+            &["web1".to_string(), "web2".to_string()],
+        )
         .await;
 
     // web1 becomes unreachable
@@ -823,7 +874,9 @@ async fn test_complete_workflow_with_unreachable() {
 
     // web2 works fine
     callback.on_task_start("Install nginx", "web2").await;
-    callback.on_task_complete(&changed_result("web2", "Install nginx")).await;
+    callback
+        .on_task_complete(&changed_result("web2", "Install nginx"))
+        .await;
 
     callback.on_play_end("Install Dependencies", false).await;
     callback.on_playbook_end("deploy-application", false).await;
@@ -845,9 +898,15 @@ async fn test_recap_with_all_success() {
         .await;
 
     // Multiple successful tasks
-    callback.on_task_complete(&ok_result("host1", "task1")).await;
-    callback.on_task_complete(&ok_result("host1", "task2")).await;
-    callback.on_task_complete(&ok_result("host1", "task3")).await;
+    callback
+        .on_task_complete(&ok_result("host1", "task1"))
+        .await;
+    callback
+        .on_task_complete(&ok_result("host1", "task2"))
+        .await;
+    callback
+        .on_task_complete(&ok_result("host1", "task3"))
+        .await;
 
     callback.on_playbook_end("test-playbook", true).await;
 
@@ -865,10 +924,18 @@ async fn test_recap_with_mixed_results() {
         .await;
 
     // Mix of results
-    callback.on_task_complete(&ok_result("host1", "task1")).await;
-    callback.on_task_complete(&changed_result("host1", "task2")).await;
-    callback.on_task_complete(&skipped_result("host1", "task3")).await;
-    callback.on_task_complete(&failed_result("host1", "task4", "error")).await;
+    callback
+        .on_task_complete(&ok_result("host1", "task1"))
+        .await;
+    callback
+        .on_task_complete(&changed_result("host1", "task2"))
+        .await;
+    callback
+        .on_task_complete(&skipped_result("host1", "task3"))
+        .await;
+    callback
+        .on_task_complete(&failed_result("host1", "task4", "error"))
+        .await;
 
     callback.on_playbook_end("test-playbook", false).await;
 
@@ -893,9 +960,15 @@ async fn test_recap_multiple_hosts_sorted() {
         .await;
 
     // Tasks for each host (in random order)
-    callback.on_task_complete(&ok_result("zebra", "task1")).await;
-    callback.on_task_complete(&ok_result("alpha", "task1")).await;
-    callback.on_task_complete(&ok_result("bravo", "task1")).await;
+    callback
+        .on_task_complete(&ok_result("zebra", "task1"))
+        .await;
+    callback
+        .on_task_complete(&ok_result("alpha", "task1"))
+        .await;
+    callback
+        .on_task_complete(&ok_result("bravo", "task1"))
+        .await;
 
     // Recap should show hosts in sorted order: alpha, bravo, zebra
     callback.on_playbook_end("test-playbook", true).await;
@@ -987,7 +1060,9 @@ async fn test_no_output_on_success_tasks() {
 
     // Many successful tasks - all should be silent
     for i in 0..100 {
-        callback.on_task_complete(&ok_result("host1", &format!("task{}", i))).await;
+        callback
+            .on_task_complete(&ok_result("host1", &format!("task{}", i)))
+            .await;
     }
 
     assert!(!callback.has_failures().await);
@@ -1039,17 +1114,19 @@ async fn test_rapid_playbook_restarts() {
     // Rapid playbook restarts should clear state properly
     for i in 0..10 {
         callback.on_playbook_start(&format!("playbook{}", i)).await;
-        callback
-            .on_play_start("play", &["host1".to_string()])
-            .await;
+        callback.on_play_start("play", &["host1".to_string()]).await;
 
         if i % 2 == 0 {
-            callback.on_task_complete(&failed_result("host1", "task", "error")).await;
+            callback
+                .on_task_complete(&failed_result("host1", "task", "error"))
+                .await;
         } else {
             callback.on_task_complete(&ok_result("host1", "task")).await;
         }
 
-        callback.on_playbook_end(&format!("playbook{}", i), i % 2 != 0).await;
+        callback
+            .on_playbook_end(&format!("playbook{}", i), i % 2 != 0)
+            .await;
     }
 
     // Last playbook (i=9) was successful, but previous failures should be cleared

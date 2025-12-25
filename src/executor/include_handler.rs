@@ -65,11 +65,7 @@ impl IncludeTasksHandler {
             let mut var_store = VarStore::new();
             for (key, value) in merged_vars {
                 if let Ok(yaml_value) = serde_json::from_value(value) {
-                    var_store.set(
-                        key,
-                        yaml_value,
-                        crate::vars::VarPrecedence::PlayVars,
-                    );
+                    var_store.set(key, yaml_value, crate::vars::VarPrecedence::PlayVars);
                 }
             }
             var_store
@@ -108,11 +104,7 @@ impl IncludeTasksHandler {
             let mut var_store = VarStore::new();
             for (key, value) in merged_vars {
                 if let Ok(yaml_value) = serde_json::from_value(value) {
-                    var_store.set(
-                        key,
-                        yaml_value,
-                        crate::vars::VarPrecedence::PlayVars,
-                    );
+                    var_store.set(key, yaml_value, crate::vars::VarPrecedence::PlayVars);
                 }
             }
             var_store
@@ -125,7 +117,10 @@ impl IncludeTasksHandler {
         };
 
         // Load tasks and merge variables
-        let tasks = self.includer.load_import_tasks(&import_spec, &mut var_store).await?;
+        let tasks = self
+            .includer
+            .load_import_tasks(&import_spec, &mut var_store)
+            .await?;
 
         // Merge imported variables back into runtime
         // Variables have already been merged into var_store by load_import_tasks
@@ -145,7 +140,11 @@ mod tests {
 
     #[test]
     fn test_is_include_tasks() {
-        let task = Task::new("test", "include_tasks", serde_json::json!({"file": "test.yml"}));
+        let task = Task::new(
+            "test",
+            "include_tasks",
+            serde_json::json!({"file": "test.yml"}),
+        );
         assert!(IncludeTasksHandler::is_include_tasks(&task));
 
         let task2 = Task::new("test", "debug", serde_json::json!({"msg": "test"}));
@@ -154,7 +153,11 @@ mod tests {
 
     #[test]
     fn test_is_import_tasks() {
-        let task = Task::new("test", "import_tasks", serde_json::json!({"file": "test.yml"}));
+        let task = Task::new(
+            "test",
+            "import_tasks",
+            serde_json::json!({"file": "test.yml"}),
+        );
         assert!(IncludeTasksHandler::is_import_tasks(&task));
 
         let task2 = Task::new("test", "debug", serde_json::json!({"msg": "test"}));
@@ -211,7 +214,8 @@ mod tests {
         let runtime = Arc::new(RwLock::new(RuntimeContext::new()));
 
         let mut spec = IncludeTasksSpec::new("tasks.yml");
-        spec.vars.insert("test_var".to_string(), json!("test_value"));
+        spec.vars
+            .insert("test_var".to_string(), json!("test_value"));
 
         let tasks = handler
             .load_include_tasks(&spec, &runtime, "localhost")

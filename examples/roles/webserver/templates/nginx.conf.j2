@@ -1,0 +1,29 @@
+# Nginx configuration managed by Rustible
+# Generated from webserver role
+
+user {{ nginx_user }};
+worker_processes {{ nginx_worker_processes }};
+pid {{ nginx_pid_file }};
+
+events {
+    worker_connections {{ nginx_worker_connections }};
+}
+
+http {
+    sendfile on;
+    tcp_nopush on;
+    types_hash_max_size 2048;
+
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # Logging
+    access_log {{ nginx_access_log }} {{ access_log_format }};
+    error_log {{ nginx_error_log }};
+
+    # Gzip compression
+    gzip on;
+    gzip_disable "msie6";
+
+    include {{ nginx_sites_dir }}/*.conf;
+}

@@ -24,9 +24,7 @@
 //! - `memory_patterns` - Memory allocation benchmarks
 //! - `concurrent_dispatch` - Thread-safe dispatch under contention
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -445,8 +443,7 @@ fn bench_event_serialization(c: &mut Criterion) {
 
     // ExecutionResult cloning with large data
     for data_size in [100, 1_000, 10_000].iter() {
-        let result =
-            create_execution_result_with_data("localhost", "test_task", *data_size);
+        let result = create_execution_result_with_data("localhost", "test_task", *data_size);
         group.throughput(Throughput::Bytes(*data_size as u64));
         group.bench_with_input(
             BenchmarkId::new("result_clone_with_data", data_size),
@@ -519,9 +516,8 @@ fn bench_multi_plugin_scaling(c: &mut Criterion) {
                     .collect();
                 let composite = CompositeCallback::new(callbacks);
 
-                b.to_async(&rt).iter(|| async {
-                    composite.on_playbook_start(black_box("test")).await
-                })
+                b.to_async(&rt)
+                    .iter(|| async { composite.on_playbook_start(black_box("test")).await })
             },
         );
 
@@ -583,10 +579,7 @@ fn bench_memory_patterns(c: &mut Criterion) {
                 b.iter(|| {
                     let results: Vec<ExecutionResult> = (0..size)
                         .map(|i| {
-                            create_execution_result(
-                                &format!("host{}", i),
-                                &format!("task{}", i),
-                            )
+                            create_execution_result(&format!("host{}", i), &format!("task{}", i))
                         })
                         .collect();
                     black_box(results)
@@ -655,9 +648,9 @@ fn bench_concurrent_dispatch(c: &mut Criterion) {
                         for i in 0..num_tasks {
                             let cb = Arc::clone(&callback);
                             let name = format!("playbook_{}", i);
-                            handles.push(tokio::spawn(async move {
-                                cb.on_playbook_start(&name).await
-                            }));
+                            handles.push(tokio::spawn(
+                                async move { cb.on_playbook_start(&name).await },
+                            ));
                         }
                         for handle in handles {
                             black_box(handle.await.unwrap());
@@ -711,9 +704,9 @@ fn bench_concurrent_dispatch(c: &mut Criterion) {
                 for i in 0..16 {
                     let cb = Arc::clone(&callback);
                     let result = create_execution_result(&format!("host{}", i), "task");
-                    handles.push(tokio::spawn(async move {
-                        cb.on_task_complete(&result).await
-                    }));
+                    handles.push(tokio::spawn(
+                        async move { cb.on_task_complete(&result).await },
+                    ));
                 }
                 for handle in handles {
                     handle.await.unwrap();
@@ -1026,7 +1019,9 @@ mod tests {
         let callback = NoOpCallback::default();
         // Should not panic
         callback.on_playbook_start("test").await;
-        callback.on_task_complete(&create_execution_result("h", "t")).await;
+        callback
+            .on_task_complete(&create_execution_result("h", "t"))
+            .await;
     }
 
     #[tokio::test]

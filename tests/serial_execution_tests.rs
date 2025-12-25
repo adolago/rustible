@@ -69,7 +69,8 @@ async fn test_serial_fixed_one_host_at_a_time() {
 
 #[tokio::test]
 async fn test_serial_fixed_batch_size_two() {
-    let runtime = create_runtime_with_hosts(vec!["host1", "host2", "host3", "host4", "host5", "host6"]);
+    let runtime =
+        create_runtime_with_hosts(vec!["host1", "host2", "host3", "host4", "host5", "host6"]);
     let executor = Executor::with_runtime(
         ExecutorConfig {
             strategy: ExecutionStrategy::Linear,

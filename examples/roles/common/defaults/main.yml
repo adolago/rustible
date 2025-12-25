@@ -1,0 +1,23 @@
+---
+# Default values for common role
+# These can be overridden in vars/main.yml, playbook vars, or extra vars
+
+timezone: UTC
+
+common_packages:
+  - vim
+  - curl
+  - git
+  - htop
+  - wget
+
+enable_monitoring: false
+log_level: info
+
+# Sysctl defaults
+sysctl_settings:
+  net.core.somaxconn: 128
+  vm.swappiness: 60
+
+# Hostname configuration
+set_hostname: false

@@ -326,9 +326,7 @@ impl DebugCallback {
                 }
                 JsonValue::Object(new_map)
             }
-            JsonValue::Array(arr) => {
-                JsonValue::Array(arr.iter().map(Self::mask_value).collect())
-            }
+            JsonValue::Array(arr) => JsonValue::Array(arr.iter().map(Self::mask_value).collect()),
             _ => value.clone(),
         }
     }
@@ -393,13 +391,7 @@ impl DebugCallback {
 
     /// Prints indented key-value pair.
     fn print_kv(key: &str, value: &str, indent: usize) {
-        println!(
-            "{:indent$}{}: {}",
-            "",
-            key.cyan(),
-            value,
-            indent = indent
-        );
+        println!("{:indent$}{}: {}", "", key.cyan(), value, indent = indent);
     }
 
     /// Prints task result status with color.
@@ -591,7 +583,8 @@ impl ExecutionCallback for DebugCallback {
                 "{} [{}] {}",
                 "PLAY".bright_white().bold(),
                 name.yellow().bold(),
-                "*".repeat(70_usize.saturating_sub(name.len() + 8)).bright_black()
+                "*".repeat(70_usize.saturating_sub(name.len() + 8))
+                    .bright_black()
             );
             Self::print_major_separator();
 
@@ -651,7 +644,10 @@ impl ExecutionCallback for DebugCallback {
         let verbosity = config.verbosity;
 
         // Record task start time for this host
-        self.task_start_times.write().await.insert(host.to_string(), Instant::now());
+        self.task_start_times
+            .write()
+            .await
+            .insert(host.to_string(), Instant::now());
 
         if verbosity >= 1 {
             Self::print_minor_separator();
@@ -659,7 +655,8 @@ impl ExecutionCallback for DebugCallback {
                 "{} [{}] {}",
                 "TASK".bright_white().bold(),
                 name.yellow().bold(),
-                "*".repeat(70_usize.saturating_sub(name.len() + 8)).bright_black()
+                "*".repeat(70_usize.saturating_sub(name.len() + 8))
+                    .bright_black()
             );
             Self::print_minor_separator();
         }
@@ -771,11 +768,7 @@ impl ExecutionCallback for DebugCallback {
         let verbosity = config.verbosity;
 
         if verbosity >= 2 {
-            println!(
-                "  {} {}",
-                "HANDLER NOTIFIED:".bright_black(),
-                name.yellow()
-            );
+            println!("  {} {}", "HANDLER NOTIFIED:".bright_black(), name.yellow());
         }
     }
 
@@ -871,10 +864,22 @@ mod tests {
 
     #[test]
     fn test_format_duration() {
-        assert_eq!(DebugCallback::format_duration(Duration::from_millis(500)), "500ms");
-        assert_eq!(DebugCallback::format_duration(Duration::from_secs(5)), "5.000s");
-        assert_eq!(DebugCallback::format_duration(Duration::from_secs(65)), "1m 05s");
-        assert_eq!(DebugCallback::format_duration(Duration::from_secs(3665)), "1h 01m 05s");
+        assert_eq!(
+            DebugCallback::format_duration(Duration::from_millis(500)),
+            "500ms"
+        );
+        assert_eq!(
+            DebugCallback::format_duration(Duration::from_secs(5)),
+            "5.000s"
+        );
+        assert_eq!(
+            DebugCallback::format_duration(Duration::from_secs(65)),
+            "1m 05s"
+        );
+        assert_eq!(
+            DebugCallback::format_duration(Duration::from_secs(3665)),
+            "1h 01m 05s"
+        );
     }
 
     #[test]
@@ -912,7 +917,8 @@ mod tests {
         let ok_result = create_execution_result("host1", "task1", true, false, false, "ok");
         callback.on_task_complete(&ok_result).await;
 
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
         callback.on_task_complete(&changed_result).await;
 
         let failed_result =
@@ -994,7 +1000,10 @@ mod tests {
 
         // Both should share the same underlying state
         assert!(Arc::ptr_eq(&callback1.host_stats, &callback2.host_stats));
-        assert!(Arc::ptr_eq(&callback1.has_failures, &callback2.has_failures));
+        assert!(Arc::ptr_eq(
+            &callback1.has_failures,
+            &callback2.has_failures
+        ));
     }
 
     #[test]

@@ -1,0 +1,14 @@
+---
+# Role vars (higher precedence than defaults)
+# Internal variables that should not typically be overridden
+
+nginx_package_name: nginx
+nginx_service_name: nginx
+
+# Calculated paths
+nginx_pid_file: /run/nginx.pid
+nginx_error_log: "{{ nginx_log_dir }}/error.log"
+nginx_access_log: "{{ nginx_log_dir }}/access.log"
+
+# Internal version tracking
+webserver_role_version: "1.0.0"

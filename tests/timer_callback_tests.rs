@@ -203,12 +203,16 @@ impl ExecutionCallback for TimerCallback {
     }
 
     async fn on_play_start(&self, name: &str, _hosts: &[String]) {
-        self.play_starts.write().insert(name.to_string(), Instant::now());
+        self.play_starts
+            .write()
+            .insert(name.to_string(), Instant::now());
     }
 
     async fn on_play_end(&self, name: &str, _success: bool) {
         if let Some(start) = self.play_starts.read().get(name) {
-            self.play_durations.write().insert(name.to_string(), start.elapsed());
+            self.play_durations
+                .write()
+                .insert(name.to_string(), start.elapsed());
         }
     }
 
@@ -483,11 +487,17 @@ impl ProfileTasksCallback {
             entry.host_timings.push((timing.host.clone(), duration));
 
             entry.min_duration = Some(
-                entry.min_duration.map(|min| min.min(duration)).unwrap_or(duration),
+                entry
+                    .min_duration
+                    .map(|min| min.min(duration))
+                    .unwrap_or(duration),
             );
 
             entry.max_duration = Some(
-                entry.max_duration.map(|max| max.max(duration)).unwrap_or(duration),
+                entry
+                    .max_duration
+                    .map(|max| max.max(duration))
+                    .unwrap_or(duration),
             );
         }
 
@@ -524,9 +534,7 @@ impl ProfileTasksCallback {
         self.completed_tasks
             .read()
             .iter()
-            .filter(|t| {
-                !t.skipped && t.duration_secs() >= self.config.bottleneck_threshold_secs
-            })
+            .filter(|t| !t.skipped && t.duration_secs() >= self.config.bottleneck_threshold_secs)
             .cloned()
             .collect()
     }
@@ -608,7 +616,9 @@ impl ExecutionCallback for ProfileTasksCallback {
     async fn on_playbook_end(&self, _name: &str, _success: bool) {}
 
     async fn on_play_start(&self, name: &str, _hosts: &[String]) {
-        self.play_starts.write().insert(name.to_string(), Instant::now());
+        self.play_starts
+            .write()
+            .insert(name.to_string(), Instant::now());
     }
 
     async fn on_play_end(&self, _name: &str, _success: bool) {}

@@ -122,8 +122,9 @@ impl Default for ForkedConfig {
             use_terminal_ui: std::io::stdout().is_terminal(),
             show_host_progress: true,
             show_summary: true,
-            slot_template: "  {spinner:.green} [{prefix}] {msg:<15} [{bar:25.cyan/blue}] {percent:>3}%"
-                .to_string(),
+            slot_template:
+                "  {spinner:.green} [{prefix}] {msg:<15} [{bar:25.cyan/blue}] {percent:>3}%"
+                    .to_string(),
         }
     }
 }
@@ -200,10 +201,7 @@ impl ForkedCallback {
     pub fn with_config(config: ForkedConfig) -> Self {
         let forks = config.forks.max(1);
         Self {
-            config: ForkedConfig {
-                forks,
-                ..config
-            },
+            config: ForkedConfig { forks, ..config },
             host_stats: Arc::new(RwLock::new(HashMap::new())),
             host_states: Arc::new(RwLock::new(HashMap::new())),
             fork_slots: Arc::new(RwLock::new(Vec::with_capacity(forks))),
@@ -311,6 +309,7 @@ impl ForkedCallback {
     }
 
     /// Prints the summary line showing completed/running/pending counts.
+    #[allow(dead_code)]
     fn print_summary_line(&self) {
         let total = self.total_hosts.load(Ordering::SeqCst);
         let completed = self.completed_hosts.load(Ordering::SeqCst);
@@ -503,8 +502,7 @@ impl ExecutionCallback for ForkedCallback {
         }
 
         // Update total hosts count
-        self.total_hosts
-            .store(hosts.len() as u64, Ordering::SeqCst);
+        self.total_hosts.store(hosts.len() as u64, Ordering::SeqCst);
         self.completed_hosts.store(0, Ordering::SeqCst);
 
         println!(
@@ -587,10 +585,7 @@ impl ExecutionCallback for ForkedCallback {
             }
         } else {
             // Simple output mode
-            println!(
-                "{}",
-                Self::format_simple_status(host, name, "starting...")
-            );
+            println!("{}", Self::format_simple_status(host, name, "starting..."));
         }
     }
 
@@ -642,7 +637,9 @@ impl ExecutionCallback for ForkedCallback {
             let status_msg = if result.result.skipped {
                 "skipped".cyan().to_string()
             } else if !result.result.success {
-                format!("FAILED: {}", result.result.message).red().to_string()
+                format!("FAILED: {}", result.result.message)
+                    .red()
+                    .to_string()
             } else if result.result.changed {
                 "changed".yellow().to_string()
             } else {
@@ -655,7 +652,9 @@ impl ExecutionCallback for ForkedCallback {
             let status = if result.result.skipped {
                 "skipped".cyan().to_string()
             } else if !result.result.success {
-                format!("FAILED: {}", result.result.message).red().to_string()
+                format!("FAILED: {}", result.result.message)
+                    .red()
+                    .to_string()
             } else if result.result.changed {
                 "changed".yellow().to_string()
             } else {
@@ -677,11 +676,7 @@ impl ExecutionCallback for ForkedCallback {
 
     /// Called when a handler is triggered.
     async fn on_handler_triggered(&self, name: &str) {
-        println!(
-            "  {} {}",
-            "HANDLER:".bright_magenta(),
-            name.bright_white()
-        );
+        println!("  {} {}", "HANDLER:".bright_magenta(), name.bright_white());
     }
 
     /// Called when facts are gathered.

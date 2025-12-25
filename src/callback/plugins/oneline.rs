@@ -473,7 +473,13 @@ impl ExecutionCallback for OnelineCallback {
 mod tests {
     use super::*;
 
-    fn create_test_result(host: &str, success: bool, changed: bool, skipped: bool, msg: &str) -> ExecutionResult {
+    fn create_test_result(
+        host: &str,
+        success: bool,
+        changed: bool,
+        skipped: bool,
+        msg: &str,
+    ) -> ExecutionResult {
         ExecutionResult {
             host: host.to_string(),
             task_name: "test task".to_string(),

@@ -612,7 +612,7 @@ fn test_file_diff_create_directory() {
     assert!(diff.is_some());
     let d = diff.unwrap();
     assert_eq!(d.before, "absent");
-    assert_eq!(d.after, "directory");
+    assert_eq!(d.after, "directory exists");
 }
 
 #[test]
@@ -634,7 +634,7 @@ fn test_file_diff_create_file() {
     assert!(diff.is_some());
     let d = diff.unwrap();
     assert_eq!(d.before, "absent");
-    assert_eq!(d.after, "file");
+    assert_eq!(d.after, "file exists");
 }
 
 #[test]
@@ -755,12 +755,11 @@ fn test_file_diff_no_change_file_exists() {
     let context = ModuleContext::default();
     let diff = module.diff(&params, &context).unwrap();
 
-    // The diff function returns Some with "file exists" vs "file" even when state matches,
-    // because the string representations differ (before includes "exists")
-    assert!(diff.is_some());
-    let d = diff.unwrap();
-    assert!(d.before.contains("file"));
-    assert_eq!(d.after, "file");
+    // No diff should be returned when file already exists in desired state
+    assert!(
+        diff.is_none(),
+        "Should not return diff when no change needed"
+    );
 }
 
 #[test]
@@ -780,12 +779,11 @@ fn test_file_diff_no_change_directory_exists() {
     let context = ModuleContext::default();
     let diff = module.diff(&params, &context).unwrap();
 
-    // The diff function returns Some with "directory exists" vs "directory" even when state matches,
-    // because the string representations differ (before includes "exists")
-    assert!(diff.is_some());
-    let d = diff.unwrap();
-    assert!(d.before.contains("directory"));
-    assert_eq!(d.after, "directory");
+    // No diff should be returned when directory already exists in desired state
+    assert!(
+        diff.is_none(),
+        "Should not return diff when no change needed"
+    );
 }
 
 #[test]

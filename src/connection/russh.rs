@@ -25,6 +25,9 @@ const STREAM_THRESHOLD: u64 = 1024 * 1024;
 /// Chunk size for streaming transfers (64KB)
 const CHUNK_SIZE: usize = 64 * 1024;
 
+/// Maximum number of concurrent transfers for batch/directory operations
+const MAX_CONCURRENT_TRANSFERS: usize = 10;
+
 use super::config::{
     default_identity_files, expand_path, ConnectionConfig, HostConfig, RetryConfig,
 };
@@ -32,6 +35,252 @@ use super::{
     CommandResult, Connection, ConnectionError, ConnectionResult, ExecuteOptions, FileStat,
     RusshError, TransferOptions,
 };
+
+// ============================================================================
+// Progress Callback Types for File Transfers
+// ============================================================================
+
+/// Progress information for a file transfer
+#[derive(Debug, Clone)]
+pub struct TransferProgress {
+    /// Path of the file being transferred
+    pub path: PathBuf,
+    /// Total size of the file in bytes (0 if unknown)
+    pub total_bytes: u64,
+    /// Number of bytes transferred so far
+    pub transferred_bytes: u64,
+    /// Transfer direction
+    pub direction: TransferDirection,
+    /// Current transfer phase
+    pub phase: TransferPhase,
+}
+
+impl TransferProgress {
+    /// Create a new transfer progress for upload
+    pub fn upload(path: impl Into<PathBuf>, total_bytes: u64) -> Self {
+        Self {
+            path: path.into(),
+            total_bytes,
+            transferred_bytes: 0,
+            direction: TransferDirection::Upload,
+            phase: TransferPhase::Starting,
+        }
+    }
+
+    /// Create a new transfer progress for download
+    pub fn download(path: impl Into<PathBuf>, total_bytes: u64) -> Self {
+        Self {
+            path: path.into(),
+            total_bytes,
+            transferred_bytes: 0,
+            direction: TransferDirection::Download,
+            phase: TransferPhase::Starting,
+        }
+    }
+
+    /// Get the percentage completed (0-100)
+    pub fn percentage(&self) -> f64 {
+        if self.total_bytes == 0 {
+            0.0
+        } else {
+            (self.transferred_bytes as f64 / self.total_bytes as f64) * 100.0
+        }
+    }
+
+    /// Check if the transfer is complete
+    pub fn is_complete(&self) -> bool {
+        matches!(self.phase, TransferPhase::Completed)
+    }
+
+    /// Update the transferred bytes
+    pub fn update(&mut self, transferred: u64) {
+        self.transferred_bytes = transferred;
+        self.phase = if self.transferred_bytes >= self.total_bytes && self.total_bytes > 0 {
+            TransferPhase::Completed
+        } else {
+            TransferPhase::Transferring
+        };
+    }
+}
+
+/// Direction of the transfer
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferDirection {
+    Upload,
+    Download,
+}
+
+/// Current phase of the transfer
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferPhase {
+    Starting,
+    Transferring,
+    Completed,
+    Finalizing,
+}
+
+/// Callback type for progress updates
+pub type ProgressCallback = Arc<dyn Fn(&TransferProgress) + Send + Sync>;
+
+/// Batch progress information for multiple file transfers
+#[derive(Debug, Clone)]
+pub struct BatchTransferProgress {
+    /// Total number of files to transfer
+    pub total_files: usize,
+    /// Number of files completed
+    pub completed_files: usize,
+    /// Number of files that succeeded
+    pub successful_files: usize,
+    /// Number of files that failed
+    pub failed_files: usize,
+    /// Total bytes across all files
+    pub total_bytes: u64,
+    /// Bytes transferred so far
+    pub transferred_bytes: u64,
+    /// Current file being transferred
+    pub current_file: Option<TransferProgress>,
+}
+
+impl BatchTransferProgress {
+    /// Create a new batch progress tracker
+    pub fn new(total_files: usize, total_bytes: u64) -> Self {
+        Self {
+            total_files,
+            completed_files: 0,
+            successful_files: 0,
+            failed_files: 0,
+            total_bytes,
+            transferred_bytes: 0,
+            current_file: None,
+        }
+    }
+
+    /// Get the overall percentage completed
+    pub fn percentage(&self) -> f64 {
+        if self.total_bytes == 0 {
+            if self.total_files == 0 {
+                100.0
+            } else {
+                (self.completed_files as f64 / self.total_files as f64) * 100.0
+            }
+        } else {
+            (self.transferred_bytes as f64 / self.total_bytes as f64) * 100.0
+        }
+    }
+
+    /// Check if the batch is complete
+    pub fn is_complete(&self) -> bool {
+        self.completed_files >= self.total_files
+    }
+}
+
+/// Callback type for batch progress updates
+pub type BatchProgressCallback = Arc<dyn Fn(&BatchTransferProgress) + Send + Sync>;
+
+/// Result of a batch transfer operation
+#[derive(Debug)]
+pub struct BatchTransferResult {
+    /// Number of successful transfers
+    pub successful: usize,
+    /// Number of failed transfers
+    pub failed: usize,
+    /// Individual results for each file
+    pub results: Vec<SingleTransferResult>,
+}
+
+impl BatchTransferResult {
+    /// Check if all transfers succeeded
+    pub fn all_succeeded(&self) -> bool {
+        self.failed == 0
+    }
+    /// Get all errors
+    pub fn errors(&self) -> Vec<&ConnectionError> {
+        self.results
+            .iter()
+            .filter_map(|r| r.error.as_ref())
+            .collect()
+    }
+}
+
+/// Result of a single file transfer within a batch
+#[derive(Debug)]
+pub struct SingleTransferResult {
+    /// Local path
+    pub local_path: PathBuf,
+    /// Remote path
+    pub remote_path: PathBuf,
+    /// Whether the transfer succeeded
+    pub success: bool,
+    /// Error if the transfer failed
+    pub error: Option<ConnectionError>,
+    /// Number of bytes transferred
+    pub bytes_transferred: u64,
+}
+
+/// Options for directory transfer operations
+#[derive(Debug, Clone, Default)]
+pub struct DirectoryTransferOptions {
+    /// Base transfer options
+    pub transfer_options: TransferOptions,
+    /// Whether to preserve directory structure
+    pub preserve_structure: bool,
+    /// Whether to follow symbolic links
+    pub follow_symlinks: bool,
+    /// Pattern to exclude files
+    pub exclude_patterns: Vec<String>,
+    /// Pattern to include only matching files
+    pub include_patterns: Vec<String>,
+    /// Maximum recursion depth (None for unlimited)
+    pub max_depth: Option<usize>,
+    /// Number of parallel transfers
+    pub parallelism: Option<usize>,
+}
+
+impl DirectoryTransferOptions {
+    /// Create new directory transfer options
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Set the base transfer options
+    pub fn with_transfer_options(mut self, options: TransferOptions) -> Self {
+        self.transfer_options = options;
+        self
+    }
+    /// Enable/disable preserving directory structure
+    pub fn with_preserve_structure(mut self, preserve: bool) -> Self {
+        self.preserve_structure = preserve;
+        self
+    }
+    /// Enable/disable following symbolic links
+    pub fn with_follow_symlinks(mut self, follow: bool) -> Self {
+        self.follow_symlinks = follow;
+        self
+    }
+    /// Add an exclude pattern
+    pub fn with_exclude(mut self, pattern: impl Into<String>) -> Self {
+        self.exclude_patterns.push(pattern.into());
+        self
+    }
+    /// Add an include pattern
+    pub fn with_include(mut self, pattern: impl Into<String>) -> Self {
+        self.include_patterns.push(pattern.into());
+        self
+    }
+    /// Set maximum recursion depth
+    pub fn with_max_depth(mut self, depth: usize) -> Self {
+        self.max_depth = Some(depth);
+        self
+    }
+    /// Set parallelism level
+    pub fn with_parallelism(mut self, parallelism: usize) -> Self {
+        self.parallelism = Some(parallelism);
+        self
+    }
+    /// Get the effective parallelism
+    pub fn effective_parallelism(&self) -> usize {
+        self.parallelism.unwrap_or(MAX_CONCURRENT_TRANSFERS)
+    }
+}
 
 /// Escape a path for safe use in shell commands
 ///
@@ -90,8 +339,7 @@ impl ClientHandler {
         let mut entries = Vec::new();
 
         // Get path to known_hosts
-        let known_hosts_path = dirs::home_dir()
-            .map(|h| h.join(".ssh").join("known_hosts"));
+        let known_hosts_path = dirs::home_dir().map(|h| h.join(".ssh").join("known_hosts"));
 
         let path = match known_hosts_path {
             Some(p) if p.exists() => p,
@@ -139,13 +387,11 @@ impl ClientHandler {
         let key_data = parts[2];
 
         // Decode the base64 key
-        let key_bytes = match base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            key_data,
-        ) {
-            Ok(b) => b,
-            Err(_) => return None,
-        };
+        let key_bytes =
+            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_data) {
+                Ok(b) => b,
+                Err(_) => return None,
+            };
 
         // Parse the public key
         // The key format is: 4-byte length + key type string + key data
@@ -167,7 +413,8 @@ impl ClientHandler {
         if pattern.starts_with('[') {
             if let Some(end_bracket) = pattern.find(']') {
                 let pattern_host = &pattern[1..end_bracket];
-                let pattern_port = pattern.get(end_bracket + 2..)
+                let pattern_port = pattern
+                    .get(end_bracket + 2..)
                     .and_then(|p| p.parse::<u16>().ok())
                     .unwrap_or(22);
                 return pattern_host == host && pattern_port == port;
@@ -234,14 +481,13 @@ impl ClientHandler {
                     // Found a matching host entry - compare keys
                     if Self::keys_equal(&entry.key, server_key) {
                         return HostKeyStatus::Verified;
-                    } else {
-                        // Key mismatch - potential MITM attack
-                        warn!(
-                            host = %self.host,
-                            "Host key mismatch! The server's key differs from known_hosts"
-                        );
-                        return HostKeyStatus::Mismatch;
                     }
+                    // Key mismatch - potential MITM attack
+                    warn!(
+                        host = %self.host,
+                        "Host key mismatch! The server's key differs from known_hosts"
+                    );
+                    return HostKeyStatus::Mismatch;
                 }
             }
         }
@@ -311,7 +557,8 @@ pub struct RusshConnection {
     /// Read lock: channel operations (execute, upload, download, etc.)
     /// Write lock: close operation only
     handle: Arc<RwLock<Option<Handle<ClientHandler>>>>,
-    /// Host configuration
+    /// Host configuration (kept for future connection pooling improvements)
+    #[allow(dead_code)]
     host_config: HostConfig,
     /// Whether the connection is established
     connected: Arc<AtomicBool>,
@@ -644,15 +891,14 @@ impl RusshConnection {
         user: &str,
     ) -> ConnectionResult<()> {
         // Connect to SSH agent using SSH_AUTH_SOCK environment variable
-        let mut agent = AgentClient::connect_env()
-            .await
-            .map_err(|e| ConnectionError::AuthenticationFailed(format!("Failed to connect to SSH agent: {}", e)))?;
+        let mut agent = AgentClient::connect_env().await.map_err(|e| {
+            ConnectionError::AuthenticationFailed(format!("Failed to connect to SSH agent: {}", e))
+        })?;
 
         // Get available identities from the agent
-        let identities = agent
-            .request_identities()
-            .await
-            .map_err(|e| ConnectionError::AuthenticationFailed(format!("Failed to get agent identities: {}", e)))?;
+        let identities = agent.request_identities().await.map_err(|e| {
+            ConnectionError::AuthenticationFailed(format!("Failed to get agent identities: {}", e))
+        })?;
 
         if identities.is_empty() {
             return Err(ConnectionError::AuthenticationFailed(
@@ -816,7 +1062,6 @@ impl Connection for RusshConnection {
 
             // Handle escalation password if needed
             if options.escalate && options.escalate_password.is_some() {
-                use tokio::io::AsyncReadExt;
                 let password = options.escalate_password.as_ref().unwrap();
                 let password_data = format!("{}\n", password);
                 let mut cursor = tokio::io::BufReader::new(password_data.as_bytes());
@@ -911,7 +1156,7 @@ impl Connection for RusshConnection {
             .ok_or_else(|| ConnectionError::ConnectionClosed)?;
 
         // Open SFTP session (while holding read lock)
-        let mut sftp = Self::open_sftp(handle).await?;
+        let sftp = Self::open_sftp(handle).await?;
 
         // Release the read lock immediately after opening SFTP session
         drop(handle_guard);
@@ -1011,7 +1256,7 @@ impl Connection for RusshConnection {
             .ok_or_else(|| ConnectionError::ConnectionClosed)?;
 
         // Open SFTP session (while holding read lock)
-        let mut sftp = Self::open_sftp(handle).await?;
+        let sftp = Self::open_sftp(handle).await?;
 
         // Release the read lock immediately after opening SFTP session
         drop(handle_guard);
@@ -1570,13 +1815,20 @@ impl std::fmt::Debug for RusshConnection {
 
 /// Builder for Russh connections
 pub struct RusshConnectionBuilder {
-    host: String,
-    port: u16,
-    user: String,
-    password: Option<String>,
-    private_key: Option<String>,
-    timeout: Option<u64>,
-    compression: bool,
+    /// Target host
+    pub host: String,
+    /// SSH port (default: 22)
+    pub port: u16,
+    /// Username for authentication
+    pub user: String,
+    /// Password for authentication (optional)
+    pub password: Option<String>,
+    /// Path to private key file (optional)
+    pub private_key: Option<String>,
+    /// Connection timeout in seconds (optional)
+    pub timeout: Option<u64>,
+    /// Enable compression
+    pub compression: bool,
 }
 
 impl RusshConnectionBuilder {
@@ -2155,6 +2407,651 @@ impl<'a> Drop for PipelinedExecutor<'a> {
                 "PipelinedExecutor dropped with pending commands that were not flushed"
             );
         }
+    }
+}
+
+// ============================================================================
+// Directory Transfer and Progress Operations
+// ============================================================================
+
+impl RusshConnection {
+    /// Upload a directory recursively with parallel transfers
+    pub async fn upload_directory(
+        &self,
+        local_dir: &Path,
+        remote_dir: &Path,
+        options: Option<DirectoryTransferOptions>,
+        progress: Option<BatchProgressCallback>,
+    ) -> ConnectionResult<BatchTransferResult> {
+        let options = options.unwrap_or_default();
+        if !local_dir.is_dir() {
+            return Err(ConnectionError::TransferFailed(format!(
+                "Not a directory: {}",
+                local_dir.display()
+            )));
+        }
+        debug!(local = %local_dir.display(), remote = %remote_dir.display(), "Starting directory upload");
+        let files = self
+            .collect_local_files(local_dir, remote_dir, &options, 0)
+            .await?;
+        if files.is_empty() {
+            return Ok(BatchTransferResult {
+                successful: 0,
+                failed: 0,
+                results: Vec::new(),
+            });
+        }
+        let handle_guard = self.handle.read().await;
+        let h = handle_guard
+            .as_ref()
+            .ok_or_else(|| ConnectionError::ConnectionClosed)?;
+        let sftp = Self::open_sftp(h).await?;
+        Self::create_remote_dirs_sftp(&sftp, remote_dir).await?;
+        drop(handle_guard);
+        self.upload_batch_with_progress(&files, Some(options.transfer_options), progress)
+            .await
+    }
+
+    async fn collect_local_files(
+        &self,
+        local_dir: &Path,
+        remote_dir: &Path,
+        options: &DirectoryTransferOptions,
+        depth: usize,
+    ) -> ConnectionResult<Vec<(PathBuf, PathBuf)>> {
+        if options.max_depth.map_or(false, |max| depth > max) {
+            return Ok(Vec::new());
+        }
+        let mut files = Vec::new();
+        let mut entries = tokio::fs::read_dir(local_dir).await.map_err(|e| {
+            ConnectionError::TransferFailed(format!(
+                "Failed to read directory {}: {}",
+                local_dir.display(),
+                e
+            ))
+        })?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| ConnectionError::TransferFailed(format!("Failed to read entry: {}", e)))?
+        {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if options
+                .exclude_patterns
+                .iter()
+                .any(|p| glob::Pattern::new(p).map_or(false, |pat| pat.matches(&name)))
+            {
+                continue;
+            }
+            if !options.include_patterns.is_empty()
+                && !options
+                    .include_patterns
+                    .iter()
+                    .any(|p| glob::Pattern::new(p).map_or(false, |pat| pat.matches(&name)))
+            {
+                continue;
+            }
+            let remote_path = remote_dir.join(&name);
+            let meta = entry.metadata().await.map_err(|e| {
+                ConnectionError::TransferFailed(format!("Failed to get metadata: {}", e))
+            })?;
+            if meta.is_dir() {
+                files.extend(
+                    Box::pin(self.collect_local_files(&path, &remote_path, options, depth + 1))
+                        .await?,
+                );
+            } else if meta.is_file() && (options.follow_symlinks || !meta.file_type().is_symlink())
+            {
+                files.push((path, remote_path));
+            }
+        }
+        Ok(files)
+    }
+
+    /// Download a directory recursively with parallel transfers
+    pub async fn download_directory(
+        &self,
+        remote_dir: &Path,
+        local_dir: &Path,
+        options: Option<DirectoryTransferOptions>,
+        progress: Option<BatchProgressCallback>,
+    ) -> ConnectionResult<BatchTransferResult> {
+        let options = options.unwrap_or_default();
+        debug!(remote = %remote_dir.display(), local = %local_dir.display(), "Starting directory download");
+        let files = self
+            .collect_remote_files(remote_dir, local_dir, &options, 0)
+            .await?;
+        if files.is_empty() {
+            return Ok(BatchTransferResult {
+                successful: 0,
+                failed: 0,
+                results: Vec::new(),
+            });
+        }
+        tokio::fs::create_dir_all(local_dir).await.map_err(|e| {
+            ConnectionError::TransferFailed(format!("Failed to create directory: {}", e))
+        })?;
+        self.download_batch_with_progress(&files, progress).await
+    }
+
+    async fn collect_remote_files(
+        &self,
+        remote_dir: &Path,
+        local_dir: &Path,
+        options: &DirectoryTransferOptions,
+        depth: usize,
+    ) -> ConnectionResult<Vec<(PathBuf, PathBuf)>> {
+        if options.max_depth.map_or(false, |max| depth > max) {
+            return Ok(Vec::new());
+        }
+        let handle_guard = self.handle.read().await;
+        let h = handle_guard
+            .as_ref()
+            .ok_or_else(|| ConnectionError::ConnectionClosed)?;
+        let sftp = Self::open_sftp(h).await?;
+        drop(handle_guard);
+        let read_dir = sftp
+            .read_dir(remote_dir.to_string_lossy().to_string())
+            .await
+            .map_err(|e| {
+                ConnectionError::TransferFailed(format!("Failed to read remote directory: {}", e))
+            })?;
+        let mut files = Vec::new();
+        for entry in read_dir {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            if options
+                .exclude_patterns
+                .iter()
+                .any(|p| glob::Pattern::new(p).map_or(false, |pat| pat.matches(&name)))
+            {
+                continue;
+            }
+            if !options.include_patterns.is_empty()
+                && !options
+                    .include_patterns
+                    .iter()
+                    .any(|p| glob::Pattern::new(p).map_or(false, |pat| pat.matches(&name)))
+            {
+                continue;
+            }
+            let remote_path = remote_dir.join(&name);
+            let local_path = local_dir.join(&name);
+            let meta = entry.metadata();
+            if meta.is_dir() {
+                files.extend(
+                    Box::pin(self.collect_remote_files(
+                        &remote_path,
+                        &local_path,
+                        options,
+                        depth + 1,
+                    ))
+                    .await?,
+                );
+            } else if !meta.is_symlink() || options.follow_symlinks {
+                files.push((remote_path, local_path));
+            }
+        }
+        Ok(files)
+    }
+
+    /// Upload multiple files with batch progress reporting
+    pub async fn upload_batch_with_progress(
+        &self,
+        files: &[(PathBuf, PathBuf)],
+        options: Option<TransferOptions>,
+        progress: Option<BatchProgressCallback>,
+    ) -> ConnectionResult<BatchTransferResult> {
+        if files.is_empty() {
+            return Ok(BatchTransferResult {
+                successful: 0,
+                failed: 0,
+                results: Vec::new(),
+            });
+        }
+        let options = Arc::new(options.unwrap_or_default());
+        let total_files = files.len();
+        let total_bytes: u64 = files
+            .iter()
+            .filter_map(|(local, _)| std::fs::metadata(local).ok())
+            .map(|m| m.len())
+            .sum();
+        let batch_progress = Arc::new(tokio::sync::Mutex::new(BatchTransferProgress::new(
+            total_files,
+            total_bytes,
+        )));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_TRANSFERS));
+        debug!(file_count = %total_files, total_bytes = %total_bytes, "Starting batch upload with progress");
+        let mut tasks: Vec<tokio::task::JoinHandle<(usize, SingleTransferResult)>> =
+            Vec::with_capacity(files.len());
+        for (idx, (local, remote)) in files.iter().enumerate() {
+            let (sem, local, remote, opts, bp, prog, handle, conn) = (
+                semaphore.clone(),
+                local.clone(),
+                remote.clone(),
+                options.clone(),
+                batch_progress.clone(),
+                progress.clone(),
+                self.handle.clone(),
+                self.connected.clone(),
+            );
+            tasks.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await.ok();
+                if !conn.load(Ordering::SeqCst) {
+                    return (
+                        idx,
+                        SingleTransferResult {
+                            local_path: local,
+                            remote_path: remote,
+                            success: false,
+                            error: Some(ConnectionError::ConnectionClosed),
+                            bytes_transferred: 0,
+                        },
+                    );
+                }
+                let size = std::fs::metadata(&local).map(|m| m.len()).unwrap_or(0);
+                {
+                    let mut b = bp.lock().await;
+                    b.current_file = Some(TransferProgress::upload(&local, size));
+                    if let Some(ref c) = prog {
+                        c(&b);
+                    }
+                }
+                let result = Self::upload_single_internal(&handle, &local, &remote, &opts).await;
+                let (success, error, bytes) = match result {
+                    Ok(b) => (true, None, b),
+                    Err(e) => (false, Some(e), 0),
+                };
+                {
+                    let mut b = bp.lock().await;
+                    b.completed_files += 1;
+                    if success {
+                        b.successful_files += 1;
+                        b.transferred_bytes += bytes;
+                    } else {
+                        b.failed_files += 1;
+                    }
+                    b.current_file = None;
+                    if let Some(ref c) = prog {
+                        c(&b);
+                    }
+                }
+                (
+                    idx,
+                    SingleTransferResult {
+                        local_path: local,
+                        remote_path: remote,
+                        success,
+                        error,
+                        bytes_transferred: bytes,
+                    },
+                )
+            }));
+        }
+        let results_vec = futures::future::join_all(tasks).await;
+        let mut results: Vec<SingleTransferResult> = (0..files.len())
+            .map(|_| SingleTransferResult {
+                local_path: PathBuf::new(),
+                remote_path: PathBuf::new(),
+                success: false,
+                error: Some(ConnectionError::ExecutionFailed("Task error".to_string())),
+                bytes_transferred: 0,
+            })
+            .collect();
+        let (mut successful, mut failed) = (0, 0);
+        for r in results_vec {
+            if let Ok((idx, res)) = r {
+                if res.success {
+                    successful += 1;
+                } else {
+                    failed += 1;
+                }
+                results[idx] = res;
+            } else {
+                failed += 1;
+            }
+        }
+        Ok(BatchTransferResult {
+            successful,
+            failed,
+            results,
+        })
+    }
+
+    async fn upload_single_internal(
+        handle: &Arc<RwLock<Option<Handle<ClientHandler>>>>,
+        local: &Path,
+        remote: &Path,
+        opts: &TransferOptions,
+    ) -> ConnectionResult<u64> {
+        let content = tokio::fs::read(local).await.map_err(|e| {
+            ConnectionError::TransferFailed(format!("Failed to read {}: {}", local.display(), e))
+        })?;
+        let size = content.len() as u64;
+        let guard = handle.read().await;
+        let h = guard
+            .as_ref()
+            .ok_or_else(|| ConnectionError::ConnectionClosed)?;
+        let sftp = Self::open_sftp(h).await?;
+        drop(guard);
+        if opts.create_dirs {
+            if let Some(p) = remote.parent() {
+                Self::create_remote_dirs_sftp(&sftp, p).await?;
+            }
+        }
+        let path_str = remote.to_string_lossy().to_string();
+        let mut file = sftp.create(&path_str).await.map_err(|e| {
+            ConnectionError::TransferFailed(format!("Failed to create {}: {}", remote.display(), e))
+        })?;
+        file.write_all(&content)
+            .await
+            .map_err(|e| ConnectionError::TransferFailed(format!("Failed to write: {}", e)))?;
+        if let Some(mode) = opts.mode {
+            let mut attrs = russh_sftp::protocol::FileAttributes::default();
+            attrs.permissions = Some(mode);
+            let _ = sftp.set_metadata(&path_str, attrs).await;
+        }
+        Ok(size)
+    }
+
+    /// Download multiple files with batch progress reporting
+    pub async fn download_batch_with_progress(
+        &self,
+        files: &[(PathBuf, PathBuf)],
+        progress: Option<BatchProgressCallback>,
+    ) -> ConnectionResult<BatchTransferResult> {
+        if files.is_empty() {
+            return Ok(BatchTransferResult {
+                successful: 0,
+                failed: 0,
+                results: Vec::new(),
+            });
+        }
+        let total_files = files.len();
+        let batch_progress = Arc::new(tokio::sync::Mutex::new(BatchTransferProgress::new(
+            total_files,
+            0,
+        )));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_TRANSFERS));
+        debug!(file_count = %total_files, "Starting batch download with progress");
+        let mut tasks: Vec<tokio::task::JoinHandle<(usize, SingleTransferResult)>> =
+            Vec::with_capacity(files.len());
+        for (idx, (remote, local)) in files.iter().enumerate() {
+            let (sem, remote, local, bp, prog, handle, conn) = (
+                semaphore.clone(),
+                remote.clone(),
+                local.clone(),
+                batch_progress.clone(),
+                progress.clone(),
+                self.handle.clone(),
+                self.connected.clone(),
+            );
+            tasks.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await.ok();
+                if !conn.load(Ordering::SeqCst) {
+                    return (
+                        idx,
+                        SingleTransferResult {
+                            local_path: local,
+                            remote_path: remote,
+                            success: false,
+                            error: Some(ConnectionError::ConnectionClosed),
+                            bytes_transferred: 0,
+                        },
+                    );
+                }
+                {
+                    let mut b = bp.lock().await;
+                    b.current_file = Some(TransferProgress::download(&remote, 0));
+                    if let Some(ref c) = prog {
+                        c(&b);
+                    }
+                }
+                let result = Self::download_single_internal(&handle, &remote, &local).await;
+                let (success, error, bytes) = match result {
+                    Ok(b) => (true, None, b),
+                    Err(e) => (false, Some(e), 0),
+                };
+                {
+                    let mut b = bp.lock().await;
+                    b.completed_files += 1;
+                    if success {
+                        b.successful_files += 1;
+                        b.transferred_bytes += bytes;
+                    } else {
+                        b.failed_files += 1;
+                    }
+                    b.current_file = None;
+                    if let Some(ref c) = prog {
+                        c(&b);
+                    }
+                }
+                (
+                    idx,
+                    SingleTransferResult {
+                        local_path: local,
+                        remote_path: remote,
+                        success,
+                        error,
+                        bytes_transferred: bytes,
+                    },
+                )
+            }));
+        }
+        let results_vec = futures::future::join_all(tasks).await;
+        let mut results: Vec<SingleTransferResult> = (0..files.len())
+            .map(|_| SingleTransferResult {
+                local_path: PathBuf::new(),
+                remote_path: PathBuf::new(),
+                success: false,
+                error: Some(ConnectionError::ExecutionFailed("Task error".to_string())),
+                bytes_transferred: 0,
+            })
+            .collect();
+        let (mut successful, mut failed) = (0, 0);
+        for r in results_vec {
+            if let Ok((idx, res)) = r {
+                if res.success {
+                    successful += 1;
+                } else {
+                    failed += 1;
+                }
+                results[idx] = res;
+            } else {
+                failed += 1;
+            }
+        }
+        Ok(BatchTransferResult {
+            successful,
+            failed,
+            results,
+        })
+    }
+
+    async fn download_single_internal(
+        handle: &Arc<RwLock<Option<Handle<ClientHandler>>>>,
+        remote: &Path,
+        local: &Path,
+    ) -> ConnectionResult<u64> {
+        let guard = handle.read().await;
+        let h = guard
+            .as_ref()
+            .ok_or_else(|| ConnectionError::ConnectionClosed)?;
+        let sftp = Self::open_sftp(h).await?;
+        drop(guard);
+        let path_str = remote.to_string_lossy().to_string();
+        let mut file = sftp.open(&path_str).await.map_err(|e| {
+            ConnectionError::TransferFailed(format!("Failed to open {}: {}", remote.display(), e))
+        })?;
+        let mut content = Vec::new();
+        file.read_to_end(&mut content)
+            .await
+            .map_err(|e| ConnectionError::TransferFailed(format!("Failed to read: {}", e)))?;
+        let size = content.len() as u64;
+        if let Some(p) = local.parent() {
+            tokio::fs::create_dir_all(p).await.map_err(|e| {
+                ConnectionError::TransferFailed(format!("Failed to create dir: {}", e))
+            })?;
+        }
+        tokio::fs::write(local, &content).await.map_err(|e| {
+            ConnectionError::TransferFailed(format!("Failed to write {}: {}", local.display(), e))
+        })?;
+        Ok(size)
+    }
+
+    /// Upload a file with progress callback
+    pub async fn upload_with_progress(
+        &self,
+        local: &Path,
+        remote: &Path,
+        options: Option<TransferOptions>,
+        progress: ProgressCallback,
+    ) -> ConnectionResult<()> {
+        let opts = options.unwrap_or_default();
+        let size = tokio::fs::metadata(local)
+            .await
+            .map_err(|e| ConnectionError::TransferFailed(format!("Failed to get metadata: {}", e)))?
+            .len();
+        let mut prog = TransferProgress::upload(local, size);
+        progress(&prog);
+        if size < STREAM_THRESHOLD {
+            self.upload(local, remote, Some(opts)).await?;
+            prog.phase = TransferPhase::Completed;
+            prog.transferred_bytes = size;
+            progress(&prog);
+            return Ok(());
+        }
+        let guard = self.handle.read().await;
+        let h = guard
+            .as_ref()
+            .ok_or_else(|| ConnectionError::ConnectionClosed)?;
+        let sftp = Self::open_sftp(h).await?;
+        drop(guard);
+        if opts.create_dirs {
+            if let Some(p) = remote.parent() {
+                Self::create_remote_dirs_sftp(&sftp, p).await?;
+            }
+        }
+        let mut local_file = tokio::fs::File::open(local)
+            .await
+            .map_err(|e| ConnectionError::TransferFailed(format!("Failed to open: {}", e)))?;
+        let path_str = remote.to_string_lossy().to_string();
+        let mut remote_file = sftp
+            .create(&path_str)
+            .await
+            .map_err(|e| ConnectionError::TransferFailed(format!("Failed to create: {}", e)))?;
+        prog.phase = TransferPhase::Transferring;
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        let mut written = 0u64;
+        loop {
+            let n = local_file
+                .read(&mut buf)
+                .await
+                .map_err(|e| ConnectionError::TransferFailed(format!("Read error: {}", e)))?;
+            if n == 0 {
+                break;
+            }
+            remote_file
+                .write_all(&buf[..n])
+                .await
+                .map_err(|e| ConnectionError::TransferFailed(format!("Write error: {}", e)))?;
+            written += n as u64;
+            prog.update(written);
+            progress(&prog);
+        }
+        drop(remote_file);
+        prog.phase = TransferPhase::Finalizing;
+        progress(&prog);
+        if let Some(mode) = opts.mode {
+            let mut attrs = russh_sftp::protocol::FileAttributes::default();
+            attrs.permissions = Some(mode);
+            let _ = sftp.set_metadata(&path_str, attrs).await;
+        }
+        if opts.owner.is_some() || opts.group.is_some() {
+            let og = match (&opts.owner, &opts.group) {
+                (Some(o), Some(g)) => format!("{}:{}", o, g),
+                (Some(o), None) => o.clone(),
+                (None, Some(g)) => format!(":{}", g),
+                _ => String::new(),
+            };
+            if !og.is_empty() {
+                let _ = self
+                    .execute(
+                        &format!(
+                            "chown {} {}",
+                            og,
+                            escape_shell_arg(&remote.to_string_lossy())
+                        ),
+                        None,
+                    )
+                    .await;
+            }
+        }
+        prog.phase = TransferPhase::Completed;
+        progress(&prog);
+        Ok(())
+    }
+
+    /// Download a file with progress callback
+    pub async fn download_with_progress(
+        &self,
+        remote: &Path,
+        local: &Path,
+        progress: ProgressCallback,
+    ) -> ConnectionResult<()> {
+        let guard = self.handle.read().await;
+        let h = guard
+            .as_ref()
+            .ok_or_else(|| ConnectionError::ConnectionClosed)?;
+        let sftp = Self::open_sftp(h).await?;
+        drop(guard);
+        let path_str = remote.to_string_lossy().to_string();
+        let attrs = sftp.metadata(&path_str).await.map_err(|e| {
+            ConnectionError::TransferFailed(format!("Failed to get metadata: {}", e))
+        })?;
+        let size = attrs.size.unwrap_or(0);
+        let mut prog = TransferProgress::download(remote, size);
+        progress(&prog);
+        let mut remote_file = sftp
+            .open(&path_str)
+            .await
+            .map_err(|e| ConnectionError::TransferFailed(format!("Failed to open: {}", e)))?;
+        if let Some(p) = local.parent() {
+            tokio::fs::create_dir_all(p).await.map_err(|e| {
+                ConnectionError::TransferFailed(format!("Failed to create dir: {}", e))
+            })?;
+        }
+        let mut local_file = tokio::fs::File::create(local)
+            .await
+            .map_err(|e| ConnectionError::TransferFailed(format!("Failed to create: {}", e)))?;
+        prog.phase = TransferPhase::Transferring;
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        let mut read_total = 0u64;
+        loop {
+            let n = remote_file
+                .read(&mut buf)
+                .await
+                .map_err(|e| ConnectionError::TransferFailed(format!("Read error: {}", e)))?;
+            if n == 0 {
+                break;
+            }
+            local_file
+                .write_all(&buf[..n])
+                .await
+                .map_err(|e| ConnectionError::TransferFailed(format!("Write error: {}", e)))?;
+            read_total += n as u64;
+            prog.update(read_total);
+            progress(&prog);
+        }
+        prog.phase = TransferPhase::Completed;
+        progress(&prog);
+        Ok(())
     }
 }
 

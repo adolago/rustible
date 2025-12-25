@@ -1,4 +1,4 @@
-//! Chaos Engineering Tests for Rustible
+//! Chaos Engineering Tests for Rustible (ssh2-backend)
 //!
 //! These tests validate Rustible's resilience under adverse conditions:
 //! - Random connection failures
@@ -10,11 +10,13 @@
 //! WARNING: Some of these tests may require elevated privileges or
 //! special container configurations (e.g., tc for network simulation).
 //!
-//! To run these tests:
+//! NOTE: This test file requires the ssh2-backend feature. Run with:
 //! ```bash
 //! export RUSTIBLE_TEST_CHAOS_ENABLED=1
-//! cargo test --test chaos_tests -- --test-threads=1
+//! cargo test --test chaos_tests --features ssh2-backend -- --test-threads=1
 //! ```
+
+#![cfg(feature = "ssh2-backend")]
 
 use std::collections::HashMap;
 use std::env;

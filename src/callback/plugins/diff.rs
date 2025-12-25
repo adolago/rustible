@@ -801,7 +801,10 @@ mod tests {
 
         // Both should share the same underlying state
         assert!(Arc::ptr_eq(&callback1.stats, &callback2.stats));
-        assert!(Arc::ptr_eq(&callback1.current_task, &callback2.current_task));
+        assert!(Arc::ptr_eq(
+            &callback1.current_task,
+            &callback2.current_task
+        ));
     }
 
     #[test]

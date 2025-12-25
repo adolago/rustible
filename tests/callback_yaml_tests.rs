@@ -324,8 +324,7 @@ mod yaml_validity_tests {
     #[tokio::test]
     async fn test_playbook_start_produces_valid_yaml() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         callback.on_playbook_start("test_playbook.yml").await;
 
@@ -337,14 +336,16 @@ mod yaml_validity_tests {
 
         // Validate YAML syntax
         let docs = validate_yaml_documents(&output).expect("Should produce valid YAML");
-        assert!(!docs.is_empty(), "Should produce at least one YAML document");
+        assert!(
+            !docs.is_empty(),
+            "Should produce at least one YAML document"
+        );
     }
 
     #[tokio::test]
     async fn test_task_complete_produces_valid_yaml() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "webserver1".to_string(),
@@ -364,8 +365,7 @@ mod yaml_validity_tests {
     #[tokio::test]
     async fn test_full_playbook_execution_produces_valid_yaml() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
         let hosts = vec!["host1".to_string(), "host2".to_string()];
 
         // Full execution sequence
@@ -402,8 +402,7 @@ mod yaml_validity_tests {
     #[tokio::test]
     async fn test_failed_task_produces_valid_yaml() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "failed_host".to_string(),
@@ -416,7 +415,8 @@ mod yaml_validity_tests {
         callback.on_task_complete(&result).await;
 
         let output = writer.get_output();
-        let docs = validate_yaml_documents(&output).expect("Error messages should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Error messages should produce valid YAML");
         assert!(!docs.is_empty());
 
         // Verify the error message is preserved
@@ -426,8 +426,7 @@ mod yaml_validity_tests {
     #[tokio::test]
     async fn test_empty_play_produces_valid_yaml() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
         let empty_hosts: Vec<String> = vec![];
 
         callback.on_play_start("Empty play", &empty_hosts).await;
@@ -453,7 +452,11 @@ mod yaml_indentation_tests {
         config.indent_size = 2;
         let callback = YamlCallback::with_writer(writer.clone(), config);
 
-        let hosts = vec!["host1".to_string(), "host2".to_string(), "host3".to_string()];
+        let hosts = vec![
+            "host1".to_string(),
+            "host2".to_string(),
+            "host3".to_string(),
+        ];
         callback.on_play_start("Test play", &hosts).await;
 
         let output = writer.get_output();
@@ -468,8 +471,7 @@ mod yaml_indentation_tests {
     #[tokio::test]
     async fn test_nested_data_properly_indented() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "test_host".to_string(),
@@ -503,8 +505,7 @@ mod yaml_indentation_tests {
     #[tokio::test]
     async fn test_list_items_properly_indented() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let hosts = vec![
             "web1.example.com".to_string(),
@@ -512,7 +513,9 @@ mod yaml_indentation_tests {
             "db1.example.com".to_string(),
         ];
 
-        callback.on_play_start("Deploy to multiple hosts", &hosts).await;
+        callback
+            .on_play_start("Deploy to multiple hosts", &hosts)
+            .await;
 
         let output = writer.get_output();
 
@@ -553,8 +556,7 @@ mod yaml_multiline_tests {
     #[tokio::test]
     async fn test_long_message_preserved() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let long_message = "This is a very long message that contains a lot of text. \
             It should be properly handled by the YAML callback plugin and preserved \
@@ -585,8 +587,7 @@ mod yaml_multiline_tests {
     #[tokio::test]
     async fn test_multiline_string_with_newlines() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let multiline_message = "Line 1\nLine 2\nLine 3\nLine 4";
 
@@ -601,15 +602,15 @@ mod yaml_multiline_tests {
         callback.on_task_complete(&result).await;
 
         let output = writer.get_output();
-        let docs = validate_yaml_documents(&output).expect("Multiline strings should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Multiline strings should produce valid YAML");
         assert!(!docs.is_empty());
     }
 
     #[tokio::test]
     async fn test_script_output_with_special_characters() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let script_output = r#"#!/bin/bash
 echo "Hello, World!"
@@ -630,15 +631,15 @@ exit 0
         callback.on_task_complete(&result).await;
 
         let output = writer.get_output();
-        let docs = validate_yaml_documents(&output).expect("Script output should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Script output should produce valid YAML");
         assert!(!docs.is_empty());
     }
 
     #[tokio::test]
     async fn test_log_output_with_timestamps() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let log_output = "[2024-01-15 10:30:45] INFO: Application started\n\
             [2024-01-15 10:30:46] DEBUG: Loading configuration from /etc/app/config.yml\n\
@@ -663,8 +664,7 @@ exit 0
     #[tokio::test]
     async fn test_empty_string_message() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "test_host".to_string(),
@@ -677,7 +677,8 @@ exit 0
         callback.on_task_complete(&result).await;
 
         let output = writer.get_output();
-        let docs = validate_yaml_documents(&output).expect("Empty message should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Empty message should produce valid YAML");
         assert!(!docs.is_empty());
     }
 }
@@ -692,8 +693,7 @@ mod yaml_escaping_tests {
     #[tokio::test]
     async fn test_colon_in_value_escaped() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "test:host:with:colons".to_string(),
@@ -718,8 +718,7 @@ mod yaml_escaping_tests {
     #[tokio::test]
     async fn test_quotes_in_value_escaped() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "test_host".to_string(),
@@ -739,8 +738,7 @@ mod yaml_escaping_tests {
     #[tokio::test]
     async fn test_backslash_escaped() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "windows_host".to_string(),
@@ -753,15 +751,15 @@ mod yaml_escaping_tests {
         callback.on_task_complete(&result).await;
 
         let output = writer.get_output();
-        let docs = validate_yaml_documents(&output).expect("Backslashes should be properly escaped");
+        let docs =
+            validate_yaml_documents(&output).expect("Backslashes should be properly escaped");
         assert!(!docs.is_empty());
     }
 
     #[tokio::test]
     async fn test_hash_in_value_not_treated_as_comment() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "test_host".to_string(),
@@ -781,8 +779,7 @@ mod yaml_escaping_tests {
     #[tokio::test]
     async fn test_yaml_special_indicators_escaped() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         // Test various YAML special characters: &, *, !, |, >, %, @, `
         let special_chars_message = "Anchor: &name, Alias: *name, Tag: !custom, \
@@ -807,8 +804,7 @@ mod yaml_escaping_tests {
     #[tokio::test]
     async fn test_reserved_words_escaped() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         // Test YAML reserved words: true, false, null, ~
         for (task_name, message) in [
@@ -834,17 +830,22 @@ mod yaml_escaping_tests {
             callback.on_task_complete(&result).await;
 
             let output = writer.get_output();
-            let docs = validate_yaml_documents(&output)
-                .expect(&format!("Reserved word '{}' should be properly handled", message));
-            assert!(!docs.is_empty(), "Output for '{}' should not be empty", message);
+            let docs = validate_yaml_documents(&output).expect(&format!(
+                "Reserved word '{}' should be properly handled",
+                message
+            ));
+            assert!(
+                !docs.is_empty(),
+                "Output for '{}' should not be empty",
+                message
+            );
         }
     }
 
     #[tokio::test]
     async fn test_numeric_strings_preserved() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         // Test numeric strings that should remain strings
         let numeric_messages = ["123", "45.67", "0x1A", "1e10", "1_000_000", "007"];
@@ -863,8 +864,10 @@ mod yaml_escaping_tests {
             callback.on_task_complete(&result).await;
 
             let output = writer.get_output();
-            let docs = validate_yaml_documents(&output)
-                .expect(&format!("Numeric string '{}' should produce valid YAML", message));
+            let docs = validate_yaml_documents(&output).expect(&format!(
+                "Numeric string '{}' should produce valid YAML",
+                message
+            ));
             assert!(!docs.is_empty());
         }
     }
@@ -872,8 +875,7 @@ mod yaml_escaping_tests {
     #[tokio::test]
     async fn test_leading_trailing_spaces_preserved() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "test_host".to_string(),
@@ -894,8 +896,7 @@ mod yaml_escaping_tests {
     #[tokio::test]
     async fn test_unicode_characters_handled() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let unicode_message = "Hello, World! Japanese: , Chinese: , Korean: , Emoji: , Russian: ";
 
@@ -918,8 +919,7 @@ mod yaml_escaping_tests {
     #[tokio::test]
     async fn test_control_characters_escaped() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let control_char_message = "Tab:\there\r\nNewline and carriage return\x00Null byte";
 
@@ -951,8 +951,7 @@ mod yaml_readability_tests {
     #[tokio::test]
     async fn test_output_has_clear_event_type() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         callback.on_playbook_start("test.yml").await;
 
@@ -972,8 +971,7 @@ mod yaml_readability_tests {
     #[tokio::test]
     async fn test_host_and_task_clearly_identified() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "production-web-01".to_string(),
@@ -1001,8 +999,7 @@ mod yaml_readability_tests {
     #[tokio::test]
     async fn test_success_failure_status_clear() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         // Success case
         let success_result = ExecutionResult {
@@ -1042,8 +1039,7 @@ mod yaml_readability_tests {
     #[tokio::test]
     async fn test_duration_human_readable() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "host1".to_string(),
@@ -1086,8 +1082,7 @@ mod yaml_readability_tests {
     #[tokio::test]
     async fn test_output_not_excessively_verbose() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "host1".to_string(),
@@ -1112,8 +1107,7 @@ mod yaml_readability_tests {
     #[tokio::test]
     async fn test_changed_status_clearly_indicated() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "host1".to_string(),
@@ -1137,8 +1131,7 @@ mod yaml_readability_tests {
     #[tokio::test]
     async fn test_skipped_status_clearly_indicated() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "host1".to_string(),
@@ -1162,8 +1155,7 @@ mod yaml_readability_tests {
     #[tokio::test]
     async fn test_facts_count_readable() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let mut facts = Facts::new();
         facts.set("os", json!("linux"));
@@ -1192,8 +1184,7 @@ mod yaml_integration_tests {
     #[tokio::test]
     async fn test_roundtrip_parsing() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let original_message = "Complex message with: colons, \"quotes\", and 'apostrophes'";
         let result = ExecutionResult {
@@ -1223,8 +1214,7 @@ mod yaml_integration_tests {
     #[tokio::test]
     async fn test_multiple_events_in_sequence() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
         let hosts = vec!["host1".to_string()];
 
         // Generate a sequence of events
@@ -1232,7 +1222,9 @@ mod yaml_integration_tests {
         callback.on_play_start("Test Play", &hosts).await;
 
         for i in 1..=5 {
-            callback.on_task_start(&format!("Task {}", i), "host1").await;
+            callback
+                .on_task_start(&format!("Task {}", i), "host1")
+                .await;
             let result = ExecutionResult {
                 host: "host1".to_string(),
                 task_name: format!("Task {}", i),
@@ -1270,7 +1262,11 @@ mod yaml_integration_tests {
             writer.clone(),
             YamlCallbackConfig::default(),
         ));
-        let hosts = vec!["host1".to_string(), "host2".to_string(), "host3".to_string()];
+        let hosts = vec![
+            "host1".to_string(),
+            "host2".to_string(),
+            "host3".to_string(),
+        ];
 
         callback.on_playbook_start("concurrent.yml").await;
         callback.on_play_start("Concurrent Tasks", &hosts).await;
@@ -1303,16 +1299,15 @@ mod yaml_integration_tests {
         let output = writer.get_output();
 
         // All concurrent output should still be valid YAML
-        let docs = validate_yaml_documents(&output)
-            .expect("Concurrent output should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Concurrent output should produce valid YAML");
         assert!(!docs.is_empty());
     }
 
     #[tokio::test]
     async fn test_very_large_output() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         // Generate a large message (10KB+)
         let large_message = "x".repeat(10000);
@@ -1330,16 +1325,15 @@ mod yaml_integration_tests {
         let output = writer.get_output();
 
         // Should still be valid YAML
-        let docs = validate_yaml_documents(&output)
-            .expect("Large output should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Large output should produce valid YAML");
         assert!(!docs.is_empty());
     }
 
     #[tokio::test]
     async fn test_deeply_nested_structure() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         // Create deeply nested data
         let nested_data = json!({
@@ -1385,8 +1379,7 @@ mod yaml_edge_case_tests {
     #[tokio::test]
     async fn test_empty_playbook_name() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         callback.on_playbook_start("").await;
 
@@ -1399,23 +1392,21 @@ mod yaml_edge_case_tests {
     #[tokio::test]
     async fn test_empty_host_list() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let empty_hosts: Vec<String> = vec![];
         callback.on_play_start("No hosts play", &empty_hosts).await;
 
         let output = writer.get_output();
-        let docs = validate_yaml_documents(&output)
-            .expect("Empty host list should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Empty host list should produce valid YAML");
         assert!(!docs.is_empty());
     }
 
     #[tokio::test]
     async fn test_very_long_host_list() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let hosts: Vec<String> = (1..=100)
             .map(|i| format!("host{}.example.com", i))
@@ -1424,16 +1415,15 @@ mod yaml_edge_case_tests {
         callback.on_play_start("Large host list", &hosts).await;
 
         let output = writer.get_output();
-        let docs = validate_yaml_documents(&output)
-            .expect("Large host list should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Large host list should produce valid YAML");
         assert!(!docs.is_empty());
     }
 
     #[tokio::test]
     async fn test_binary_like_content() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         // Simulate binary-like content (base64 encoded)
         let binary_content = "SGVsbG8gV29ybGQhIFRoaXMgaXMgYmFzZTY0IGVuY29kZWQgY29udGVudC4=";
@@ -1457,8 +1447,7 @@ mod yaml_edge_case_tests {
     #[tokio::test]
     async fn test_yaml_injection_attempt() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         // Attempt to inject YAML structure
         let injection_attempt = "value\ninjected_key: injected_value\nanother: data";
@@ -1487,8 +1476,7 @@ mod yaml_edge_case_tests {
     #[tokio::test]
     async fn test_zero_duration() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "test_host".to_string(),
@@ -1501,16 +1489,15 @@ mod yaml_edge_case_tests {
         callback.on_task_complete(&result).await;
 
         let output = writer.get_output();
-        let docs = validate_yaml_documents(&output)
-            .expect("Zero duration should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Zero duration should produce valid YAML");
         assert!(!docs.is_empty());
     }
 
     #[tokio::test]
     async fn test_maximum_duration() {
         let writer = CaptureWriter::new();
-        let callback =
-            YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
+        let callback = YamlCallback::with_writer(writer.clone(), YamlCallbackConfig::default());
 
         let result = ExecutionResult {
             host: "test_host".to_string(),
@@ -1523,8 +1510,8 @@ mod yaml_edge_case_tests {
         callback.on_task_complete(&result).await;
 
         let output = writer.get_output();
-        let docs = validate_yaml_documents(&output)
-            .expect("Maximum duration should produce valid YAML");
+        let docs =
+            validate_yaml_documents(&output).expect("Maximum duration should produce valid YAML");
         assert!(!docs.is_empty());
     }
 }

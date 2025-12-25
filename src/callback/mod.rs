@@ -107,46 +107,63 @@ pub mod plugins;
 // ============================================================================
 
 // Core output plugins
+pub use plugins::NullCallback;
 pub use plugins::{
     DefaultCallback, DefaultCallbackBuilder, DefaultCallbackConfig, HostStats, Verbosity,
 };
 pub use plugins::{MinimalCallback, UnreachableCallback};
-pub use plugins::NullCallback;
-pub use plugins::{SummaryCallback, SummaryCallbackBuilder, SummaryConfig, SummaryUnreachableCallback};
+pub use plugins::{
+    SummaryCallback, SummaryCallbackBuilder, SummaryConfig, SummaryUnreachableCallback,
+};
 
 // Visual plugins
-pub use plugins::{ProgressCallback, ProgressCallbackBuilder, ProgressConfig};
-pub use plugins::{CompositeCallback, DiffCallback, DiffConfig};
 pub use plugins::{count_changes, generate_diff, has_changes};
+pub use plugins::{CompositeCallback, DiffCallback, DiffConfig};
 pub use plugins::{DenseCallback, DenseConfig};
 pub use plugins::{OnelineCallback, OnelineConfig};
-pub use plugins::{TreeCallback, TreeConfig, TreeHostStats, TreeHostSummary, TreePlaybookSummary, TreeUnreachableCallback, TaskMetadata, TaskResultData};
+pub use plugins::{ProgressCallback, ProgressCallbackBuilder, ProgressConfig};
+pub use plugins::{
+    TaskMetadata, TaskResultData, TreeCallback, TreeConfig, TreeHostStats, TreeHostSummary,
+    TreePlaybookSummary, TreeUnreachableCallback,
+};
 
 // Timing & analysis plugins
-pub use plugins::{TimerCallback, TimerCallbackBuilder, TimerConfig, TimerTaskTiming};
-pub use plugins::{ContextCallback, ContextCallbackBuilder, ContextCallbackConfig, ContextVerbosity};
-pub use plugins::{StatsCallback, StatsConfig, PlayStats, PlaybookStats, ModuleStats, ModuleClassification, DurationHistogram, MemorySnapshot};
 pub use plugins::StatsHostStats;
+pub use plugins::{
+    ContextCallback, ContextCallbackBuilder, ContextCallbackConfig, ContextVerbosity,
+};
 pub use plugins::{CounterCallback, CounterCallbackBuilder, CounterConfig};
+pub use plugins::{
+    DurationHistogram, MemorySnapshot, ModuleClassification, ModuleStats, PlayStats, PlaybookStats,
+    StatsCallback, StatsConfig,
+};
+pub use plugins::{TimerCallback, TimerCallbackBuilder, TimerConfig, TimerTaskTiming};
 
 // Filtering plugins
-pub use plugins::{FilterMode, SelectiveBuilder, SelectiveCallback, SelectiveConfig, StatusFilter};
-pub use plugins::{SkippyCallback, SkippyConfig};
 pub use plugins::{ActionableCallback, ActionableConfig, ActionableUnreachableCallback};
-pub use plugins::{FullSkipCallback, FullSkipConfig, SkippedTask, SkipPattern, HostSkipStats};
+pub use plugins::{FilterMode, SelectiveBuilder, SelectiveCallback, SelectiveConfig, StatusFilter};
+pub use plugins::{FullSkipCallback, FullSkipConfig, HostSkipStats, SkipPattern, SkippedTask};
+pub use plugins::{SkippyCallback, SkippyConfig};
 
 // Logging plugins
-pub use plugins::{JsonCallback, JsonCallbackBuilder, JsonEvent, TaskResultJson};
 pub use plugins::JsonHostStats;
-pub use plugins::{YamlCallback, YamlConfig, YamlConfigBuilder};
-pub use plugins::{LogFileCallback, LogFileConfig, LogFileConfigBuilder, LogEvent, LogEntry, HostLogStats};
-pub use plugins::{SyslogCallback, SyslogConfig, SyslogConfigBuilder, SyslogFacility, SyslogSeverity, SyslogFormat, SyslogError, SyslogResult, SyslogStats, SeverityMapping};
 pub use plugins::{DebugCallback, DebugConfig};
+pub use plugins::{
+    HostLogStats, LogEntry, LogEvent, LogFileCallback, LogFileConfig, LogFileConfigBuilder,
+};
+pub use plugins::{JsonCallback, JsonCallbackBuilder, JsonEvent, TaskResultJson};
+pub use plugins::{
+    SeverityMapping, SyslogCallback, SyslogConfig, SyslogConfigBuilder, SyslogError,
+    SyslogFacility, SyslogFormat, SyslogResult, SyslogSeverity, SyslogStats,
+};
+pub use plugins::{YamlCallback, YamlConfig, YamlConfigBuilder};
 
 // Integration plugins
+pub use plugins::{
+    ForkedCallback, ForkedCallbackBuilder, ForkedConfig, ForkedUnreachableCallback, HostState,
+};
 pub use plugins::{JUnitCallback, JUnitUnreachableCallback};
 pub use plugins::{MailCallback, MailConfig, MailConfigBuilder, MailUnreachableCallback, TlsMode};
-pub use plugins::{ForkedCallback, ForkedCallbackBuilder, ForkedConfig, ForkedUnreachableCallback, HostState};
 
 // ============================================================================
 // Type Aliases
@@ -214,92 +231,92 @@ pub mod prelude {
     pub use super::DefaultCallbackBuilder;
     pub use super::DefaultCallbackConfig;
     pub use super::HostStats;
-    pub use super::Verbosity;
     pub use super::MinimalCallback;
-    pub use super::UnreachableCallback;
+    pub use super::NullCallback;
     pub use super::SummaryCallback;
     pub use super::SummaryCallbackBuilder;
     pub use super::SummaryConfig;
-    pub use super::NullCallback;
+    pub use super::UnreachableCallback;
+    pub use super::Verbosity;
 
     // ========================================================================
     // Visual Plugins
     // ========================================================================
 
+    pub use super::CompositeCallback;
+    pub use super::DenseCallback;
+    pub use super::DenseConfig;
+    pub use super::DiffCallback;
+    pub use super::DiffConfig;
+    pub use super::OnelineCallback;
+    pub use super::OnelineConfig;
     pub use super::ProgressCallback;
     pub use super::ProgressCallbackBuilder;
     pub use super::ProgressConfig;
-    pub use super::DiffCallback;
-    pub use super::DiffConfig;
-    pub use super::CompositeCallback;
-    pub use super::{count_changes, generate_diff, has_changes};
-    pub use super::DenseCallback;
-    pub use super::DenseConfig;
-    pub use super::OnelineCallback;
-    pub use super::OnelineConfig;
     pub use super::TreeCallback;
     pub use super::TreeConfig;
+    pub use super::{count_changes, generate_diff, has_changes};
 
     // ========================================================================
     // Timing & Analysis Plugins
     // ========================================================================
 
-    pub use super::TimerCallback;
-    pub use super::TimerCallbackBuilder;
-    pub use super::TimerConfig;
-    pub use super::TimerTaskTiming;
     pub use super::ContextCallback;
     pub use super::ContextCallbackBuilder;
     pub use super::ContextCallbackConfig;
     pub use super::ContextVerbosity;
-    pub use super::StatsCallback;
-    pub use super::StatsConfig;
     pub use super::CounterCallback;
     pub use super::CounterConfig;
+    pub use super::StatsCallback;
+    pub use super::StatsConfig;
+    pub use super::TimerCallback;
+    pub use super::TimerCallbackBuilder;
+    pub use super::TimerConfig;
+    pub use super::TimerTaskTiming;
 
     // ========================================================================
     // Filtering Plugins
     // ========================================================================
 
-    pub use super::SelectiveCallback;
-    pub use super::SelectiveConfig;
-    pub use super::SelectiveBuilder;
-    pub use super::FilterMode;
-    pub use super::StatusFilter;
-    pub use super::SkippyCallback;
-    pub use super::SkippyConfig;
     pub use super::ActionableCallback;
     pub use super::ActionableConfig;
+    pub use super::FilterMode;
     pub use super::FullSkipCallback;
     pub use super::FullSkipConfig;
+    pub use super::SelectiveBuilder;
+    pub use super::SelectiveCallback;
+    pub use super::SelectiveConfig;
     pub use super::SkippedTask;
+    pub use super::SkippyCallback;
+    pub use super::SkippyConfig;
+    pub use super::StatusFilter;
 
     // ========================================================================
     // Logging Plugins
     // ========================================================================
 
+    pub use super::DebugCallback;
+    pub use super::DebugConfig;
     pub use super::JsonCallback;
     pub use super::JsonCallbackBuilder;
-    pub use super::YamlCallback;
-    pub use super::YamlConfig;
     pub use super::LogFileCallback;
     pub use super::LogFileConfig;
     pub use super::SyslogCallback;
     pub use super::SyslogConfig;
     pub use super::SyslogFacility;
     pub use super::SyslogSeverity;
-    pub use super::DebugCallback;
-    pub use super::DebugConfig;
+    pub use super::YamlCallback;
+    pub use super::YamlConfig;
 
     // ========================================================================
     // Integration Plugins
     // ========================================================================
 
+    pub use super::ForkedCallback;
+    pub use super::ForkedConfig;
     pub use super::JUnitCallback;
     pub use super::MailCallback;
     pub use super::MailConfig;
-    pub use super::ForkedCallback;
-    pub use super::ForkedConfig;
 
     // ========================================================================
     // Type Aliases

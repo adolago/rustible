@@ -95,7 +95,8 @@ fn test_directory_create_nested() {
     let path_str = path.to_str().unwrap();
 
     let module = FileModule;
-    let params = params_with_state(path_str, "directory");
+    let mut params = params_with_state(path_str, "directory");
+    params.insert("recurse".to_string(), serde_json::json!(true));
     let context = ModuleContext::default();
 
     let result = module.execute(&params, &context).unwrap();
@@ -1024,7 +1025,7 @@ fn test_diff_file_creation() {
     assert!(diff.is_some(), "Should provide diff for file creation");
     let d = diff.unwrap();
     assert_eq!(d.before, "absent", "Before should be absent");
-    assert_eq!(d.after, "file", "After should be file");
+    assert_eq!(d.after, "file exists", "After should be file exists");
 }
 
 #[test]
@@ -1042,7 +1043,7 @@ fn test_diff_directory_creation() {
     assert!(diff.is_some(), "Should provide diff for directory creation");
     let d = diff.unwrap();
     assert_eq!(d.before, "absent");
-    assert_eq!(d.after, "directory");
+    assert_eq!(d.after, "directory exists");
 }
 
 #[test]

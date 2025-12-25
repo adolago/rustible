@@ -63,7 +63,8 @@ impl TimingCallback {
         }
 
         if current > 1 {
-            self.concurrent_execution_detected.store(true, Ordering::SeqCst);
+            self.concurrent_execution_detected
+                .store(true, Ordering::SeqCst);
         }
     }
 
@@ -312,20 +313,26 @@ impl TimeoutAwareCallback {
 #[async_trait]
 impl ExecutionCallback for TimeoutAwareCallback {
     async fn on_playbook_start(&self, name: &str) {
-        self.timed_operation(&format!("playbook_start:{}", name)).await;
+        self.timed_operation(&format!("playbook_start:{}", name))
+            .await;
     }
 
     async fn on_playbook_end(&self, name: &str, _success: bool) {
-        self.timed_operation(&format!("playbook_end:{}", name)).await;
+        self.timed_operation(&format!("playbook_end:{}", name))
+            .await;
     }
 
     async fn on_task_start(&self, name: &str, host: &str) {
-        self.timed_operation(&format!("task_start:{}:{}", name, host)).await;
+        self.timed_operation(&format!("task_start:{}:{}", name, host))
+            .await;
     }
 
     async fn on_task_complete(&self, result: &ExecutionResult) {
-        self.timed_operation(&format!("task_complete:{}:{}", result.task_name, result.host))
-            .await;
+        self.timed_operation(&format!(
+            "task_complete:{}:{}",
+            result.task_name, result.host
+        ))
+        .await;
     }
 }
 
@@ -662,9 +669,7 @@ async fn test_multiple_slow_callbacks_parallel() {
         .map(|(i, cb)| {
             let callback = Arc::clone(cb);
             tokio::spawn(async move {
-                callback
-                    .on_playbook_start(&format!("playbook_{}", i))
-                    .await;
+                callback.on_playbook_start(&format!("playbook_{}", i)).await;
             })
         })
         .collect();
@@ -982,8 +987,7 @@ async fn test_full_playbook_lifecycle_async() {
                 let h = host.clone();
                 tokio::spawn(async move {
                     cb.on_task_start(&format!("task_{}", i), &h).await;
-                    let result =
-                        create_execution_result(&h, &format!("task_{}", i), true);
+                    let result = create_execution_result(&h, &format!("task_{}", i), true);
                     cb.on_task_complete(&result).await;
                 })
             })
@@ -1014,8 +1018,7 @@ async fn test_mixed_speed_callbacks_integration() {
         let cb = Arc::clone(&slow);
         tokio::spawn(async move {
             for i in 0..3 {
-                cb.on_task_start(&format!("slow_task_{}", i), "host1")
-                    .await;
+                cb.on_task_start(&format!("slow_task_{}", i), "host1").await;
             }
         })
     };
@@ -1024,8 +1027,7 @@ async fn test_mixed_speed_callbacks_integration() {
         let cb = Arc::clone(&fast);
         tokio::spawn(async move {
             for i in 0..100 {
-                cb.on_task_start(&format!("fast_task_{}", i), "host1")
-                    .await;
+                cb.on_task_start(&format!("fast_task_{}", i), "host1").await;
             }
         })
     };

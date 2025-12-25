@@ -626,8 +626,7 @@ fn test_task_with_args_serialization() {
 
 #[test]
 fn test_task_with_when_condition() {
-    let task =
-        Task::new("Install on Debian", "package").when("ansible_os_family == 'Debian'");
+    let task = Task::new("Install on Debian", "package").when("ansible_os_family == 'Debian'");
 
     let json = serde_json::to_string(&task).unwrap();
     let deserialized: Task = serde_json::from_str(&json).unwrap();
@@ -780,15 +779,14 @@ fn test_handler_with_args() {
     let json = serde_json::to_string(&handler).unwrap();
     let deserialized: Handler = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(
-        deserialized.args.get("name"),
-        Some(&json!("nginx"))
-    );
+    assert_eq!(deserialized.args.get("name"), Some(&json!("nginx")));
     assert_eq!(
         deserialized.when,
         Some("not ansible_check_mode".to_string())
     );
-    assert!(deserialized.listen.contains(&"nginx config changed".to_string()));
+    assert!(deserialized
+        .listen
+        .contains(&"nginx config changed".to_string()));
 }
 
 // ============================================================================
@@ -864,7 +862,9 @@ fn test_module_result_with_warnings() {
     let deserialized: ModuleResult = serde_json::from_str(&json).unwrap();
 
     assert_eq!(deserialized.warnings.len(), 2);
-    assert!(deserialized.warnings.contains(&"Deprecated syntax used".to_string()));
+    assert!(deserialized
+        .warnings
+        .contains(&"Deprecated syntax used".to_string()));
 }
 
 // ============================================================================
@@ -1045,8 +1045,8 @@ fn test_hash_behaviour_merge() {
 
 #[test]
 fn test_unicode_in_task_name() {
-    let task = Task::new("Install Japanese locale", "locale_gen")
-        .arg("name", "\u{65e5}\u{672c}\u{8a9e}"); // Japanese characters
+    let task =
+        Task::new("Install Japanese locale", "locale_gen").arg("name", "\u{65e5}\u{672c}\u{8a9e}"); // Japanese characters
 
     let json = serde_json::to_string(&task).unwrap();
     let deserialized: Task = serde_json::from_str(&json).unwrap();
@@ -1195,7 +1195,8 @@ fn test_deeply_nested_structure() {
 
     let result = deserialized.get("nested").unwrap();
     assert_eq!(
-        result["level1"]["level2"]["level3"]["level4"]["level5"]["level6"]["level7"]["level8"]["level9"]["level10"],
+        result["level1"]["level2"]["level3"]["level4"]["level5"]["level6"]["level7"]["level8"]
+            ["level9"]["level10"],
         "deep value"
     );
 }
@@ -1314,9 +1315,7 @@ fn test_empty_collections_serialization() {
 
 #[test]
 fn test_empty_string_values() {
-    let task = Task::new("", "")
-        .arg("empty", "")
-        .when("");
+    let task = Task::new("", "").arg("empty", "").when("");
 
     let json = serde_json::to_string(&task).unwrap();
     let deserialized: Task = serde_json::from_str(&json).unwrap();
@@ -1379,7 +1378,10 @@ fn test_numeric_types() {
     assert_eq!(deserialized.get("negative"), Some(&json!(-100)));
     assert_eq!(deserialized.get("float"), Some(&json!(3.14159)));
     assert_eq!(deserialized.get("zero"), Some(&json!(0)));
-    assert_eq!(deserialized.get("large"), Some(&json!(9223372036854775807_i64)));
+    assert_eq!(
+        deserialized.get("large"),
+        Some(&json!(9223372036854775807_i64))
+    );
 }
 
 #[test]

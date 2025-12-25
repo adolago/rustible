@@ -1,0 +1,244 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      save_baseline:
+        description: 'Save results as baseline'
+        required: false
+        default: 'false'
+        type: boolean
+      baseline_name:
+        description: 'Baseline name (if saving)'
+        required: false
+        default: 'manual'
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -C target-cpu=native
+
+jobs:
+  benchmark:
+    name: Run Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+            ${{ runner.os }}-cargo-
+
+      - name: Download baseline (if exists)
+        uses: actions/cache@v4
+        id: baseline-cache
+        with:
+          path: .criterion-baseline
+          key: benchmark-baseline-${{ github.base_ref || 'main' }}
+          restore-keys: |
+            benchmark-baseline-main
+
+      - name: Restore baseline
+        if: steps.baseline-cache.outputs.cache-hit == 'true'
+        run: |
+          if [ -d ".criterion-baseline" ]; then
+            mkdir -p target/criterion
+            cp -r .criterion-baseline/* target/criterion/ || true
+            echo "Baseline restored"
+          fi
+
+      - name: Run performance benchmarks
+        run: |
+          cargo bench --bench performance_benchmark -- --verbose 2>&1 | tee benchmark_performance.log
+
+      - name: Run callback benchmarks
+        run: |
+          cargo bench --bench callback_benchmark -- --verbose 2>&1 | tee benchmark_callback.log
+
+      - name: Run sprint2 benchmarks
+        run: |
+          cargo bench --bench sprint2_feature_benchmark -- --verbose 2>&1 | tee benchmark_sprint2.log
+
+      - name: Check for regressions
+        id: regression-check
+        run: |
+          # Parse benchmark logs for regression indicators
+          REGRESSIONS=0
+
+          for log in benchmark_*.log; do
+            if grep -q "Performance has regressed" "$log"; then
+              echo "::warning::Regression detected in $log"
+              grep "Performance has regressed" "$log" || true
+              REGRESSIONS=$((REGRESSIONS + 1))
+            fi
+          done
+
+          echo "regressions=$REGRESSIONS" >> $GITHUB_OUTPUT
+
+          if [ $REGRESSIONS -gt 0 ]; then
+            echo "::warning::$REGRESSIONS performance regression(s) detected"
+          fi
+
+      - name: Generate benchmark summary
+        run: |
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Performance Benchmarks" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          grep -E "^(Benchmarking|test |time:)" benchmark_performance.log | head -50 >> $GITHUB_STEP_SUMMARY || echo "No results" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.regression-check.outputs.regressions }}" != "0" ]; then
+            echo "### Regressions Detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            for log in benchmark_*.log; do
+              if grep -q "Performance has regressed" "$log"; then
+                echo "#### $log" >> $GITHUB_STEP_SUMMARY
+                echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+                grep -A2 "Performance has regressed" "$log" >> $GITHUB_STEP_SUMMARY || true
+                echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
+          fi
+
+      - name: Save baseline (main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          mkdir -p .criterion-baseline
+          cp -r target/criterion/* .criterion-baseline/ || true
+
+      - name: Cache new baseline
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: .criterion-baseline
+          key: benchmark-baseline-main-${{ github.sha }}
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: |
+            target/criterion/
+            benchmark_*.log
+          retention-days: 30
+
+      - name: Upload HTML reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-html-reports-${{ github.sha }}
+          path: target/criterion/report/
+          retention-days: 30
+
+      - name: Comment on PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let body = '## Benchmark Results\n\n';
+
+            // Read regression check
+            const regressions = '${{ steps.regression-check.outputs.regressions }}';
+            if (regressions !== '0') {
+              body += `:warning: **${regressions} performance regression(s) detected!**\n\n`;
+            } else {
+              body += ':white_check_mark: No significant performance regressions detected.\n\n';
+            }
+
+            // Add summary of benchmarks
+            body += '### Summary\n\n';
+            body += '| Suite | Status |\n';
+            body += '|-------|--------|\n';
+
+            const logs = ['performance', 'callback', 'sprint2'];
+            for (const suite of logs) {
+              const logFile = `benchmark_${suite}.log`;
+              if (fs.existsSync(logFile)) {
+                const content = fs.readFileSync(logFile, 'utf8');
+                const hasRegression = content.includes('Performance has regressed');
+                const status = hasRegression ? ':x: Regression' : ':white_check_mark: OK';
+                body += `| ${suite} | ${status} |\n`;
+              }
+            }
+
+            body += '\n---\n';
+            body += '*Full results available in workflow artifacts.*\n';
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' && comment.body.includes('## Benchmark Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+  benchmark-comparison:
+    name: Ansible Comparison (Manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install Ansible
+        run: |
+          pip install ansible
+
+      - name: Build Rustible
+        run: |
+          cargo build --release
+
+      - name: Note about comparison benchmarks
+        run: |
+          echo "Ansible comparison benchmarks require real infrastructure."
+          echo "See benches/comparison/README.md for setup instructions."
+          echo ""
+          echo "To run locally:"
+          echo "  cd benches/comparison"
+          echo "  ./run_benchmark.sh"

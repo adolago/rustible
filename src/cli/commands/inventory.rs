@@ -39,9 +39,13 @@ pub struct ListTasksArgs {
     #[arg(long, short = 't', action = clap::ArgAction::Append)]
     pub tags: Vec<String>,
 
+    /// Skip tasks with these tags
+    #[arg(long, action = clap::ArgAction::Append)]
+    pub skip_tags: Vec<String>,
+
     /// Include task details
     #[arg(long)]
-    pub verbose: bool,
+    pub detailed: bool,
 }
 
 /// Host information
@@ -475,25 +479,34 @@ impl ListTasksArgs {
                             .and_then(|n| n.as_str())
                             .unwrap_or("Unnamed task");
 
-                        // Check tags filter
-                        if !self.tags.is_empty() {
-                            let task_tags: Vec<String> = task
-                                .get("tags")
-                                .and_then(|t| {
-                                    if let Some(s) = t.as_str() {
-                                        Some(vec![s.to_string()])
-                                    } else if let Some(seq) = t.as_sequence() {
-                                        Some(
-                                            seq.iter()
-                                                .filter_map(|v| v.as_str().map(String::from))
-                                                .collect(),
-                                        )
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or_default();
+                        // Get task tags for filtering
+                        let task_tags: Vec<String> = task
+                            .get("tags")
+                            .and_then(|t| {
+                                if let Some(s) = t.as_str() {
+                                    Some(vec![s.to_string()])
+                                } else if let Some(seq) = t.as_sequence() {
+                                    Some(
+                                        seq.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or_default();
 
+                        // Check skip_tags filter first - skip if any skip_tag matches
+                        if !self.skip_tags.is_empty() {
+                            let should_skip = self.skip_tags.iter().any(|t| task_tags.contains(t));
+                            if should_skip {
+                                continue;
+                            }
+                        }
+
+                        // Check tags filter - only include if tags match
+                        if !self.tags.is_empty() {
                             let matches = self.tags.iter().any(|t| task_tags.contains(t));
                             if !matches {
                                 continue;
@@ -505,7 +518,7 @@ impl ListTasksArgs {
                         // Detect module
                         let module = detect_module(task);
 
-                        if self.verbose {
+                        if self.detailed {
                             println!("  {:>3}. {} [{}]", task_idx + 1, task_name, module);
 
                             // Show tags

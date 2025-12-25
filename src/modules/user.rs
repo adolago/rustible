@@ -152,9 +152,12 @@ impl UserModule {
         comment: Option<&str>,
         create_home: bool,
         system: bool,
+        local: bool,
+        expires: Option<&str>,
         context: &ModuleContext,
     ) -> ModuleResult<()> {
-        let mut cmd_parts = vec!["useradd".to_string()];
+        let cmd_name = if local { "luseradd" } else { "useradd" };
+        let mut cmd_parts = vec![cmd_name.to_string()];
 
         if let Some(uid) = uid {
             cmd_parts.push("-u".to_string());
@@ -198,6 +201,11 @@ impl UserModule {
             cmd_parts.push("-r".to_string());
         }
 
+        if let Some(expires) = expires {
+            cmd_parts.push("-e".to_string());
+            cmd_parts.push(shell_escape(expires));
+        }
+
         cmd_parts.push(shell_escape(name));
 
         let command = cmd_parts.join(" ");
@@ -222,13 +230,16 @@ impl UserModule {
         shell: Option<&str>,
         comment: Option<&str>,
         move_home: bool,
+        local: bool,
+        expires: Option<&str>,
         context: &ModuleContext,
     ) -> ModuleResult<bool> {
         let current = Self::get_user_info_via_connection(connection, name, context)?
             .ok_or_else(|| ModuleError::ExecutionFailed(format!("User '{}' not found", name)))?;
 
+        let cmd_name = if local { "lusermod" } else { "usermod" };
         let mut needs_change = false;
-        let mut cmd_parts = vec!["usermod".to_string()];
+        let mut cmd_parts = vec![cmd_name.to_string()];
 
         if let Some(uid) = uid {
             if current.uid != uid {
@@ -286,6 +297,12 @@ impl UserModule {
             }
         }
 
+        if let Some(expires) = expires {
+            cmd_parts.push("-e".to_string());
+            cmd_parts.push(shell_escape(expires));
+            needs_change = true;
+        }
+
         if !needs_change {
             return Ok(false);
         }
@@ -308,9 +325,11 @@ impl UserModule {
         name: &str,
         remove_home: bool,
         force: bool,
+        local: bool,
         context: &ModuleContext,
     ) -> ModuleResult<()> {
-        let mut cmd_parts = vec!["userdel".to_string()];
+        let cmd_name = if local { "luserdel" } else { "userdel" };
+        let mut cmd_parts = vec![cmd_name.to_string()];
 
         if remove_home {
             cmd_parts.push("-r".to_string());
@@ -356,6 +375,41 @@ impl UserModule {
         } else {
             Err(ModuleError::ExecutionFailed(format!(
                 "Failed to set password: {}",
+                stderr
+            )))
+        }
+    }
+
+    /// Lock or unlock user password via connection
+    fn set_password_lock_via_connection(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        name: &str,
+        lock: bool,
+        context: &ModuleContext,
+    ) -> ModuleResult<bool> {
+        // Check current lock status by examining shadow file
+        let check_cmd = format!(
+            "getent shadow {} | cut -d: -f2 | grep -q '^!'",
+            shell_escape(name)
+        );
+        let (is_locked, _, _) = Self::execute_command(connection, &check_cmd, context)?;
+
+        if lock == is_locked {
+            // Already in desired state
+            return Ok(false);
+        }
+
+        let flag = if lock { "-L" } else { "-U" };
+        let command = format!("passwd {} {}", flag, shell_escape(name));
+
+        let (success, _, stderr) = Self::execute_command(connection, &command, context)?;
+
+        if success {
+            Ok(true)
+        } else {
+            Err(ModuleError::ExecutionFailed(format!(
+                "Failed to {} password: {}",
+                if lock { "lock" } else { "unlock" },
                 stderr
             )))
         }
@@ -484,8 +538,11 @@ impl Module for UserModule {
         let system = params.get_bool_or("system", false);
         let remove_home = params.get_bool_or("remove", false);
         let force = params.get_bool_or("force", false);
+        let local = params.get_bool_or("local", false);
         let password = params.get_string("password")?;
         let password_encrypted = params.get_bool_or("password_encrypted", true);
+        let password_lock = params.get_bool("password_lock")?;
+        let expires = params.get_string("expires")?;
         let generate_ssh_key = params.get_bool_or("generate_ssh_key", false);
         let ssh_key_type = params
             .get_string("ssh_key_type")?
@@ -510,7 +567,14 @@ impl Module for UserModule {
                     )));
                 }
 
-                Self::delete_user_via_connection(connection, &name, remove_home, force, context)?;
+                Self::delete_user_via_connection(
+                    connection,
+                    &name,
+                    remove_home,
+                    force,
+                    local,
+                    context,
+                )?;
                 Ok(ModuleOutput::changed(format!("Removed user '{}'", name)))
             }
 
@@ -537,6 +601,8 @@ impl Module for UserModule {
                         comment.as_deref(),
                         create_home,
                         system,
+                        local,
+                        expires.as_deref(),
                         context,
                     )?;
 
@@ -562,6 +628,8 @@ impl Module for UserModule {
                         shell.as_deref(),
                         comment.as_deref(),
                         move_home,
+                        local,
+                        expires.as_deref(),
                         context,
                     )?;
 
@@ -586,6 +654,24 @@ impl Module for UserModule {
                         )?;
                         messages.push("Set password".to_string());
                         changed = true;
+                    }
+                }
+
+                // Lock or unlock password if specified
+                if let Some(lock) = password_lock {
+                    if context.check_mode {
+                        let action = if lock { "lock" } else { "unlock" };
+                        messages.push(format!("Would {} password", action));
+                        changed = true;
+                    } else {
+                        let lock_changed = Self::set_password_lock_via_connection(
+                            connection, &name, lock, context,
+                        )?;
+                        if lock_changed {
+                            let action = if lock { "Locked" } else { "Unlocked" };
+                            messages.push(format!("{} password", action));
+                            changed = true;
+                        }
                     }
                 }
 

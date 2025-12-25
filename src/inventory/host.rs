@@ -219,6 +219,11 @@ impl Host {
         host
     }
 
+    /// Get the host name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// Get the actual address to connect to
     pub fn address(&self) -> &str {
         self.ansible_host.as_deref().unwrap_or(&self.name)

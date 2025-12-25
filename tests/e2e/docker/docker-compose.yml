@@ -1,0 +1,120 @@
+# Docker Compose configuration for Rustible E2E Tests
+# This creates a multi-tier application environment for comprehensive testing
+#
+# Usage:
+#   cd tests/e2e/docker
+#   docker compose up -d
+#   # Run tests
+#   docker compose down -v
+version: '3.8'
+
+networks:
+  rustible_e2e:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+services:
+  # Web Server Tier
+  webserver1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.webserver
+    container_name: rustible-e2e-web1
+    hostname: web1
+    networks:
+      rustible_e2e:
+        ipv4_address: 172.28.1.10
+    ports:
+      - "2221:22"
+      - "8081:80"
+    environment:
+      - SSH_AUTHORIZED_KEY=${SSH_PUBLIC_KEY:-}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  webserver2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.webserver
+    container_name: rustible-e2e-web2
+    hostname: web2
+    networks:
+      rustible_e2e:
+        ipv4_address: 172.28.1.11
+    ports:
+      - "2222:22"
+      - "8082:80"
+    environment:
+      - SSH_AUTHORIZED_KEY=${SSH_PUBLIC_KEY:-}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Database Tier
+  database1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.database
+    container_name: rustible-e2e-db1
+    hostname: db1
+    networks:
+      rustible_e2e:
+        ipv4_address: 172.28.2.10
+    ports:
+      - "2223:22"
+      - "5433:5432"
+    environment:
+      - SSH_AUTHORIZED_KEY=${SSH_PUBLIC_KEY:-}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Application Server Tier
+  appserver1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.appserver
+    container_name: rustible-e2e-app1
+    hostname: app1
+    networks:
+      rustible_e2e:
+        ipv4_address: 172.28.3.10
+    ports:
+      - "2224:22"
+      - "8083:8080"
+    environment:
+      - SSH_AUTHORIZED_KEY=${SSH_PUBLIC_KEY:-}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  appserver2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.appserver
+    container_name: rustible-e2e-app2
+    hostname: app2
+    networks:
+      rustible_e2e:
+        ipv4_address: 172.28.3.11
+    ports:
+      - "2225:22"
+      - "8084:8080"
+    environment:
+      - SSH_AUTHORIZED_KEY=${SSH_PUBLIC_KEY:-}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 5s
+      timeout: 3s
+      retries: 3

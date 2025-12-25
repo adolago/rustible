@@ -4,8 +4,101 @@
 //! including plays, tasks, handlers, and role inclusions.
 
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value as JsonValue;
 use std::path::PathBuf;
+
+/// Helper function to deserialize flexible booleans (yes/no/true/false/1/0)
+fn deserialize_flexible_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = serde_yaml::Value::deserialize(deserializer)?;
+    match &value {
+        serde_yaml::Value::Bool(b) => Ok(*b),
+        serde_yaml::Value::String(s) => match s.to_lowercase().as_str() {
+            "yes" | "true" | "on" | "1" => Ok(true),
+            "no" | "false" | "off" | "0" | "" => Ok(false),
+            _ => Err(D::Error::custom(format!("invalid boolean string: {}", s))),
+        },
+        serde_yaml::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(i != 0)
+            } else if let Some(f) = n.as_f64() {
+                Ok(f != 0.0)
+            } else {
+                Err(D::Error::custom("invalid boolean number"))
+            }
+        }
+        serde_yaml::Value::Null => Ok(false),
+        _ => Err(D::Error::custom(format!(
+            "invalid boolean value: {:?}",
+            value
+        ))),
+    }
+}
+
+/// Helper function to deserialize optional flexible booleans
+fn deserialize_option_flexible_bool<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = Option::<serde_yaml::Value>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(serde_yaml::Value::Null) => Ok(None),
+        Some(serde_yaml::Value::Bool(b)) => Ok(Some(b)),
+        Some(serde_yaml::Value::String(s)) => match s.to_lowercase().as_str() {
+            "yes" | "true" | "on" | "1" => Ok(Some(true)),
+            "no" | "false" | "off" | "0" | "" => Ok(Some(false)),
+            _ => Err(D::Error::custom(format!("invalid boolean string: {}", s))),
+        },
+        Some(serde_yaml::Value::Number(n)) => {
+            if let Some(i) = n.as_i64() {
+                Ok(Some(i != 0))
+            } else if let Some(f) = n.as_f64() {
+                Ok(Some(f != 0.0))
+            } else {
+                Err(D::Error::custom("invalid boolean number"))
+            }
+        }
+        Some(other) => Err(D::Error::custom(format!(
+            "invalid boolean value: {:?}",
+            other
+        ))),
+    }
+}
+
+/// Helper function to deserialize string or sequence into Vec<String>
+fn deserialize_string_or_vec<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_yaml::Value::deserialize(deserializer)?;
+    match value {
+        serde_yaml::Value::Null => Ok(Vec::new()),
+        serde_yaml::Value::String(s) => Ok(vec![s]),
+        serde_yaml::Value::Bool(b) => Ok(vec![b.to_string()]),
+        serde_yaml::Value::Number(n) => Ok(vec![n.to_string()]),
+        serde_yaml::Value::Sequence(seq) => {
+            let mut result = Vec::new();
+            for item in seq {
+                match item {
+                    serde_yaml::Value::String(s) => result.push(s),
+                    serde_yaml::Value::Bool(b) => result.push(b.to_string()),
+                    serde_yaml::Value::Number(n) => result.push(n.to_string()),
+                    other => result.push(format!("{:?}", other)),
+                }
+            }
+            Ok(result)
+        }
+        other => Ok(vec![format!("{:?}", other)]),
+    }
+}
 
 /// A complete playbook containing multiple plays
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,7 +161,10 @@ pub struct Play {
     pub hosts: String,
 
     /// Gather facts before running tasks
-    #[serde(default = "default_gather_facts")]
+    #[serde(
+        default = "default_gather_facts",
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub gather_facts: bool,
 
     /// Gather facts subset
@@ -84,7 +180,7 @@ pub struct Play {
     pub remote_user: Option<String>,
 
     /// Enable privilege escalation
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub r#become: bool,
 
     /// Privilege escalation method
@@ -144,11 +240,11 @@ pub struct Play {
     pub max_fail_percentage: Option<f32>,
 
     /// Continue on errors
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub ignore_errors: bool,
 
     /// Continue on unreachable hosts
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub ignore_unreachable: bool,
 
     /// Module defaults
@@ -172,15 +268,19 @@ pub struct Play {
     pub order: Option<PlayOrder>,
 
     /// Force all handlers to run at end of play
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub force_handlers: bool,
 
     /// Run once on first host only
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub run_once: bool,
 
     /// Conditional execution
-    #[serde(default, rename = "when")]
+    #[serde(
+        default,
+        rename = "when",
+        deserialize_with = "deserialize_string_or_vec"
+    )]
     pub when_condition: Vec<String>,
 
     /// Become password (should be from vault/prompt)
@@ -360,11 +460,15 @@ pub struct Task {
     pub module: IndexMap<String, serde_yaml::Value>,
 
     /// Conditional execution
-    #[serde(default, rename = "when")]
+    #[serde(
+        default,
+        rename = "when",
+        deserialize_with = "deserialize_string_or_vec"
+    )]
     pub when_condition: Vec<String>,
 
     /// Loop over items
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "loop")]
     pub loop_over: Option<LoopSpec>,
 
     /// Legacy with_* loops
@@ -380,31 +484,35 @@ pub struct Task {
     pub register: Option<String>,
 
     /// Handlers to notify on change
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
     pub notify: Vec<String>,
 
     /// Ignore errors
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub ignore_errors: bool,
 
     /// Ignore unreachable hosts
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub ignore_unreachable: bool,
 
     /// Changed when condition
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
     pub changed_when: Vec<String>,
 
     /// Failed when condition
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
     pub failed_when: Vec<String>,
 
     /// Task tags
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
     pub tags: Vec<String>,
 
     /// Become (privilege escalation)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_option_flexible_bool"
+    )]
     pub r#become: Option<bool>,
 
     /// Become method
@@ -420,7 +528,7 @@ pub struct Task {
     pub delegate_to: Option<String>,
 
     /// Delegate facts
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub delegate_facts: bool,
 
     /// Local action
@@ -428,7 +536,7 @@ pub struct Task {
     pub local_action: Option<ModuleCall>,
 
     /// Run once (only on first host)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub run_once: bool,
 
     /// Retry count
@@ -440,7 +548,7 @@ pub struct Task {
     pub delay: Option<u32>,
 
     /// Until condition for retries
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
     pub until: Vec<String>,
 
     /// Async execution timeout
@@ -556,7 +664,11 @@ impl Task {
     }
 
     /// Create a task with a module call
-    pub fn with_module(name: impl Into<String>, module: impl Into<String>, args: serde_yaml::Value) -> Self {
+    pub fn with_module(
+        name: impl Into<String>,
+        module: impl Into<String>,
+        args: serde_yaml::Value,
+    ) -> Self {
         let mut task = Self::new(name);
         task.module.insert(module.into(), args);
         task
@@ -581,14 +693,42 @@ impl Task {
 
         // Check module shorthand (skip known non-module keys)
         let non_module_keys = [
-            "name", "when", "loop", "register", "notify", "ignore_errors",
-            "ignore_unreachable", "changed_when", "failed_when", "tags",
-            "become", "become_method", "become_user", "delegate_to",
-            "delegate_facts", "run_once", "retries", "delay", "until",
-            "async", "poll", "environment", "vars", "args", "block",
-            "rescue", "always", "connection", "throttle", "timeout",
-            "no_log", "diff", "check_mode", "module_defaults",
-            "any_errors_fatal", "loop_control",
+            "name",
+            "when",
+            "loop",
+            "register",
+            "notify",
+            "ignore_errors",
+            "ignore_unreachable",
+            "changed_when",
+            "failed_when",
+            "tags",
+            "become",
+            "become_method",
+            "become_user",
+            "delegate_to",
+            "delegate_facts",
+            "run_once",
+            "retries",
+            "delay",
+            "until",
+            "async",
+            "poll",
+            "environment",
+            "vars",
+            "args",
+            "block",
+            "rescue",
+            "always",
+            "connection",
+            "throttle",
+            "timeout",
+            "no_log",
+            "diff",
+            "check_mode",
+            "module_defaults",
+            "any_errors_fatal",
+            "loop_control",
         ];
 
         for key in self.module.keys() {
@@ -735,7 +875,11 @@ impl Handler {
     }
 
     /// Create a handler with a module call
-    pub fn with_module(name: impl Into<String>, module: impl Into<String>, args: serde_yaml::Value) -> Self {
+    pub fn with_module(
+        name: impl Into<String>,
+        module: impl Into<String>,
+        args: serde_yaml::Value,
+    ) -> Self {
         let name = name.into();
         Self {
             name: name.clone(),

@@ -57,6 +57,7 @@ struct HostStats {
 
 impl HostStats {
     /// Total number of completed tasks for this host.
+    #[allow(dead_code)]
     fn total(&self) -> u32 {
         self.ok + self.changed + self.failed + self.skipped + self.unreachable
     }
@@ -64,6 +65,7 @@ impl HostStats {
 
 /// Global execution statistics for progress tracking.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 struct GlobalStats {
     /// Total ok count across all hosts
     ok: u32,
@@ -79,6 +81,7 @@ struct GlobalStats {
 
 impl GlobalStats {
     /// Total number of completed task executions.
+    #[allow(dead_code)]
     fn total(&self) -> u32 {
         self.ok + self.changed + self.failed + self.skipped + self.unreachable
     }
@@ -86,6 +89,7 @@ impl GlobalStats {
 
 /// Task timing information for ETA calculation.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct TaskTiming {
     /// When the task started
     start_time: Instant,
@@ -120,6 +124,7 @@ impl TaskTiming {
 
 /// Progress state for tracking current execution position.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 struct ProgressState {
     /// Current task index (0-based)
     current_task: usize,

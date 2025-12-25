@@ -337,6 +337,12 @@ impl HostConfig {
         self
     }
 
+    /// Enable/disable compression
+    pub fn compression(mut self, enabled: bool) -> Self {
+        self.compression = enabled;
+        self
+    }
+
     /// Set connection type
     pub fn connection_type(mut self, conn_type: impl Into<String>) -> Self {
         self.connection = Some(conn_type.into());

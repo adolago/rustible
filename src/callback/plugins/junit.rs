@@ -435,7 +435,10 @@ impl ExecutionCallback for JUnitCallback {
 
         // Write the XML file
         if let Err(e) = self.finalize().await {
-            eprintln!("Failed to write JUnit XML report to {:?}: {}", self.output_path, e);
+            eprintln!(
+                "Failed to write JUnit XML report to {:?}: {}",
+                self.output_path, e
+            );
         }
     }
 
@@ -686,10 +689,7 @@ mod tests {
 
         callback.on_playbook_start("test-playbook").await;
         callback
-            .on_play_start(
-                "test-play",
-                &["host1".to_string(), "host2".to_string()],
-            )
+            .on_play_start("test-play", &["host1".to_string(), "host2".to_string()])
             .await;
 
         let ok1 = create_execution_result("host1", "task1", true, true, false, "changed");
@@ -740,8 +740,7 @@ mod tests {
         // Initially no failures
         assert!(!callback.has_failures().await);
 
-        let failed_result =
-            create_execution_result("host1", "task1", false, false, false, "error");
+        let failed_result = create_execution_result("host1", "task1", false, false, false, "error");
         callback.on_task_complete(&failed_result).await;
 
         // Now has failures

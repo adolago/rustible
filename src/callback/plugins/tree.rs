@@ -381,7 +381,11 @@ impl TreeCallback {
     }
 
     /// Writes the host summary file.
-    async fn write_host_summary(&self, host: &str, summary: TreeHostSummary) -> std::io::Result<()> {
+    async fn write_host_summary(
+        &self,
+        host: &str,
+        summary: TreeHostSummary,
+    ) -> std::io::Result<()> {
         let host_dir = self.host_dir(host);
         let file_path = host_dir.join("_host_summary.json");
 
@@ -444,7 +448,10 @@ impl ExecutionCallback for TreeCallback {
             return;
         }
 
-        debug!("TreeCallback: Created tree root at {}", self.tree_root.display());
+        debug!(
+            "TreeCallback: Created tree root at {}",
+            self.tree_root.display()
+        );
 
         // Initialize state
         *self.playbook_started_at.write() = Some(Utc::now());
@@ -508,14 +515,24 @@ impl ExecutionCallback for TreeCallback {
                 .map(|start| start.elapsed().as_millis() as u64)
                 .unwrap_or(0);
 
-            (summaries, total_stats, host_stats_map, started_at, duration_ms, plays)
+            (
+                summaries,
+                total_stats,
+                host_stats_map,
+                started_at,
+                duration_ms,
+                plays,
+            )
         };
         // Lock released here
 
         // Write host summaries (async operations now safe)
         for (host, summary) in host_summaries {
             if let Err(e) = self.write_host_summary(&host, summary).await {
-                error!("TreeCallback: Failed to write host summary for {}: {}", host, e);
+                error!(
+                    "TreeCallback: Failed to write host summary for {}: {}",
+                    host, e
+                );
             }
         }
 
@@ -561,7 +578,11 @@ impl ExecutionCallback for TreeCallback {
             host_states.entry(host.clone()).or_default();
         }
 
-        debug!("TreeCallback: Play '{}' started with {} hosts", name, hosts.len());
+        debug!(
+            "TreeCallback: Play '{}' started with {} hosts",
+            name,
+            hosts.len()
+        );
     }
 
     /// Called when a play ends.
@@ -676,7 +697,10 @@ impl ExecutionCallback for TreeCallback {
                     debug!("TreeCallback: Stored facts for host '{}'", host);
                 }
                 Err(e) => {
-                    warn!("TreeCallback: Failed to serialize facts for {}: {}", host, e);
+                    warn!(
+                        "TreeCallback: Failed to serialize facts for {}: {}",
+                        host, e
+                    );
                 }
             }
         }
@@ -868,8 +892,14 @@ mod tests {
             .on_play_start("test-play", &["host1".to_string()])
             .await;
 
-        let result =
-            create_execution_result("host1", "Install nginx", true, true, false, "Package installed");
+        let result = create_execution_result(
+            "host1",
+            "Install nginx",
+            true,
+            true,
+            false,
+            "Package installed",
+        );
         callback.on_task_complete(&result).await;
 
         callback.on_playbook_end("test-playbook", true).await;
@@ -1018,7 +1048,10 @@ mod tests {
         let callback2 = callback1.clone();
 
         assert!(Arc::ptr_eq(&callback1.host_states, &callback2.host_states));
-        assert!(Arc::ptr_eq(&callback1.has_failures, &callback2.has_failures));
+        assert!(Arc::ptr_eq(
+            &callback1.has_failures,
+            &callback2.has_failures
+        ));
     }
 
     #[test]

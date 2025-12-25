@@ -1,0 +1,32 @@
+---
+# Default values for webserver role
+# These provide sensible defaults that can be overridden
+
+# Nginx configuration
+nginx_port: 80
+nginx_ssl_port: 443
+nginx_user: www-data
+nginx_worker_processes: auto
+nginx_worker_connections: 1024
+
+# Directory paths
+nginx_config_dir: /etc/nginx
+nginx_sites_dir: /etc/nginx/sites-enabled
+nginx_log_dir: /var/log/nginx
+
+# Site configuration
+site_name: default
+server_name: localhost
+document_root: /var/www/html
+
+# SSL configuration
+ssl_enabled: false
+ssl_certificate: ""
+ssl_certificate_key: ""
+
+# Security settings
+configure_firewall: false
+
+# Logging
+access_log_format: combined
+enable_access_log: true

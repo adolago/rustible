@@ -1,13 +1,65 @@
-//! Connection module for Rustible
+//! Connection layer for remote host communication.
 //!
 //! This module provides a unified interface for executing commands and transferring
 //! files across different transport mechanisms (SSH, local, Docker).
+//!
+//! # Overview
+//!
+//! The connection layer abstracts the transport mechanism so that modules and tasks
+//! don't need to know whether they're running locally, over SSH, or in a container.
+//! All connections implement the [`Connection`] trait.
+//!
+//! # Supported Transports
+//!
+//! - **SSH** (via `russh` or `ssh2`): Secure remote execution and file transfer
+//!   - Pure Rust implementation (`russh` feature, default)
+//!   - libssh2 bindings (`ssh2-backend` feature)
+//! - **Local**: Direct execution on the control node
+//! - **Docker**: Container-based execution via `docker exec`
+//!
+//! # Connection Management
+//!
+//! Connections are managed through the [`ConnectionFactory`] which provides:
+//! - Connection pooling and reuse
+//! - Automatic transport selection based on host configuration
+//! - Credential management
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use rustible::connection::{ConnectionBuilder, ExecuteOptions};
+//!
+//! // Create a connection to a remote host
+//! let conn = ConnectionBuilder::new("192.168.1.100")
+//!     .user("admin")
+//!     .private_key("~/.ssh/id_rsa")
+//!     .connect()
+//!     .await?;
+//!
+//! // Execute a command
+//! let result = conn.execute("uname -a", None).await?;
+//! println!("Output: {}", result.stdout);
+//!
+//! // Execute with options
+//! let opts = ExecuteOptions::new()
+//!     .with_cwd("/opt/app")
+//!     .with_escalation(Some("root".into()));
+//! let result = conn.execute("systemctl restart myservice", Some(opts)).await?;
+//! ```
 
+/// Connection configuration types.
 pub mod config;
+
+/// Docker container connection implementation.
 pub mod docker;
+
+/// Local execution connection implementation.
 pub mod local;
+
+/// Pure Rust SSH implementation using russh.
 #[cfg(feature = "russh")]
 pub mod russh;
+
 // russh_auth: Advanced authentication module (currently disabled)
 // The russh_auth module was designed for advanced authentication scenarios but
 // needs updating for russh 0.45 API changes (Signer trait, AuthResult enum).
@@ -15,8 +67,12 @@ pub mod russh;
 // If advanced features are needed, this module can be updated later.
 // #[cfg(feature = "russh")]
 // pub mod russh_auth;
+
+/// Connection pooling for russh connections.
 #[cfg(feature = "russh")]
 pub mod russh_pool;
+
+/// SSH implementation using libssh2 bindings.
 #[cfg(feature = "ssh2-backend")]
 pub mod ssh;
 
@@ -46,8 +102,9 @@ pub use russh::{PendingCommand, PipelinedExecutor, RusshConnection, RusshConnect
 // };
 #[cfg(feature = "russh")]
 pub use russh_pool::{
-    PoolConfig, PoolStats as RusshPoolStats, PooledConnectionHandle, RusshConnectionPool,
-    RusshConnectionPoolBuilder,
+    HealthCheckResult, HostUtilization, PoolConfig, PoolStats as RusshPoolStats,
+    PoolUtilizationMetrics, PooledConnectionHandle, PrewarmResult, RusshConnectionPool,
+    RusshConnectionPoolBuilder, WarmupResult,
 };
 
 /// Russh-related error type - wraps russh::Error for compatibility with the Handler trait
@@ -86,62 +143,96 @@ impl From<russh_sftp::client::error::Error> for ConnectionError {
     }
 }
 
-/// Errors that can occur during connection operations
+/// Errors that can occur during connection operations.
+///
+/// This enum covers all error conditions that may arise when establishing
+/// connections, executing commands, or transferring files.
 #[derive(Error, Debug)]
 pub enum ConnectionError {
+    /// Failed to establish initial connection to the host.
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
 
+    /// Authentication was rejected by the remote host.
     #[error("Authentication failed: {0}")]
     AuthenticationFailed(String),
 
+    /// Command execution failed (not to be confused with non-zero exit code).
     #[error("Command execution failed: {0}")]
     ExecutionFailed(String),
 
+    /// File upload or download operation failed.
     #[error("File transfer failed: {0}")]
     TransferFailed(String),
 
+    /// Connection or operation timed out.
     #[error("Connection timeout after {0} seconds")]
     Timeout(u64),
 
+    /// The specified host could not be resolved.
     #[error("Host not found: {0}")]
     HostNotFound(String),
 
+    /// Configuration is invalid or incomplete.
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
+    /// SSH-specific error from the underlying implementation.
     #[error("SSH error: {0}")]
     SshError(String),
 
+    /// I/O error during connection operations.
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
+    /// No connections available in the pool.
     #[error("Connection pool exhausted")]
     PoolExhausted,
 
+    /// Connection was closed unexpectedly.
     #[error("Connection closed")]
     ConnectionClosed,
 
+    /// Docker-specific error during container operations.
     #[error("Docker error: {0}")]
     DockerError(String),
 
+    /// The requested operation is not supported by this transport.
     #[error("Unsupported operation: {0}")]
     UnsupportedOperation(String),
 }
 
-/// Result type for connection operations
+/// Result type for connection operations.
+///
+/// A type alias for `Result<T, ConnectionError>`.
 pub type ConnectionResult<T> = Result<T, ConnectionError>;
 
-/// Result of executing a command
+/// The result of executing a command on a connection.
+///
+/// Contains the exit code, stdout, stderr, and a convenience boolean
+/// indicating whether the command succeeded (exit code 0).
+///
+/// # Example
+///
+/// ```rust
+/// use rustible::connection::CommandResult;
+///
+/// let result = CommandResult::success("Hello".into(), String::new());
+/// assert!(result.success);
+/// assert_eq!(result.exit_code, 0);
+///
+/// let failed = CommandResult::failure(1, String::new(), "error".into());
+/// assert!(!failed.success);
+/// ```
 #[derive(Debug, Clone)]
 pub struct CommandResult {
-    /// Exit code of the command
+    /// Exit code of the command (0 typically indicates success).
     pub exit_code: i32,
-    /// Standard output
+    /// Content written to standard output.
     pub stdout: String,
-    /// Standard error
+    /// Content written to standard error.
     pub stderr: String,
-    /// Whether the command was successful (exit code 0)
+    /// Convenience flag: `true` if `exit_code == 0`.
     pub success: bool,
 }
 

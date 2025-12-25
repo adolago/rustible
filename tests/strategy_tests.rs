@@ -1330,7 +1330,7 @@ async fn test_serial_one_host_at_a_time() {
     let mut playbook = Playbook::new("Serial One Test");
     let mut play = Play::new("Test", "all");
     play.gather_facts = false;
-    play.serial = Some(1);
+    play.serial = Some(rustible::playbook::SerialSpec::Fixed(1));
 
     play.add_task(Task::new("Task 1", "debug").arg("msg", "First task"));
     play.add_task(Task::new("Task 2", "debug").arg("msg", "Second task"));
@@ -1363,7 +1363,7 @@ async fn test_serial_batches() {
     let mut playbook = Playbook::new("Serial Batch Test");
     let mut play = Play::new("Test", "all");
     play.gather_facts = false;
-    play.serial = Some(2);
+    play.serial = Some(rustible::playbook::SerialSpec::Fixed(2));
 
     play.add_task(Task::new("Batch task", "debug").arg("msg", "Running in batches"));
 
@@ -1477,7 +1477,7 @@ async fn test_serial_with_max_fail_percentage() {
     let mut playbook = Playbook::new("Max Fail Test");
     let mut play = Play::new("Test", "all");
     play.gather_facts = false;
-    play.serial = Some(2);
+    play.serial = Some(rustible::playbook::SerialSpec::Fixed(2));
     play.max_fail_percentage = Some(50); // Allow 50% failures
 
     // Fail on specific hosts

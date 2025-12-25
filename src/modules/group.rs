@@ -125,9 +125,12 @@ impl GroupModule {
         name: &str,
         gid: Option<u32>,
         system: bool,
+        local: bool,
+        non_unique: bool,
         context: &ModuleContext,
     ) -> ModuleResult<()> {
-        let mut cmd_parts = vec!["groupadd".to_string()];
+        let cmd_name = if local { "lgroupadd" } else { "groupadd" };
+        let mut cmd_parts = vec![cmd_name.to_string()];
 
         if let Some(gid) = gid {
             cmd_parts.push("-g".to_string());
@@ -136,6 +139,10 @@ impl GroupModule {
 
         if system {
             cmd_parts.push("-r".to_string());
+        }
+
+        if non_unique {
+            cmd_parts.push("-o".to_string());
         }
 
         cmd_parts.push(shell_escape(name));
@@ -155,18 +162,24 @@ impl GroupModule {
         connection: &Arc<dyn Connection + Send + Sync>,
         name: &str,
         gid: Option<u32>,
+        local: bool,
+        non_unique: bool,
         context: &ModuleContext,
     ) -> ModuleResult<bool> {
         let current = Self::get_group_info_via_connection(connection, name, context)?
             .ok_or_else(|| ModuleError::ExecutionFailed(format!("Group '{}' not found", name)))?;
 
+        let cmd_name = if local { "lgroupmod" } else { "groupmod" };
         let mut needs_change = false;
-        let mut cmd_parts = vec!["groupmod".to_string()];
+        let mut cmd_parts = vec![cmd_name.to_string()];
 
         if let Some(gid) = gid {
             if current.gid != gid {
                 cmd_parts.push("-g".to_string());
                 cmd_parts.push(gid.to_string());
+                if non_unique {
+                    cmd_parts.push("-o".to_string());
+                }
                 needs_change = true;
             }
         }
@@ -191,9 +204,11 @@ impl GroupModule {
     fn delete_group_via_connection(
         connection: &Arc<dyn Connection + Send + Sync>,
         name: &str,
+        local: bool,
         context: &ModuleContext,
     ) -> ModuleResult<()> {
-        let command = format!("groupdel {}", shell_escape(name));
+        let cmd_name = if local { "lgroupdel" } else { "groupdel" };
+        let command = format!("{} {}", cmd_name, shell_escape(name));
         let (success, _, stderr) = Self::execute_command(connection, &command, context)?;
 
         if success {
@@ -240,6 +255,8 @@ impl Module for GroupModule {
 
         let gid = params.get_u32("gid")?;
         let system = params.get_bool_or("system", false);
+        let local = params.get_bool_or("local", false);
+        let non_unique = params.get_bool_or("non_unique", false);
 
         let group_exists = Self::group_exists_via_connection(connection, &name, context)?;
 
@@ -256,7 +273,7 @@ impl Module for GroupModule {
                     )));
                 }
 
-                Self::delete_group_via_connection(connection, &name, context)?;
+                Self::delete_group_via_connection(connection, &name, local, context)?;
                 Ok(ModuleOutput::changed(format!("Removed group '{}'", name)))
             }
 
@@ -272,7 +289,9 @@ impl Module for GroupModule {
                         )));
                     }
 
-                    Self::create_group_via_connection(connection, &name, gid, system, context)?;
+                    Self::create_group_via_connection(
+                        connection, &name, gid, system, local, non_unique, context,
+                    )?;
                     changed = true;
                     messages.push(format!("Created group '{}'", name));
                 } else {
@@ -297,8 +316,9 @@ impl Module for GroupModule {
                         )));
                     }
 
-                    let modified =
-                        Self::modify_group_via_connection(connection, &name, gid, context)?;
+                    let modified = Self::modify_group_via_connection(
+                        connection, &name, gid, local, non_unique, context,
+                    )?;
 
                     if modified {
                         changed = true;

@@ -1,0 +1,9 @@
+---
+# Common role handlers
+- name: reload sysctl
+  command: sysctl -p
+
+- name: restart networking
+  service:
+    name: networking
+    state: restarted

@@ -102,12 +102,19 @@ mod default_callback_format {
         // Ansible format: "PLAY [name] ****..." (space before asterisks)
         let expected_format = format!("{} {}", header, "*".repeat(asterisks_needed));
 
-        assert!(expected_format.len() <= 80,
-            "Play header should not exceed 80 chars: len={}", expected_format.len());
-        assert!(expected_format.starts_with("PLAY ["),
-            "Play header must start with 'PLAY ['");
-        assert!(expected_format.contains(play_name),
-            "Play header must contain play name");
+        assert!(
+            expected_format.len() <= 80,
+            "Play header should not exceed 80 chars: len={}",
+            expected_format.len()
+        );
+        assert!(
+            expected_format.starts_with("PLAY ["),
+            "Play header must start with 'PLAY ['"
+        );
+        assert!(
+            expected_format.contains(play_name),
+            "Play header must contain play name"
+        );
     }
 
     /// Ansible's task header format: "TASK [name] ****..."
@@ -120,10 +127,14 @@ mod default_callback_format {
 
         let expected_format = format!("{} {}", header, "*".repeat(asterisks_needed));
 
-        assert!(expected_format.starts_with("TASK ["),
-            "Task header must start with 'TASK ['");
-        assert!(expected_format.contains(task_name),
-            "Task header must contain task name");
+        assert!(
+            expected_format.starts_with("TASK ["),
+            "Task header must start with 'TASK ['"
+        );
+        assert!(
+            expected_format.contains(task_name),
+            "Task header must contain task name"
+        );
     }
 
     /// Ansible's handler header format: "RUNNING HANDLER [name] ****..."
@@ -136,10 +147,14 @@ mod default_callback_format {
 
         let expected_format = format!("{} {}", header, "*".repeat(asterisks_needed));
 
-        assert!(expected_format.starts_with("RUNNING HANDLER ["),
-            "Handler header must start with 'RUNNING HANDLER ['");
-        assert!(expected_format.contains(handler_name),
-            "Handler header must contain handler name");
+        assert!(
+            expected_format.starts_with("RUNNING HANDLER ["),
+            "Handler header must start with 'RUNNING HANDLER ['"
+        );
+        assert!(
+            expected_format.contains(handler_name),
+            "Handler header must contain handler name"
+        );
     }
 
     /// Ansible's ok status format: "ok: [hostname]"
@@ -148,12 +163,12 @@ mod default_callback_format {
         let host = "webserver01.example.com";
         let expected = format!("ok: [{}]", host);
 
-        assert!(expected.starts_with("ok: ["),
-            "OK status must start with 'ok: ['");
-        assert!(expected.ends_with("]"),
-            "OK status must end with ']'");
-        assert!(expected.contains(host),
-            "OK status must contain hostname");
+        assert!(
+            expected.starts_with("ok: ["),
+            "OK status must start with 'ok: ['"
+        );
+        assert!(expected.ends_with("]"), "OK status must end with ']'");
+        assert!(expected.contains(host), "OK status must contain hostname");
     }
 
     /// Ansible's changed status format: "changed: [hostname]"
@@ -162,10 +177,11 @@ mod default_callback_format {
         let host = "webserver01.example.com";
         let expected = format!("changed: [{}]", host);
 
-        assert!(expected.starts_with("changed: ["),
-            "Changed status must start with 'changed: ['");
-        assert!(expected.ends_with("]"),
-            "Changed status must end with ']'");
+        assert!(
+            expected.starts_with("changed: ["),
+            "Changed status must start with 'changed: ['"
+        );
+        assert!(expected.ends_with("]"), "Changed status must end with ']'");
     }
 
     /// Ansible's skipping status format: "skipping: [hostname]"
@@ -176,10 +192,11 @@ mod default_callback_format {
         let expected = format!("skipping: [{}]", host);
 
         // Ansible specifically uses "skipping" in present tense
-        assert!(expected.starts_with("skipping: ["),
-            "Skipping status must start with 'skipping: [' (present tense)");
-        assert!(expected.ends_with("]"),
-            "Skipping status must end with ']'");
+        assert!(
+            expected.starts_with("skipping: ["),
+            "Skipping status must start with 'skipping: [' (present tense)"
+        );
+        assert!(expected.ends_with("]"), "Skipping status must end with ']'");
     }
 
     /// Ansible's fatal status format: "fatal: [hostname]: FAILED! => {...}"
@@ -191,12 +208,18 @@ mod default_callback_format {
         // Ansible uses "fatal" with "FAILED!" marker for failures
         let expected = format!("fatal: [{}]: FAILED! => {{{}}}", host, msg);
 
-        assert!(expected.starts_with("fatal: ["),
-            "Fatal status must start with 'fatal: ['");
-        assert!(expected.contains("FAILED!"),
-            "Fatal status must contain 'FAILED!' marker");
-        assert!(expected.contains("=>"),
-            "Fatal status must contain '=>' separator");
+        assert!(
+            expected.starts_with("fatal: ["),
+            "Fatal status must start with 'fatal: ['"
+        );
+        assert!(
+            expected.contains("FAILED!"),
+            "Fatal status must contain 'FAILED!' marker"
+        );
+        assert!(
+            expected.contains("=>"),
+            "Fatal status must contain '=>' separator"
+        );
     }
 
     /// Ansible's unreachable status format: "fatal: [hostname]: UNREACHABLE! => {...}"
@@ -208,10 +231,14 @@ mod default_callback_format {
         // Ansible uses "fatal" with "UNREACHABLE!" marker
         let expected = format!("fatal: [{}]: UNREACHABLE! => {{{}}}", host, msg);
 
-        assert!(expected.starts_with("fatal: ["),
-            "Unreachable status must start with 'fatal: ['");
-        assert!(expected.contains("UNREACHABLE!"),
-            "Unreachable status must contain 'UNREACHABLE!' marker");
+        assert!(
+            expected.starts_with("fatal: ["),
+            "Unreachable status must start with 'fatal: ['"
+        );
+        assert!(
+            expected.contains("UNREACHABLE!"),
+            "Unreachable status must contain 'UNREACHABLE!' marker"
+        );
     }
 
     /// Ansible's loop item format: "ok: [host] => (item=value)"
@@ -222,10 +249,14 @@ mod default_callback_format {
 
         let expected = format!("ok: [{}] => (item={})", host, item);
 
-        assert!(expected.contains("=> (item="),
-            "Loop item format must contain '=> (item='");
-        assert!(expected.contains(item),
-            "Loop item format must contain the item value");
+        assert!(
+            expected.contains("=> (item="),
+            "Loop item format must contain '=> (item='"
+        );
+        assert!(
+            expected.contains(item),
+            "Loop item format must contain the item value"
+        );
     }
 
     /// Ansible's delegation format: "ok: [host] -> delegated_host"
@@ -236,10 +267,14 @@ mod default_callback_format {
 
         let expected = format!("ok: [{}] -> {}", host, delegate);
 
-        assert!(expected.contains(" -> "),
-            "Delegation format must contain ' -> '");
-        assert!(expected.contains(delegate),
-            "Delegation format must contain delegated host");
+        assert!(
+            expected.contains(" -> "),
+            "Delegation format must contain ' -> '"
+        );
+        assert!(
+            expected.contains(delegate),
+            "Delegation format must contain delegated host"
+        );
     }
 }
 
@@ -318,14 +353,23 @@ mod json_callback_format {
         });
 
         // Required fields for Ansible compatibility
-        assert!(task_result.get("event").is_some(), "Must have 'event' field");
+        assert!(
+            task_result.get("event").is_some(),
+            "Must have 'event' field"
+        );
         assert!(task_result.get("task").is_some(), "Must have 'task' field");
         assert!(task_result.get("host").is_some(), "Must have 'host' field");
-        assert!(task_result.get("result").is_some(), "Must have 'result' field");
+        assert!(
+            task_result.get("result").is_some(),
+            "Must have 'result' field"
+        );
 
         // Result must contain 'changed' boolean
         let result = task_result.get("result").unwrap();
-        assert!(result.get("changed").is_some(), "Result must have 'changed' field");
+        assert!(
+            result.get("changed").is_some(),
+            "Result must have 'changed' field"
+        );
         assert!(result["changed"].is_boolean(), "'changed' must be boolean");
     }
 
@@ -374,14 +418,30 @@ mod json_callback_format {
         assert!(stats.is_object(), "Stats must be an object with host keys");
 
         // Each host stats must have all required counters
-        let required_counters = vec!["ok", "changed", "unreachable", "failed", "skipped", "rescued", "ignored"];
+        let required_counters = vec![
+            "ok",
+            "changed",
+            "unreachable",
+            "failed",
+            "skipped",
+            "rescued",
+            "ignored",
+        ];
 
         for (host, host_stats) in stats.as_object().unwrap() {
             for counter in &required_counters {
-                assert!(host_stats.get(*counter).is_some(),
-                    "Host {} stats must have '{}' counter", host, counter);
-                assert!(host_stats[*counter].is_number(),
-                    "Counter '{}' for host {} must be a number", counter, host);
+                assert!(
+                    host_stats.get(*counter).is_some(),
+                    "Host {} stats must have '{}' counter",
+                    host,
+                    counter
+                );
+                assert!(
+                    host_stats[*counter].is_number(),
+                    "Counter '{}' for host {} must be a number",
+                    counter,
+                    host
+                );
             }
         }
     }
@@ -422,8 +482,10 @@ mod json_callback_format {
         for ts in timestamp_formats {
             // Must be a valid string that looks like ISO 8601
             assert!(ts.contains("T"), "Timestamp must contain 'T' separator");
-            assert!(ts.contains("-") && ts.contains(":"),
-                "Timestamp must have date and time separators");
+            assert!(
+                ts.contains("-") && ts.contains(":"),
+                "Timestamp must have date and time separators"
+            );
         }
     }
 }
@@ -444,11 +506,19 @@ mod recap_format {
 
         let expected = format!("{} {}", header, "*".repeat(asterisks_needed));
 
-        assert_eq!(asterisks_needed, 69, "PLAY RECAP should have 69 asterisks (80 - 'PLAY RECAP ' = 69)");
-        assert!(expected.starts_with("PLAY RECAP"),
-            "Recap header must start with 'PLAY RECAP'");
-        assert!(expected.len() == 80,
-            "Recap header must be exactly 80 chars: len={}", expected.len());
+        assert_eq!(
+            asterisks_needed, 69,
+            "PLAY RECAP should have 69 asterisks (80 - 'PLAY RECAP ' = 69)"
+        );
+        assert!(
+            expected.starts_with("PLAY RECAP"),
+            "Recap header must start with 'PLAY RECAP'"
+        );
+        assert!(
+            expected.len() == 80,
+            "Recap header must be exactly 80 chars: len={}",
+            expected.len()
+        );
     }
 
     /// Ansible recap host line format
@@ -469,7 +539,10 @@ mod recap_format {
         assert!(line.contains(" : "), "Line must have ' : ' separator");
         assert!(line.contains("ok="), "Line must contain 'ok='");
         assert!(line.contains("changed="), "Line must contain 'changed='");
-        assert!(line.contains("unreachable="), "Line must contain 'unreachable='");
+        assert!(
+            line.contains("unreachable="),
+            "Line must contain 'unreachable='"
+        );
         assert!(line.contains("failed="), "Line must contain 'failed='");
         assert!(line.contains("skipped="), "Line must contain 'skipped='");
         assert!(line.contains("rescued="), "Line must contain 'rescued='");
@@ -479,7 +552,15 @@ mod recap_format {
     /// Ansible recap counter order (must match exactly)
     #[test]
     fn test_recap_counter_order_matches_ansible() {
-        let expected_order = vec!["ok", "changed", "unreachable", "failed", "skipped", "rescued", "ignored"];
+        let expected_order = vec![
+            "ok",
+            "changed",
+            "unreachable",
+            "failed",
+            "skipped",
+            "rescued",
+            "ignored",
+        ];
 
         // Build a sample line and extract counter positions
         let line = "host : ok=5    changed=2    unreachable=0    failed=1    skipped=3    rescued=0    ignored=0";
@@ -493,9 +574,12 @@ mod recap_format {
 
         // Verify order by checking positions are increasing
         for i in 1..positions.len() {
-            assert!(positions[i] > positions[i-1],
+            assert!(
+                positions[i] > positions[i - 1],
                 "Counter order incorrect: {} should come before {}",
-                expected_order[i-1], expected_order[i]);
+                expected_order[i - 1],
+                expected_order[i]
+            );
         }
     }
 
@@ -506,8 +590,11 @@ mod recap_format {
         let value_width = 4;
 
         let formatted = format!("ok={:<4}", 5);
-        assert_eq!(formatted, "ok=5   ",
-            "Counter value should be left-padded to {} chars", value_width);
+        assert_eq!(
+            formatted, "ok=5   ",
+            "Counter value should be left-padded to {} chars",
+            value_width
+        );
     }
 
     /// Ansible recap with failed hosts (should show in different color/format)
@@ -562,8 +649,11 @@ mod recap_format {
                 format!("{}ms", millis)
             };
 
-            assert_eq!(formatted, expected_format,
-                "Duration {} should format as '{}'", ms, expected_format);
+            assert_eq!(
+                formatted, expected_format,
+                "Duration {} should format as '{}'",
+                ms, expected_format
+            );
         }
     }
 }
@@ -583,7 +673,10 @@ mod error_format {
         // Ansible wraps error messages in curly braces
         let formatted = format!("{{{}}}", msg);
 
-        assert!(formatted.starts_with('{'), "Error must start with curly brace");
+        assert!(
+            formatted.starts_with('{'),
+            "Error must start with curly brace"
+        );
         assert!(formatted.ends_with('}'), "Error must end with curly brace");
         assert!(formatted.contains(msg));
     }
@@ -594,8 +687,10 @@ mod error_format {
         let msg = "Deprecated feature used";
         let formatted = format!("[WARNING]: {}", msg);
 
-        assert!(formatted.starts_with("[WARNING]:"),
-            "Warning must start with '[WARNING]:'");
+        assert!(
+            formatted.starts_with("[WARNING]:"),
+            "Warning must start with '[WARNING]:'"
+        );
         assert!(formatted.contains(msg));
     }
 
@@ -605,12 +700,19 @@ mod error_format {
         let msg = "This feature is deprecated";
         let version = "3.0";
 
-        let formatted = format!("[DEPRECATION WARNING]: {} (will be removed in {})", msg, version);
+        let formatted = format!(
+            "[DEPRECATION WARNING]: {} (will be removed in {})",
+            msg, version
+        );
 
-        assert!(formatted.contains("[DEPRECATION WARNING]:"),
-            "Deprecation must include '[DEPRECATION WARNING]:'");
-        assert!(formatted.contains("will be removed in"),
-            "Deprecation must include removal version info");
+        assert!(
+            formatted.contains("[DEPRECATION WARNING]:"),
+            "Deprecation must include '[DEPRECATION WARNING]:'"
+        );
+        assert!(
+            formatted.contains("will be removed in"),
+            "Deprecation must include removal version info"
+        );
     }
 
     /// Ansible error format: "[ERROR]: message"
@@ -619,8 +721,10 @@ mod error_format {
         let msg = "Fatal error occurred";
         let formatted = format!("[ERROR]: {}", msg);
 
-        assert!(formatted.starts_with("[ERROR]:"),
-            "Error must start with '[ERROR]:'");
+        assert!(
+            formatted.starts_with("[ERROR]:"),
+            "Error must start with '[ERROR]:'"
+        );
     }
 
     /// Ansible debug output format (with verbosity)
@@ -629,8 +733,10 @@ mod error_format {
         let msg = "Variable value: test";
         let formatted = format!("[DEBUG]: {}", msg);
 
-        assert!(formatted.starts_with("[DEBUG]:"),
-            "Debug must start with '[DEBUG]:'");
+        assert!(
+            formatted.starts_with("[DEBUG]:"),
+            "Debug must start with '[DEBUG]:'"
+        );
     }
 
     /// Ansible task failure JSON result output
@@ -645,10 +751,16 @@ mod error_format {
         let pretty = serde_json::to_string_pretty(&result).unwrap();
 
         // Each line should be indented (Ansible indents with 4 spaces typically)
-        for line in pretty.lines().skip(1) { // Skip first line (opening brace)
+        for line in pretty.lines().skip(1) {
+            // Skip first line (opening brace)
             if !line.is_empty() && !line.trim().is_empty() {
-                assert!(line.starts_with("  ") || line.starts_with("\t") || line.trim().starts_with("}"),
-                    "Result JSON should be indented: '{}'", line);
+                assert!(
+                    line.starts_with("  ")
+                        || line.starts_with("\t")
+                        || line.trim().starts_with("}"),
+                    "Result JSON should be indented: '{}'",
+                    line
+                );
             }
         }
     }
@@ -669,8 +781,14 @@ mod error_format {
 
         // Ansible includes both msg and stderr in failure output
         assert!(result.get("msg").is_some(), "Failure must have 'msg'");
-        assert!(result.get("stderr").is_some(), "Command failure should have 'stderr'");
-        assert!(result.get("rc").is_some(), "Command failure should have 'rc'");
+        assert!(
+            result.get("stderr").is_some(),
+            "Command failure should have 'stderr'"
+        );
+        assert!(
+            result.get("rc").is_some(),
+            "Command failure should have 'rc'"
+        );
     }
 
     /// Ansible syntax error format
@@ -683,10 +801,14 @@ mod error_format {
         // Ansible shows file location for syntax errors
         let formatted = format!("ERROR! {} at {} line {}", msg, file, line);
 
-        assert!(formatted.contains("ERROR!"),
-            "Syntax error must contain 'ERROR!'");
-        assert!(formatted.contains(file),
-            "Syntax error must contain filename");
+        assert!(
+            formatted.contains("ERROR!"),
+            "Syntax error must contain 'ERROR!'"
+        );
+        assert!(
+            formatted.contains(file),
+            "Syntax error must contain filename"
+        );
     }
 }
 
@@ -716,10 +838,14 @@ mod complete_run_format {
         ];
 
         // Verify order
-        assert!(output_sections[0].starts_with("PLAY ["),
-            "First section must be PLAY header");
-        assert!(output_sections.last().unwrap().contains("PLAY RECAP"),
-            "Last section must be PLAY RECAP");
+        assert!(
+            output_sections[0].starts_with("PLAY ["),
+            "First section must be PLAY header"
+        );
+        assert!(
+            output_sections.last().unwrap().contains("PLAY RECAP"),
+            "Last section must be PLAY RECAP"
+        );
     }
 
     /// Test multi-play playbook output
@@ -816,13 +942,13 @@ mod color_compatibility {
     fn test_status_color_codes() {
         // Ansible's default colors (ANSI codes)
         let colors = vec![
-            ("ok", "green", "32"),           // Green
-            ("changed", "yellow", "33"),     // Yellow
-            ("failed", "red", "31"),         // Red
-            ("unreachable", "red", "31"),    // Red
-            ("skipping", "cyan", "36"),      // Cyan
-            ("rescued", "magenta", "35"),    // Magenta
-            ("ignored", "blue", "34"),       // Blue
+            ("ok", "green", "32"),        // Green
+            ("changed", "yellow", "33"),  // Yellow
+            ("failed", "red", "31"),      // Red
+            ("unreachable", "red", "31"), // Red
+            ("skipping", "cyan", "36"),   // Cyan
+            ("rescued", "magenta", "35"), // Magenta
+            ("ignored", "blue", "34"),    // Blue
         ];
 
         for (status, color_name, ansi_code) in colors {
@@ -831,8 +957,13 @@ mod color_compatibility {
             let expected_bright = format!("\x1b[9{}m", &ansi_code[..1]); // Bright variant
 
             // Verify the color code is valid
-            assert!(!ansi_code.is_empty(),
-                "{} should have color {} (code {})", status, color_name, ansi_code);
+            assert!(
+                !ansi_code.is_empty(),
+                "{} should have color {} (code {})",
+                status,
+                color_name,
+                ansi_code
+            );
         }
     }
 
@@ -852,7 +983,9 @@ mod color_compatibility {
         ];
 
         for (statuses, expected_color) in host_statuses {
-            let has_failure = statuses.iter().any(|s| *s == "failed" || *s == "unreachable");
+            let has_failure = statuses
+                .iter()
+                .any(|s| *s == "failed" || *s == "unreachable");
             let has_changes = statuses.iter().any(|s| *s == "changed");
 
             let color = if has_failure {
@@ -863,8 +996,11 @@ mod color_compatibility {
                 "green"
             };
 
-            assert_eq!(color, expected_color,
-                "Statuses {:?} should result in {} coloring", statuses, expected_color);
+            assert_eq!(
+                color, expected_color,
+                "Statuses {:?} should result in {} coloring",
+                statuses, expected_color
+            );
         }
     }
 
@@ -879,8 +1015,10 @@ mod color_compatibility {
         // If NO_COLOR is set, colored output should be disabled
         if no_color_set {
             let plain_output = "ok: [host]";
-            assert!(!plain_output.contains("\x1b["),
-                "Output should not contain ANSI codes when NO_COLOR is set");
+            assert!(
+                !plain_output.contains("\x1b["),
+                "Output should not contain ANSI codes when NO_COLOR is set"
+            );
         }
     }
 
@@ -916,8 +1054,10 @@ mod verbosity_output {
             "changed": true
         });
 
-        assert!(result.get("msg").is_some(),
-            "Verbose output should include 'msg'");
+        assert!(
+            result.get("msg").is_some(),
+            "Verbose output should include 'msg'"
+        );
     }
 
     /// Test -vv output (more verbose)
@@ -934,8 +1074,10 @@ mod verbosity_output {
             "stderr": ""
         });
 
-        assert!(result.get("stdout").is_some(),
-            "-vv output should include stdout");
+        assert!(
+            result.get("stdout").is_some(),
+            "-vv output should include stdout"
+        );
     }
 
     /// Test -vvv output (debug)
@@ -945,11 +1087,7 @@ mod verbosity_output {
         // - Connection debug info
         // - SSH commands
 
-        let debug_info = vec![
-            "SSH: EXEC",
-            "CONNECTION: ",
-            "TASK PATH: ",
-        ];
+        let debug_info = vec!["SSH: EXEC", "CONNECTION: ", "TASK PATH: "];
 
         for info in debug_info {
             assert!(!info.is_empty(), "Debug info should not be empty");
@@ -965,7 +1103,10 @@ mod verbosity_output {
 
         // Just verify the expected verbosity levels exist
         let max_verbosity: u8 = 5;
-        assert!(max_verbosity >= 4, "Should support at least 4 verbosity levels");
+        assert!(
+            max_verbosity >= 4,
+            "Should support at least 4 verbosity levels"
+        );
     }
 }
 
@@ -990,12 +1131,15 @@ mod parsing_compatibility {
         for line in lines {
             // Extract status
             let status = line.split(':').next().unwrap().trim();
-            assert!(["ok", "changed", "failed", "skipping", "fatal"].contains(&status),
-                "Status '{}' should be recognized", status);
+            assert!(
+                ["ok", "changed", "failed", "skipping", "fatal"].contains(&status),
+                "Status '{}' should be recognized",
+                status
+            );
 
             // Extract host (between [ and ])
             if let (Some(start), Some(end)) = (line.find('['), line.find(']')) {
-                let host = &line[start+1..end];
+                let host = &line[start + 1..end];
                 assert!(!host.is_empty(), "Host should not be empty");
             }
         }
@@ -1037,7 +1181,8 @@ mod parsing_compatibility {
             let has_failures = line.contains("failed=") && {
                 if let Some(pos) = line.find("failed=") {
                     let after_failed = &line[pos + 7..];
-                    let count_str: String = after_failed.chars()
+                    let count_str: String = after_failed
+                        .chars()
                         .take_while(|c| c.is_ascii_digit())
                         .collect();
                     count_str.parse::<u32>().unwrap_or(0) > 0
@@ -1049,9 +1194,8 @@ mod parsing_compatibility {
             let has_unreachable = line.contains("unreachable=") && {
                 if let Some(pos) = line.find("unreachable=") {
                     let after = &line[pos + 12..];
-                    let count_str: String = after.chars()
-                        .take_while(|c| c.is_ascii_digit())
-                        .collect();
+                    let count_str: String =
+                        after.chars().take_while(|c| c.is_ascii_digit()).collect();
                     count_str.parse::<u32>().unwrap_or(0) > 0
                 } else {
                     false
@@ -1101,10 +1245,10 @@ mod edge_cases {
     #[test]
     fn test_unicode_output() {
         let unicode_strings = vec![
-            "Install nginx",          // Chinese
-            "Setup server",           // Japanese
-            "Configure app",          // Russian
-            "Deploy emoji",   // Emoji
+            "Install nginx", // Chinese
+            "Setup server",  // Japanese
+            "Configure app", // Russian
+            "Deploy emoji",  // Emoji
         ];
 
         for s in unicode_strings {
@@ -1157,8 +1301,10 @@ mod tool_integration {
         ];
 
         for event in runner_events {
-            assert!(event.get("event").is_some(),
-                "All events must have 'event' field");
+            assert!(
+                event.get("event").is_some(),
+                "All events must have 'event' field"
+            );
         }
     }
 
@@ -1178,8 +1324,10 @@ mod tool_integration {
             }
         });
 
-        assert!(awx_event.get("event_data").is_some(),
-            "AWX events should have 'event_data' wrapper");
+        assert!(
+            awx_event.get("event_data").is_some(),
+            "AWX events should have 'event_data' wrapper"
+        );
     }
 
     /// Test output compatible with ARA (records ansible)

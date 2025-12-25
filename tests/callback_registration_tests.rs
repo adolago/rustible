@@ -622,10 +622,7 @@ async fn test_multiple_plugins_priority_order() {
     manager.on_playbook_start("priority-test").await;
 
     // All callbacks should be invoked
-    assert_eq!(
-        callback_high.playbook_start_count.load(Ordering::SeqCst),
-        1
-    );
+    assert_eq!(callback_high.playbook_start_count.load(Ordering::SeqCst), 1);
     assert_eq!(
         callback_medium.playbook_start_count.load(Ordering::SeqCst),
         1
@@ -886,9 +883,7 @@ async fn test_duplicate_name_rejected() {
 
     let result = manager.register("same-name", callback2.clone());
 
-    assert!(
-        matches!(result, Err(CallbackError::PluginAlreadyExists(name)) if name == "same-name")
-    );
+    assert!(matches!(result, Err(CallbackError::PluginAlreadyExists(name)) if name == "same-name"));
     assert_eq!(manager.plugin_count(), 1);
 }
 
@@ -1034,9 +1029,7 @@ async fn test_empty_manager_invocations() {
     // These should not panic even with no plugins
     manager.on_playbook_start("empty-test").await;
     manager.on_playbook_end("empty-test", true).await;
-    manager
-        .on_play_start("play", &["host1".to_string()])
-        .await;
+    manager.on_play_start("play", &["host1".to_string()]).await;
     manager.on_play_end("play", true).await;
     manager.on_task_start("task", "host").await;
     manager

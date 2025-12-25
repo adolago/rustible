@@ -244,7 +244,7 @@ impl Connection for DockerConnection {
         let mut cmd = self.build_exec_command(command, &options);
 
         // Spawn the process
-        let mut child = cmd.spawn().map_err(|e| {
+        let child = cmd.spawn().map_err(|e| {
             ConnectionError::ExecutionFailed(format!("Failed to execute docker exec: {}", e))
         })?;
 

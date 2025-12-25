@@ -101,6 +101,7 @@ impl PackageManager {
         }
     }
 
+    #[allow(dead_code)]
     fn upgrade_cmd(&self) -> Vec<&'static str> {
         match self {
             PackageManager::Apt => vec!["apt-get", "upgrade", "-y"],

@@ -188,7 +188,8 @@ impl RunArgs {
         extra_vars: &std::collections::HashMap<String, serde_yaml::Value>,
     ) -> Result<()> {
         ctx.output.section("EXECUTION PLAN");
-        ctx.output.plan("Rustible will perform the following actions:\n");
+        ctx.output
+            .plan("Rustible will perform the following actions:\n");
 
         for (play_idx, play) in plays.iter().enumerate() {
             let play_name = play
@@ -217,7 +218,8 @@ impl RunArgs {
                 "⚡".to_string(),
                 play_name
             ));
-            ctx.output.plan(&format!("  Hosts: {} ({} host{})",
+            ctx.output.plan(&format!(
+                "  Hosts: {} ({} host{})",
                 hosts_pattern,
                 hosts.len(),
                 if hosts.len() == 1 { "" } else { "s" }
@@ -250,7 +252,8 @@ impl RunArgs {
                 continue;
             }
 
-            ctx.output.plan(&format!("  Tasks: {} task{}",
+            ctx.output.plan(&format!(
+                "  Tasks: {} task{}",
                 tasks.len(),
                 if tasks.len() == 1 { "" } else { "s" }
             ));
@@ -270,7 +273,8 @@ impl RunArgs {
                 let (module, args) = self.detect_module(task);
 
                 // Format the task details
-                ctx.output.plan(&format!("\n  {} Task {}/{}: {}",
+                ctx.output.plan(&format!(
+                    "\n  {} Task {}/{}: {}",
                     "▸".to_string(),
                     task_idx + 1,
                     tasks.len(),
@@ -281,10 +285,8 @@ impl RunArgs {
                 // Show which hosts will be affected
                 for host in &hosts {
                     let action_desc = self.get_action_description(module, args, &vars);
-                    ctx.output.plan(&format!("      [{}] {}",
-                        host,
-                        action_desc
-                    ));
+                    ctx.output
+                        .plan(&format!("      [{}] {}", host, action_desc));
                 }
 
                 // Show when condition if present
@@ -304,7 +306,8 @@ impl RunArgs {
                     };
 
                     if !handlers.is_empty() {
-                        ctx.output.plan(&format!("    Notify: {}", handlers.join(", ")));
+                        ctx.output
+                            .plan(&format!("    Notify: {}", handlers.join(", ")));
                     }
                 }
             }
@@ -346,7 +349,8 @@ impl RunArgs {
             if total_hosts.len() == 1 { "" } else { "s" }
         ));
 
-        ctx.output.plan("\nTo execute this plan, run the same command without --plan");
+        ctx.output
+            .plan("\nTo execute this plan, run the same command without --plan");
 
         Ok(())
     }
@@ -374,14 +378,14 @@ impl RunArgs {
                 let name = args
                     .and_then(|a| a.get("name"))
                     .and_then(|n| {
-                        n.as_str()
-                            .map(|s| s.to_string())
-                            .or_else(|| n.as_sequence().map(|seq| {
+                        n.as_str().map(|s| s.to_string()).or_else(|| {
+                            n.as_sequence().map(|seq| {
                                 seq.iter()
                                     .filter_map(|v| v.as_str())
                                     .collect::<Vec<_>>()
                                     .join(", ")
-                            }))
+                            })
+                        })
                     })
                     .unwrap_or_else(|| "<package>".to_string());
                 let templated_name = Self::template_string(&name, vars);
@@ -389,8 +393,13 @@ impl RunArgs {
                     .and_then(|a| a.get("state"))
                     .and_then(|s| s.as_str())
                     .unwrap_or("present");
-                format!("will {} package: {}",
-                    if state == "absent" { "remove" } else { "install" },
+                format!(
+                    "will {} package: {}",
+                    if state == "absent" {
+                        "remove"
+                    } else {
+                        "install"
+                    },
                     templated_name
                 )
             }
@@ -449,8 +458,13 @@ impl RunArgs {
                     .and_then(|a| a.get("state"))
                     .and_then(|s| s.as_str())
                     .unwrap_or("present");
-                format!("will {} user: {}",
-                    if state == "absent" { "remove" } else { "create/update" },
+                format!(
+                    "will {} user: {}",
+                    if state == "absent" {
+                        "remove"
+                    } else {
+                        "create/update"
+                    },
                     name
                 )
             }
@@ -463,8 +477,13 @@ impl RunArgs {
                     .and_then(|a| a.get("state"))
                     .and_then(|s| s.as_str())
                     .unwrap_or("present");
-                format!("will {} group: {}",
-                    if state == "absent" { "remove" } else { "create/update" },
+                format!(
+                    "will {} group: {}",
+                    if state == "absent" {
+                        "remove"
+                    } else {
+                        "create/update"
+                    },
                     name
                 )
             }

@@ -1,0 +1,21 @@
+# Example tasks file for testing import_tasks
+
+- name: Update package cache
+  command: apt-get update
+  when: ansible_os_family == 'Debian'
+
+- name: Install required packages
+  package:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - curl
+    - wget
+    - git
+
+- name: Create system user
+  user:
+    name: "{{ service_user }}"
+    system: yes
+    home: /var/lib/{{ service_user }}
+    shell: /bin/false

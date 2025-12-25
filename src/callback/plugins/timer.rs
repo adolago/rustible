@@ -768,10 +768,7 @@ mod tests {
     fn test_format_duration_human() {
         assert_eq!(format_duration_human(Duration::from_micros(500)), "500us");
         assert_eq!(format_duration_human(Duration::from_millis(50)), "50.000ms");
-        assert_eq!(
-            format_duration_human(Duration::from_millis(1500)),
-            "1.500s"
-        );
+        assert_eq!(format_duration_human(Duration::from_millis(1500)), "1.500s");
         assert_eq!(format_duration_human(Duration::from_secs(90)), "1m 30s");
         assert_eq!(
             format_duration_human(Duration::from_secs(3700)),
@@ -810,8 +807,20 @@ mod tests {
         let timer = TimerCallback::default();
 
         // Add timings with explicit durations
-        timer.record_task_complete("fast", "host1", true, false, Some(Duration::from_millis(10)));
-        timer.record_task_complete("slow", "host1", true, false, Some(Duration::from_millis(100)));
+        timer.record_task_complete(
+            "fast",
+            "host1",
+            true,
+            false,
+            Some(Duration::from_millis(10)),
+        );
+        timer.record_task_complete(
+            "slow",
+            "host1",
+            true,
+            false,
+            Some(Duration::from_millis(100)),
+        );
         timer.record_task_complete(
             "medium",
             "host1",

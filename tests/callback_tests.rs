@@ -1149,7 +1149,9 @@ async fn test_empty_hosts_list() {
     let callback = MockCallback::new();
     let empty_hosts: Vec<String> = vec![];
 
-    callback.on_play_start("play_with_no_hosts", &empty_hosts).await;
+    callback
+        .on_play_start("play_with_no_hosts", &empty_hosts)
+        .await;
 
     assert!(callback.play_start_called.load(Ordering::SeqCst));
     assert!(callback.hosts.read().is_empty());
@@ -1203,11 +1205,15 @@ async fn test_empty_facts() {
 #[tokio::test]
 async fn test_unicode_playbook_name() {
     let callback = MockCallback::new();
-    let unicode_name = "playbook_\u{1F680}_\u{4E2D}\u{6587}_\u{0441}\u{043A}\u{0440}\u{0438}\u{043F}\u{0442}";
+    let unicode_name =
+        "playbook_\u{1F680}_\u{4E2D}\u{6587}_\u{0441}\u{043A}\u{0440}\u{0438}\u{043F}\u{0442}";
 
     callback.on_playbook_start(unicode_name).await;
 
-    assert!(callback.playbook_names.read().contains(&unicode_name.to_string()));
+    assert!(callback
+        .playbook_names
+        .read()
+        .contains(&unicode_name.to_string()));
 }
 
 #[tokio::test]
@@ -1217,7 +1223,10 @@ async fn test_special_characters_in_task_name() {
 
     callback.on_task_start(special_name, "host").await;
 
-    assert!(callback.task_names.read().contains(&special_name.to_string()));
+    assert!(callback
+        .task_names
+        .read()
+        .contains(&special_name.to_string()));
 }
 
 #[tokio::test]
@@ -1227,7 +1236,10 @@ async fn test_newlines_in_names() {
 
     callback.on_task_start(name_with_newlines, "host").await;
 
-    assert!(callback.task_names.read().contains(&name_with_newlines.to_string()));
+    assert!(callback
+        .task_names
+        .read()
+        .contains(&name_with_newlines.to_string()));
 }
 
 // ============================================================================
@@ -1237,9 +1249,8 @@ async fn test_newlines_in_names() {
 #[tokio::test]
 async fn test_many_callbacks_registered() {
     let mut aggregator = CallbackAggregator::new();
-    let callbacks: Vec<Arc<MockCallback>> = (0..100)
-        .map(|_| Arc::new(MockCallback::new()))
-        .collect();
+    let callbacks: Vec<Arc<MockCallback>> =
+        (0..100).map(|_| Arc::new(MockCallback::new())).collect();
 
     for cb in &callbacks {
         aggregator.add_callback(cb.clone());
@@ -1596,14 +1607,18 @@ async fn test_callback_manager_full_workflow() {
 
     // Full workflow
     manager.dispatch_playbook_start("deploy").await;
-    manager.dispatch_play_start("Configure servers", &hosts).await;
+    manager
+        .dispatch_play_start("Configure servers", &hosts)
+        .await;
 
     let mut facts = Facts::new();
     facts.set("os", json!("linux"));
     manager.dispatch_facts_gathered("host1", &facts).await;
     manager.dispatch_facts_gathered("host2", &facts).await;
 
-    manager.dispatch_task_start("Install package", "host1").await;
+    manager
+        .dispatch_task_start("Install package", "host1")
+        .await;
     let success_result = ExecutionResult {
         host: "host1".to_string(),
         task_name: "Install package".to_string(),
@@ -1613,7 +1628,9 @@ async fn test_callback_manager_full_workflow() {
     };
     manager.dispatch_task_complete(&success_result).await;
 
-    manager.dispatch_task_start("Install package", "host2").await;
+    manager
+        .dispatch_task_start("Install package", "host2")
+        .await;
     let failed_result = ExecutionResult {
         host: "host2".to_string(),
         task_name: "Install package".to_string(),
@@ -1660,11 +1677,10 @@ async fn test_module_result_serialization() {
 
 #[tokio::test]
 async fn test_module_result_with_data_serialization() {
-    let result = ModuleResult::ok("Command executed")
-        .with_data(json!({
-            "stdout": "Hello World",
-            "exit_code": 0
-        }));
+    let result = ModuleResult::ok("Command executed").with_data(json!({
+        "stdout": "Hello World",
+        "exit_code": 0
+    }));
 
     let json = serde_json::to_string(&result).unwrap();
 
@@ -1989,7 +2005,9 @@ async fn test_filtering_callback_combined_filters() {
         .with_host_filter("target_host")
         .with_task_filter("important_task");
 
-    callback.on_task_start("important_task", "target_host").await;
+    callback
+        .on_task_start("important_task", "target_host")
+        .await;
     callback.on_task_start("important_task", "other_host").await;
     callback.on_task_start("other_task", "target_host").await;
     callback.on_task_start("other_task", "other_host").await;

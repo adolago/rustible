@@ -41,6 +41,130 @@ pub struct PrewarmResult {
     pub failures: usize,
 }
 
+/// Result of a warmup operation
+#[derive(Debug, Clone, Default)]
+pub struct WarmupResult {
+    /// Total number of hosts attempted
+    pub total_hosts: usize,
+    /// Number of hosts with at least one successful connection
+    pub successful_hosts: usize,
+    /// Number of hosts with no successful connections
+    pub failed_hosts: usize,
+    /// Total number of connection attempts
+    pub total_connections: usize,
+    /// Number of successful connections
+    pub successful_connections: usize,
+    /// Number of failed connections
+    pub failed_connections: usize,
+    /// Total warmup duration in milliseconds
+    pub warmup_duration_ms: f64,
+}
+
+impl WarmupResult {
+    /// Check if warmup was fully successful
+    pub fn is_success(&self) -> bool {
+        self.failed_hosts == 0 && self.failed_connections == 0
+    }
+
+    /// Get success rate as a percentage
+    pub fn success_rate(&self) -> f64 {
+        if self.total_connections == 0 {
+            100.0
+        } else {
+            (self.successful_connections as f64 / self.total_connections as f64) * 100.0
+        }
+    }
+}
+
+/// Result of a health check operation
+#[derive(Debug, Clone, Default)]
+pub struct HealthCheckResult {
+    /// Number of healthy connections
+    pub healthy_connections: usize,
+    /// Number of unhealthy connections found
+    pub unhealthy_connections: usize,
+    /// Number of connections removed from pool
+    pub removed_connections: usize,
+    /// Health check duration in milliseconds
+    pub check_duration_ms: f64,
+}
+
+impl HealthCheckResult {
+    /// Check if all connections are healthy
+    pub fn all_healthy(&self) -> bool {
+        self.unhealthy_connections == 0
+    }
+
+    /// Get health rate as a percentage
+    pub fn health_rate(&self) -> f64 {
+        let total = self.healthy_connections + self.unhealthy_connections;
+        if total == 0 {
+            100.0
+        } else {
+            (self.healthy_connections as f64 / total as f64) * 100.0
+        }
+    }
+}
+
+/// Internal result for per-host health check
+#[derive(Debug, Default)]
+struct HostHealthResult {
+    healthy: usize,
+    unhealthy: usize,
+    removed: usize,
+}
+
+/// Pool utilization metrics
+#[derive(Debug, Clone)]
+pub struct PoolUtilizationMetrics {
+    /// Total connections in pool
+    pub total_connections: usize,
+    /// Currently active connections
+    pub active_connections: usize,
+    /// Currently idle connections
+    pub idle_connections: usize,
+    /// Maximum allowed connections
+    pub max_connections: usize,
+    /// Current utilization percentage
+    pub utilization_percent: f64,
+    /// Hit rate percentage (cache hits / total requests)
+    pub hit_rate_percent: f64,
+    /// Average connection creation time in milliseconds
+    pub avg_connection_time_ms: f64,
+    /// Average wait time for connections in milliseconds
+    pub avg_wait_time_ms: f64,
+    /// Peak number of active connections observed
+    pub peak_active: usize,
+    /// Per-host utilization breakdown
+    pub per_host: Vec<HostUtilization>,
+}
+
+/// Per-host utilization statistics
+#[derive(Debug, Clone)]
+pub struct HostUtilization {
+    /// Connection key (ssh://user@host:port)
+    pub key: String,
+    /// Total connections for this host
+    pub total: usize,
+    /// Active connections for this host
+    pub active: usize,
+    /// Idle connections for this host
+    pub idle: usize,
+    /// Maximum allowed for this host
+    pub max_allowed: usize,
+}
+
+impl HostUtilization {
+    /// Get utilization percentage for this host
+    pub fn utilization_percent(&self) -> f64 {
+        if self.max_allowed == 0 {
+            0.0
+        } else {
+            (self.total as f64 / self.max_allowed as f64) * 100.0
+        }
+    }
+}
+
 /// Configuration for the connection pool
 #[derive(Debug, Clone)]
 pub struct PoolConfig {
@@ -191,6 +315,7 @@ struct PooledConnection {
 
 impl PooledConnection {
     /// Create a new pooled connection
+    #[allow(dead_code)]
     fn new(
         connection: RusshConnection,
         host: String,
@@ -334,6 +459,64 @@ pub struct PoolStats {
     pub ondemand_connections: usize,
     /// Number of failed pre-warm attempts
     pub prewarm_failures: usize,
+    /// Total connection creation time in nanoseconds (for profiling)
+    pub total_connection_time_ns: u64,
+    /// Number of connection creations (for average calculation)
+    pub connection_creation_count: usize,
+    /// Maximum connection creation time observed (nanoseconds)
+    pub max_connection_time_ns: u64,
+    /// Minimum connection creation time observed (nanoseconds)
+    pub min_connection_time_ns: u64,
+    /// Number of successful health checks
+    pub successful_health_checks: usize,
+    /// Total wait time for connections (nanoseconds)
+    pub total_wait_time_ns: u64,
+    /// Number of times a connection was waited for
+    pub wait_count: usize,
+    /// Peak number of active connections observed
+    pub peak_active_connections: usize,
+    /// Number of connections warmed up during startup
+    pub warmup_connections: usize,
+}
+
+impl PoolStats {
+    /// Calculate the average connection creation time in milliseconds
+    pub fn avg_connection_time_ms(&self) -> f64 {
+        if self.connection_creation_count == 0 {
+            0.0
+        } else {
+            (self.total_connection_time_ns as f64 / self.connection_creation_count as f64)
+                / 1_000_000.0
+        }
+    }
+
+    /// Calculate the average wait time in milliseconds
+    pub fn avg_wait_time_ms(&self) -> f64 {
+        if self.wait_count == 0 {
+            0.0
+        } else {
+            (self.total_wait_time_ns as f64 / self.wait_count as f64) / 1_000_000.0
+        }
+    }
+
+    /// Calculate the hit rate (0.0 to 1.0)
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
+    }
+
+    /// Calculate pool utilization (active / total)
+    pub fn utilization(&self) -> f64 {
+        if self.total_connections == 0 {
+            0.0
+        } else {
+            self.active_connections as f64 / self.total_connections as f64
+        }
+    }
 }
 
 /// Thread-safe connection pool for Russh SSH connections
@@ -445,10 +628,9 @@ impl RusshConnectionPool {
                         }
                         debug!(key = %key, "Reusing existing connection from pool");
                         return Some(PooledConnectionHandle::new(Arc::clone(pooled), self));
-                    } else {
-                        pooled.release();
-                        warn!(key = %key, "Found dead connection in pool, will be cleaned up");
                     }
+                    pooled.release();
+                    warn!(key = %key, "Found dead connection in pool, will be cleaned up");
                 }
             }
         }
@@ -486,6 +668,8 @@ impl RusshConnectionPool {
 
         debug!(host = %host, port = %port, user = %user, "Creating new SSH connection");
 
+        // Profile connection creation time
+        let connect_start = Instant::now();
         let connection = RusshConnection::connect(
             host,
             port,
@@ -494,6 +678,7 @@ impl RusshConnectionPool {
             &self.connection_config,
         )
         .await?;
+        let connect_duration_ns = connect_start.elapsed().as_nanos() as u64;
 
         let pooled = Arc::new(PooledConnection::with_prewarm_flag(
             connection,
@@ -519,14 +704,29 @@ impl RusshConnectionPool {
             stats.misses += 1;
             stats.total_connections += 1;
             stats.active_connections += 1;
+            // Track peak active connections
+            if stats.active_connections > stats.peak_active_connections {
+                stats.peak_active_connections = stats.active_connections;
+            }
             if is_prewarmed {
                 stats.prewarmed_connections += 1;
             } else {
                 stats.ondemand_connections += 1;
             }
+            // Update connection creation timing stats
+            stats.total_connection_time_ns += connect_duration_ns;
+            stats.connection_creation_count += 1;
+            if stats.min_connection_time_ns == 0
+                || connect_duration_ns < stats.min_connection_time_ns
+            {
+                stats.min_connection_time_ns = connect_duration_ns;
+            }
+            if connect_duration_ns > stats.max_connection_time_ns {
+                stats.max_connection_time_ns = connect_duration_ns;
+            }
         }
 
-        info!(key = %key, prewarmed = %is_prewarmed, "Created new connection and added to pool");
+        info!(key = %key, prewarmed = %is_prewarmed, connect_time_ms = %((connect_duration_ns as f64) / 1_000_000.0), "Created new connection and added to pool");
         Ok(PooledConnectionHandle::new(pooled, self))
     }
 
@@ -537,6 +737,13 @@ impl RusshConnectionPool {
 
         while start.elapsed() < timeout {
             if let Some(conn) = self.try_get_existing(key).await {
+                // Track wait time
+                let wait_ns = start.elapsed().as_nanos() as u64;
+                {
+                    let mut stats = self.stats.write().await;
+                    stats.total_wait_time_ns += wait_ns;
+                    stats.wait_count += 1;
+                }
                 return Ok(conn);
             }
             tokio::time::sleep(check_interval).await;
@@ -903,6 +1110,223 @@ impl RusshConnectionPool {
         }
 
         false
+    }
+
+    /// Warm up the connection pool for specified hosts
+    ///
+    /// This method pre-creates connections to reduce latency for the first requests.
+    /// Call this during application startup to ensure connections are ready.
+    ///
+    /// # Arguments
+    /// * `hosts` - List of (host, port, user, host_config) tuples to warm up
+    /// * `connections_per_host` - Number of connections to create per host
+    ///
+    /// # Returns
+    /// A `WarmupResult` containing success/failure counts
+    pub async fn warmup(
+        self: &Arc<Self>,
+        hosts: &[(String, u16, String, Option<HostConfig>)],
+        connections_per_host: usize,
+    ) -> WarmupResult {
+        if self.shutdown.load(Ordering::SeqCst) {
+            return WarmupResult {
+                total_hosts: hosts.len(),
+                successful_hosts: 0,
+                failed_hosts: hosts.len(),
+                total_connections: 0,
+                successful_connections: 0,
+                failed_connections: 0,
+                warmup_duration_ms: 0.0,
+            };
+        }
+
+        let start = Instant::now();
+        info!(
+            hosts = %hosts.len(),
+            connections_per_host = %connections_per_host,
+            "Starting connection pool warmup"
+        );
+
+        let mut successful_hosts = 0;
+        let mut failed_hosts = 0;
+        let mut successful_connections = 0;
+        let mut failed_connections = 0;
+
+        // Warm up each host
+        for (host, port, user, host_config) in hosts {
+            let result = self
+                .prewarm(host, *port, user, connections_per_host, host_config.clone())
+                .await;
+
+            successful_connections += result.success;
+            failed_connections += result.failures;
+
+            if result.success > 0 {
+                successful_hosts += 1;
+            } else {
+                failed_hosts += 1;
+            }
+        }
+
+        let warmup_duration = start.elapsed();
+
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.warmup_connections = successful_connections;
+        }
+
+        info!(
+            successful_hosts = %successful_hosts,
+            failed_hosts = %failed_hosts,
+            successful_connections = %successful_connections,
+            failed_connections = %failed_connections,
+            duration_ms = %warmup_duration.as_millis(),
+            "Connection pool warmup complete"
+        );
+
+        WarmupResult {
+            total_hosts: hosts.len(),
+            successful_hosts,
+            failed_hosts,
+            total_connections: successful_connections + failed_connections,
+            successful_connections,
+            failed_connections,
+            warmup_duration_ms: warmup_duration.as_secs_f64() * 1000.0,
+        }
+    }
+
+    /// Perform enhanced health check with connection validation
+    ///
+    /// This method goes beyond simple liveness checks by actually exercising
+    /// the connections to ensure they're fully functional.
+    pub async fn deep_health_check(&self) -> HealthCheckResult {
+        if !self.config.enable_health_checks {
+            return HealthCheckResult::default();
+        }
+
+        let start = Instant::now();
+        let timeout = self.config.health_check_timeout;
+
+        let keys: Vec<String> = {
+            let connections = self.connections.read().await;
+            connections.keys().cloned().collect()
+        };
+
+        let mut healthy = 0;
+        let mut unhealthy = 0;
+        let mut removed = 0;
+
+        for key in keys {
+            let result = self.deep_health_check_host(&key, timeout).await;
+            healthy += result.healthy;
+            unhealthy += result.unhealthy;
+            removed += result.removed;
+        }
+
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.successful_health_checks += healthy;
+            stats.health_check_failures += unhealthy;
+        }
+
+        HealthCheckResult {
+            healthy_connections: healthy,
+            unhealthy_connections: unhealthy,
+            removed_connections: removed,
+            check_duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+        }
+    }
+
+    /// Perform deep health check for a specific host
+    async fn deep_health_check_host(&self, key: &str, timeout: Duration) -> HostHealthResult {
+        let connections_to_check: Vec<Arc<PooledConnection>> = {
+            let connections = self.connections.read().await;
+            connections.get(key).cloned().unwrap_or_default()
+        };
+
+        let mut healthy = 0;
+        let mut unhealthy = 0;
+        let mut dead_connections = Vec::new();
+
+        for pooled in connections_to_check {
+            // Skip connections currently in use
+            if pooled.in_use.load(Ordering::SeqCst) {
+                continue;
+            }
+
+            // Check if connection is alive with timeout
+            if pooled.is_alive_with_timeout(timeout).await {
+                healthy += 1;
+            } else {
+                unhealthy += 1;
+                dead_connections.push(pooled);
+            }
+        }
+
+        // Remove dead connections
+        let removed = if !dead_connections.is_empty() {
+            let mut connections = self.connections.write().await;
+            if let Some(host_connections) = connections.get_mut(key) {
+                let before_len = host_connections.len();
+                host_connections
+                    .retain(|c| !dead_connections.iter().any(|dead| Arc::ptr_eq(c, dead)));
+                let removed_count = before_len - host_connections.len();
+
+                if removed_count > 0 {
+                    warn!(key = %key, count = %removed_count, "Removed unhealthy connections");
+                    let mut stats = self.stats.write().await;
+                    stats.total_connections = stats.total_connections.saturating_sub(removed_count);
+                }
+
+                removed_count
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        HostHealthResult {
+            healthy,
+            unhealthy,
+            removed,
+        }
+    }
+
+    /// Get current pool utilization metrics
+    pub async fn get_utilization_metrics(&self) -> PoolUtilizationMetrics {
+        let stats = self.stats.read().await;
+        let connections = self.connections.read().await;
+
+        let mut per_host_stats = Vec::new();
+        for (key, conns) in connections.iter() {
+            let active = conns
+                .iter()
+                .filter(|c| c.in_use.load(Ordering::Relaxed))
+                .count();
+            per_host_stats.push(HostUtilization {
+                key: key.clone(),
+                total: conns.len(),
+                active,
+                idle: conns.len() - active,
+                max_allowed: self.config.max_connections_per_host,
+            });
+        }
+
+        PoolUtilizationMetrics {
+            total_connections: stats.total_connections,
+            active_connections: stats.active_connections,
+            idle_connections: stats.idle_connections,
+            max_connections: self.config.max_total_connections,
+            utilization_percent: stats.utilization() * 100.0,
+            hit_rate_percent: stats.hit_rate() * 100.0,
+            avg_connection_time_ms: stats.avg_connection_time_ms(),
+            avg_wait_time_ms: stats.avg_wait_time_ms(),
+            peak_active: stats.peak_active_connections,
+            per_host: per_host_stats,
+        }
     }
 
     async fn maintain_minimum_connections(self: &Arc<Self>) {

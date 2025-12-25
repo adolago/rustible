@@ -27,6 +27,7 @@ pub struct CommandContext {
     /// Extra variables
     pub extra_vars: Vec<String>,
     /// Verbosity level
+    #[allow(dead_code)]
     pub verbosity: u8,
     /// Check mode (dry-run)
     pub check_mode: bool,
@@ -35,8 +36,10 @@ pub struct CommandContext {
     /// Limit pattern
     pub limit: Option<String>,
     /// Number of parallel forks
+    #[allow(dead_code)]
     pub forks: usize,
     /// Connection timeout
+    #[allow(dead_code)]
     pub timeout: u64,
     /// Connection pool for reusing SSH connections
     pub connections: Arc<RwLock<HashMap<String, Arc<dyn Connection + Send + Sync>>>>,
@@ -197,6 +200,7 @@ impl CommandContext {
 
 /// Trait for runnable commands
 #[async_trait::async_trait]
+#[allow(dead_code)]
 pub trait Runnable {
     /// Execute the command
     async fn run(&self, ctx: &mut CommandContext) -> Result<i32>;

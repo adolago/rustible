@@ -1,0 +1,53 @@
+# Dockerfile for Web Server E2E Test Target
+# Ubuntu-based container with systemd simulation for testing nginx/apache setup
+FROM ubuntu:24.04
+
+# Avoid interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install base packages
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    sudo \
+    python3 \
+    python3-pip \
+    curl \
+    wget \
+    vim \
+    netcat-openbsd \
+    iproute2 \
+    procps \
+    systemd \
+    systemd-sysv \
+    dbus \
+    && rm -rf /var/lib/apt/lists/*
+
+# Setup SSH
+RUN mkdir -p /var/run/sshd \
+    && ssh-keygen -A
+
+# Create test user with sudo privileges
+RUN useradd -m -s /bin/bash testuser \
+    && echo "testuser:testpassword" | chpasswd \
+    && echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Setup SSH for testuser
+RUN mkdir -p /home/testuser/.ssh \
+    && chmod 700 /home/testuser/.ssh \
+    && chown -R testuser:testuser /home/testuser/.ssh
+
+# Pre-create directories used in tests
+RUN mkdir -p /var/www/html \
+    && mkdir -p /etc/nginx/sites-available \
+    && mkdir -p /etc/nginx/sites-enabled \
+    && mkdir -p /var/log/nginx
+
+# Expose SSH and HTTP ports
+EXPOSE 22 80 443
+
+# Use a simple init script instead of systemd (for container compatibility)
+COPY docker/entrypoint-webserver.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/usr/sbin/sshd", "-D"]

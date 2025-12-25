@@ -83,10 +83,7 @@ impl CaptureBuffer {
 
     /// Get all lines from the buffer.
     pub fn get_lines(&self) -> Vec<String> {
-        self.get_output()
-            .lines()
-            .map(|s| s.to_string())
-            .collect()
+        self.get_output().lines().map(|s| s.to_string()).collect()
     }
 
     /// Count occurrences of a pattern in the output.
@@ -123,7 +120,7 @@ fn strip_ansi_codes(s: &str) -> String {
             if let Some(&next) = chars.peek() {
                 if next == '[' {
                     chars.next(); // consume '['
-                    // Skip until we hit a letter (end of sequence)
+                                  // Skip until we hit a letter (end of sequence)
                     while let Some(&ch) = chars.peek() {
                         chars.next();
                         if ch.is_ascii_alphabetic() {
@@ -554,11 +551,7 @@ async fn test_exact_format_task_changed() {
 #[tokio::test]
 async fn test_exact_format_play_start() {
     let callback = OutputCapturingCallback::without_colors();
-    let hosts = vec![
-        "web1".to_string(),
-        "web2".to_string(),
-        "web3".to_string(),
-    ];
+    let hosts = vec!["web1".to_string(), "web2".to_string(), "web3".to_string()];
 
     callback.on_play_start("Install packages", &hosts).await;
 
@@ -816,7 +809,9 @@ async fn test_complete_playbook_execution_output() {
     // Full playbook execution
     callback.on_playbook_start("deploy_app").await;
 
-    callback.on_play_start("Configure web servers", &hosts).await;
+    callback
+        .on_play_start("Configure web servers", &hosts)
+        .await;
 
     // Task on host1
     callback.on_task_start("Install nginx", "web1").await;

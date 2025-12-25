@@ -2,13 +2,13 @@
 //!
 //! Tests delegate_to and delegate_facts directives
 
+use rustible::executor::parallelization::ParallelizationManager;
+use rustible::executor::runtime::ExecutionContext;
 use rustible::executor::runtime::RuntimeContext;
 use rustible::executor::task::{Task, TaskStatus};
-use rustible::executor::runtime::ExecutionContext;
-use rustible::executor::parallelization::ParallelizationManager;
-use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 
 #[tokio::test]
 async fn test_delegate_to_basic() {
@@ -23,8 +23,7 @@ async fn test_delegate_to_basic() {
     let parallelization = Arc::new(ParallelizationManager::new());
 
     // Create a task that delegates to localhost
-    let task = Task::new("Debug on localhost", "debug")
-        .arg("msg", "Hello from delegated task");
+    let task = Task::new("Debug on localhost", "debug").arg("msg", "Hello from delegated task");
 
     // Create task with delegate_to set
     let mut delegated_task = task.clone();
@@ -33,7 +32,9 @@ async fn test_delegate_to_basic() {
     // Execute on web1 but delegate to localhost
     let ctx = ExecutionContext::new("web1");
 
-    let result = delegated_task.execute(&ctx, &runtime, &handlers, &notified, &parallelization).await;
+    let result = delegated_task
+        .execute(&ctx, &runtime, &handlers, &notified, &parallelization)
+        .await;
 
     assert!(result.is_ok());
     let task_result = result.unwrap();
@@ -54,13 +55,16 @@ async fn test_delegate_facts_false() {
 
     // Create a set_fact task that delegates to localhost but stores facts on web1
     let mut task = Task::new("Set fact", "set_fact");
-    task.args.insert("test_var".to_string(), serde_json::json!("test_value"));
+    task.args
+        .insert("test_var".to_string(), serde_json::json!("test_value"));
     task.delegate_to = Some("localhost".to_string());
     task.delegate_facts = Some(false); // Facts should go to original host (web1)
 
     let ctx = ExecutionContext::new("web1");
 
-    let result = task.execute(&ctx, &runtime, &handlers, &notified, &parallelization).await;
+    let result = task
+        .execute(&ctx, &runtime, &handlers, &notified, &parallelization)
+        .await;
 
     assert!(result.is_ok());
 
@@ -87,13 +91,18 @@ async fn test_delegate_facts_true() {
 
     // Create a set_fact task that delegates to localhost and stores facts there
     let mut task = Task::new("Set fact on delegate", "set_fact");
-    task.args.insert("delegate_var".to_string(), serde_json::json!("delegate_value"));
+    task.args.insert(
+        "delegate_var".to_string(),
+        serde_json::json!("delegate_value"),
+    );
     task.delegate_to = Some("localhost".to_string());
     task.delegate_facts = Some(true); // Facts should go to delegate host (localhost)
 
     let ctx = ExecutionContext::new("web1");
 
-    let result = task.execute(&ctx, &runtime, &handlers, &notified, &parallelization).await;
+    let result = task
+        .execute(&ctx, &runtime, &handlers, &notified, &parallelization)
+        .await;
 
     assert!(result.is_ok());
 
@@ -121,13 +130,18 @@ async fn test_delegate_facts_default_false() {
     // Create a set_fact task that delegates but doesn't specify delegate_facts
     // Default should be false (facts go to original host)
     let mut task = Task::new("Set fact default", "set_fact");
-    task.args.insert("default_var".to_string(), serde_json::json!("default_value"));
+    task.args.insert(
+        "default_var".to_string(),
+        serde_json::json!("default_value"),
+    );
     task.delegate_to = Some("localhost".to_string());
     // delegate_facts not set, should default to false
 
     let ctx = ExecutionContext::new("web1");
 
-    let result = task.execute(&ctx, &runtime, &handlers, &notified, &parallelization).await;
+    let result = task
+        .execute(&ctx, &runtime, &handlers, &notified, &parallelization)
+        .await;
 
     assert!(result.is_ok());
 
@@ -154,13 +168,16 @@ async fn test_delegate_with_register() {
 
     // Create a task that delegates and registers result
     let mut task = Task::new("Debug and register", "debug");
-    task.args.insert("msg".to_string(), serde_json::json!("Delegated message"));
+    task.args
+        .insert("msg".to_string(), serde_json::json!("Delegated message"));
     task.delegate_to = Some("localhost".to_string());
     task.register = Some("delegate_result".to_string());
 
     let ctx = ExecutionContext::new("web1");
 
-    let result = task.execute(&ctx, &runtime, &handlers, &notified, &parallelization).await;
+    let result = task
+        .execute(&ctx, &runtime, &handlers, &notified, &parallelization)
+        .await;
 
     assert!(result.is_ok());
 
@@ -185,11 +202,14 @@ async fn test_no_delegation() {
     let parallelization = Arc::new(ParallelizationManager::new());
 
     let mut task = Task::new("Normal task", "set_fact");
-    task.args.insert("normal_var".to_string(), serde_json::json!("normal_value"));
+    task.args
+        .insert("normal_var".to_string(), serde_json::json!("normal_value"));
 
     let ctx = ExecutionContext::new("web1");
 
-    let result = task.execute(&ctx, &runtime, &handlers, &notified, &parallelization).await;
+    let result = task
+        .execute(&ctx, &runtime, &handlers, &notified, &parallelization)
+        .await;
 
     assert!(result.is_ok());
 

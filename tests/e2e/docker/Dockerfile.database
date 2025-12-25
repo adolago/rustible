@@ -1,0 +1,54 @@
+# Dockerfile for Database E2E Test Target
+# Ubuntu-based container for testing PostgreSQL/MySQL configuration
+FROM ubuntu:24.04
+
+# Avoid interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install base packages
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    sudo \
+    python3 \
+    python3-pip \
+    curl \
+    wget \
+    vim \
+    netcat-openbsd \
+    iproute2 \
+    procps \
+    postgresql-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# Setup SSH
+RUN mkdir -p /var/run/sshd \
+    && ssh-keygen -A
+
+# Create test user with sudo privileges
+RUN useradd -m -s /bin/bash testuser \
+    && echo "testuser:testpassword" | chpasswd \
+    && echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Create postgres user (simulated, not running actual PostgreSQL in base image)
+RUN useradd -m -s /bin/bash postgres || true
+
+# Setup SSH for testuser
+RUN mkdir -p /home/testuser/.ssh \
+    && chmod 700 /home/testuser/.ssh \
+    && chown -R testuser:testuser /home/testuser/.ssh
+
+# Pre-create database directories
+RUN mkdir -p /var/lib/postgresql \
+    && mkdir -p /etc/postgresql \
+    && mkdir -p /var/log/postgresql \
+    && mkdir -p /var/run/postgresql \
+    && chown -R postgres:postgres /var/lib/postgresql /var/log/postgresql /var/run/postgresql 2>/dev/null || true
+
+# Expose SSH and database ports
+EXPOSE 22 5432 3306
+
+COPY docker/entrypoint-database.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/usr/sbin/sshd", "-D"]

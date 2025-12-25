@@ -34,12 +34,17 @@ where
             }
         }
         JsonValue::Null => Ok(false),
-        _ => Err(D::Error::custom(format!("invalid boolean value: {:?}", value))),
+        _ => Err(D::Error::custom(format!(
+            "invalid boolean value: {:?}",
+            value
+        ))),
     }
 }
 
 /// Helper function to deserialize optional flexible booleans
-fn deserialize_option_flexible_bool<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
+fn deserialize_option_flexible_bool<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<bool>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -61,7 +66,10 @@ where
                 Err(D::Error::custom("invalid boolean number"))
             }
         }
-        Some(other) => Err(D::Error::custom(format!("invalid boolean value: {:?}", other))),
+        Some(other) => Err(D::Error::custom(format!(
+            "invalid boolean value: {:?}",
+            other
+        ))),
     }
 }
 
@@ -153,7 +161,10 @@ pub struct PlayDefinition {
     #[serde(default = "default_hosts")]
     pub hosts: String,
     /// Gather facts
-    #[serde(default = "default_gather_facts", deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        default = "default_gather_facts",
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub gather_facts: bool,
     /// Become root
     #[serde(default, deserialize_with = "deserialize_flexible_bool")]
@@ -209,6 +220,9 @@ pub struct PlayDefinition {
     /// Ignore unreachable hosts
     #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub ignore_unreachable: bool,
+    /// Force handlers to run even if play fails
+    #[serde(default, deserialize_with = "deserialize_flexible_bool")]
+    pub force_handlers: bool,
     /// Fact gathering subset
     #[serde(default)]
     pub gather_subset: Vec<String>,
@@ -537,6 +551,8 @@ pub struct Play {
     pub strategy: Option<String>,
     /// Ignore unreachable hosts
     pub ignore_unreachable: bool,
+    /// Force handlers to run even if play fails
+    pub force_handlers: bool,
 }
 
 impl Play {
@@ -563,6 +579,7 @@ impl Play {
             max_fail_percentage: None,
             strategy: None,
             ignore_unreachable: false,
+            force_handlers: false,
         }
     }
 
@@ -584,6 +601,7 @@ impl Play {
         play.tags = def.tags;
         play.strategy = def.strategy;
         play.ignore_unreachable = def.ignore_unreachable;
+        play.force_handlers = def.force_handlers;
         play.max_fail_percentage = def.max_fail_percentage;
 
         // Parse serial value into SerialSpec
@@ -647,7 +665,7 @@ pub struct Role {
     pub name: String,
     /// Role path
     pub path: Option<PathBuf>,
-    /// Role variables
+    /// Role variables (passed when including role - highest role precedence)
     pub vars: IndexMap<String, JsonValue>,
     /// When condition
     pub when: Option<String>,
@@ -655,14 +673,22 @@ pub struct Role {
     pub tags: Vec<String>,
     /// Become override
     pub r#become: Option<bool>,
-    /// Default variables
+    /// Default variables (from defaults/main.yml - lowest precedence)
     pub defaults: IndexMap<String, JsonValue>,
+    /// Role vars (from vars/main.yml - higher precedence than defaults)
+    pub role_vars: IndexMap<String, JsonValue>,
     /// Tasks from role
     pub tasks: Vec<Task>,
     /// Handlers from role
     pub handlers: Vec<Handler>,
     /// Files included by tasks_from
     pub tasks_from: Option<String>,
+    /// Files included by vars_from
+    pub vars_from: Option<String>,
+    /// Files included by defaults_from
+    pub defaults_from: Option<String>,
+    /// Files included by handlers_from
+    pub handlers_from: Option<String>,
     /// Dependencies
     pub dependencies: Vec<Role>,
 }
@@ -678,9 +704,13 @@ impl Role {
             tags: Vec::new(),
             r#become: None,
             defaults: IndexMap::new(),
+            role_vars: IndexMap::new(),
             tasks: Vec::new(),
             handlers: Vec::new(),
             tasks_from: None,
+            vars_from: None,
+            defaults_from: None,
+            handlers_from: None,
             dependencies: Vec::new(),
         }
     }
@@ -694,19 +724,26 @@ impl Role {
         role.vars = def.vars();
         role.when = def.when().map(String::from);
 
+        // Extract all options from Full variant
         if let RoleDefinition::Full {
             tags,
             r#become: become_opt,
             tasks_from,
+            vars_from,
+            defaults_from,
+            handlers_from,
             ..
         } = &def
         {
             role.tags = tags.clone();
             role.r#become = *become_opt;
             role.tasks_from = tasks_from.clone();
+            role.vars_from = vars_from.clone();
+            role.defaults_from = defaults_from.clone();
+            role.handlers_from = handlers_from.clone();
         }
 
-        // In a full implementation, we would load the role from disk here
+        // Load the role from disk
         // Looking in: ./roles/<name>, ~/.ansible/roles/<name>, /etc/ansible/roles/<name>
 
         if let Some(playbook_path) = playbook_path {
@@ -716,14 +753,36 @@ impl Role {
             if role_path.exists() {
                 role.path = Some(role_path.clone());
 
-                // Load defaults/main.yml
-                let defaults_file = role_path.join("defaults").join("main.yml");
+                // Load defaults/main.yml (or defaults_from if specified)
+                let defaults_file = if let Some(ref defaults_from) = role.defaults_from {
+                    role_path
+                        .join("defaults")
+                        .join(format!("{}.yml", defaults_from))
+                } else {
+                    role_path.join("defaults").join("main.yml")
+                };
                 if defaults_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&defaults_file) {
                         if let Ok(defaults) =
                             serde_yaml::from_str::<IndexMap<String, JsonValue>>(&content)
                         {
                             role.defaults = defaults;
+                        }
+                    }
+                }
+
+                // Load vars/main.yml (or vars_from if specified) - higher precedence than defaults
+                let vars_file = if let Some(ref vars_from) = role.vars_from {
+                    role_path.join("vars").join(format!("{}.yml", vars_from))
+                } else {
+                    role_path.join("vars").join("main.yml")
+                };
+                if vars_file.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&vars_file) {
+                        if let Ok(role_vars) =
+                            serde_yaml::from_str::<IndexMap<String, JsonValue>>(&content)
+                        {
+                            role.role_vars = role_vars;
                         }
                     }
                 }
@@ -750,8 +809,14 @@ impl Role {
                     }
                 }
 
-                // Load handlers/main.yml
-                let handlers_file = role_path.join("handlers").join("main.yml");
+                // Load handlers/main.yml (or handlers_from if specified)
+                let handlers_file = if let Some(ref handlers_from) = role.handlers_from {
+                    role_path
+                        .join("handlers")
+                        .join(format!("{}.yml", handlers_from))
+                } else {
+                    role_path.join("handlers").join("main.yml")
+                };
                 if handlers_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&handlers_file) {
                         if let Ok(handler_defs) =
@@ -814,6 +879,71 @@ impl Role {
 
         all_handlers
     }
+
+    /// Get all variables with proper precedence (lowest to highest):
+    /// 1. defaults (from defaults/main.yml)
+    /// 2. role_vars (from vars/main.yml)
+    /// 3. vars (passed when including role)
+    ///
+    /// Returns a merged map where higher precedence values override lower ones.
+    pub fn get_all_vars(&self) -> IndexMap<String, JsonValue> {
+        let mut all_vars = IndexMap::new();
+
+        // Start with defaults (lowest precedence)
+        for (key, value) in &self.defaults {
+            all_vars.insert(key.clone(), value.clone());
+        }
+
+        // Override with role vars (from vars/main.yml)
+        for (key, value) in &self.role_vars {
+            all_vars.insert(key.clone(), value.clone());
+        }
+
+        // Override with vars passed at include time (highest role precedence)
+        for (key, value) in &self.vars {
+            all_vars.insert(key.clone(), value.clone());
+        }
+
+        all_vars
+    }
+
+    /// Get all defaults from this role and its dependencies
+    pub fn get_all_defaults(&self) -> IndexMap<String, JsonValue> {
+        let mut all_defaults = IndexMap::new();
+
+        // Get dependency defaults first
+        for dep in &self.dependencies {
+            for (key, value) in dep.get_all_defaults() {
+                all_defaults.insert(key, value);
+            }
+        }
+
+        // Our defaults override dependency defaults
+        for (key, value) in &self.defaults {
+            all_defaults.insert(key.clone(), value.clone());
+        }
+
+        all_defaults
+    }
+
+    /// Get all role_vars from this role and its dependencies
+    pub fn get_all_role_vars(&self) -> IndexMap<String, JsonValue> {
+        let mut all_role_vars = IndexMap::new();
+
+        // Get dependency role_vars first
+        for dep in &self.dependencies {
+            for (key, value) in dep.get_all_role_vars() {
+                all_role_vars.insert(key, value);
+            }
+        }
+
+        // Our role_vars override dependency role_vars
+        for (key, value) in &self.role_vars {
+            all_role_vars.insert(key.clone(), value.clone());
+        }
+
+        all_role_vars
+    }
 }
 
 /// Role metadata
@@ -853,13 +983,21 @@ fn parse_task_definition(
 
     // Handle block/rescue/always
     if let Some(block_tasks) = def.block {
+        use crate::executor::task::BlockRole;
+        use uuid::Uuid;
+
+        // Generate a unique block ID
+        let block_id = Uuid::new_v4().to_string();
+
         let mut block_parsed = Vec::new();
         for task_def in block_tasks {
             block_parsed.extend(parse_task_definition(task_def, playbook_path)?);
         }
 
-        // Apply block-level properties to all tasks
+        // Apply block-level properties to all tasks and mark as block tasks
         for mut task in block_parsed {
+            task.block_id = Some(block_id.clone());
+            task.block_role = BlockRole::Normal;
             if def.r#become {
                 task.r#become = true;
             }
@@ -874,8 +1012,12 @@ fn parse_task_definition(
         // Handle rescue tasks
         if let Some(rescue_tasks) = def.rescue {
             for task_def in rescue_tasks {
-                let rescue_parsed = parse_task_definition(task_def, playbook_path)?;
-                // Mark these as rescue tasks (in a full implementation)
+                let mut rescue_parsed = parse_task_definition(task_def, playbook_path)?;
+                // Mark these as rescue tasks
+                for task in &mut rescue_parsed {
+                    task.block_id = Some(block_id.clone());
+                    task.block_role = BlockRole::Rescue;
+                }
                 tasks.extend(rescue_parsed);
             }
         }
@@ -883,7 +1025,12 @@ fn parse_task_definition(
         // Handle always tasks
         if let Some(always_tasks) = def.always {
             for task_def in always_tasks {
-                let always_parsed = parse_task_definition(task_def, playbook_path)?;
+                let mut always_parsed = parse_task_definition(task_def, playbook_path)?;
+                // Mark these as always tasks
+                for task in &mut always_parsed {
+                    task.block_id = Some(block_id.clone());
+                    task.block_role = BlockRole::Always;
+                }
                 tasks.extend(always_parsed);
             }
         }
@@ -1000,6 +1147,13 @@ fn parse_task_definition(
             .as_ref()
             .map(|lc| lc.loop_var.clone())
             .unwrap_or_else(|| "item".to_string()),
+        loop_control: def.loop_control.map(|lc| crate::executor::task::LoopControl {
+            loop_var: lc.loop_var,
+            index_var: lc.index_var,
+            label: lc.label,
+            pause: lc.pause.map(|p| p as u64),
+            extended: lc.extended,
+        }),
         ignore_errors: def.ignore_errors,
         changed_when: def.changed_when.as_ref().map(|w| w.to_condition()),
         failed_when: def.failed_when.as_ref().map(|w| w.to_condition()),
@@ -1009,6 +1163,11 @@ fn parse_task_definition(
         tags: def.tags,
         r#become: def.r#become,
         become_user: def.become_user,
+        block_id: None,
+        block_role: crate::executor::task::BlockRole::Normal,
+        retries: None,
+        delay: None,
+        until: None,
     };
 
     tasks.push(task);
@@ -1119,10 +1278,8 @@ fn convert_serial_value_to_spec(value: SerialValue) -> crate::playbook::SerialSp
         SerialValue::Number(n) => SerialSpec::Fixed(n),
         SerialValue::Percentage(p) => SerialSpec::Percentage(p),
         SerialValue::List(list) => {
-            let specs: Vec<SerialSpec> = list
-                .into_iter()
-                .map(convert_serial_value_to_spec)
-                .collect();
+            let specs: Vec<SerialSpec> =
+                list.into_iter().map(convert_serial_value_to_spec).collect();
             SerialSpec::Progressive(specs)
         }
     }

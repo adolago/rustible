@@ -99,12 +99,7 @@ pub struct SkippedTask {
 
 impl SkippedTask {
     /// Create a new skipped task entry
-    pub fn new(
-        task_name: String,
-        host: String,
-        skip_reason: String,
-        order: u64,
-    ) -> Self {
+    pub fn new(task_name: String, host: String, skip_reason: String, order: u64) -> Self {
         Self {
             task_name,
             host,
@@ -215,8 +210,10 @@ impl FullSkipCallback {
         self.host_stats.write().clear();
         *self.playbook_start.write() = None;
         *self.current_playbook.write() = None;
-        self.task_counter.store(0, std::sync::atomic::Ordering::SeqCst);
-        self.total_tasks.store(0, std::sync::atomic::Ordering::SeqCst);
+        self.task_counter
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        self.total_tasks
+            .store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Get all skipped tasks
@@ -398,20 +395,21 @@ impl FullSkipCallback {
                     }
 
                     for (task_name, hosts) in &task_groups {
-                        let hosts_display: String = if hosts.len() > self.config.max_hosts_per_condition {
-                            let shown: Vec<_> = hosts
-                                .iter()
-                                .take(self.config.max_hosts_per_condition)
-                                .copied()
-                                .collect();
-                            format!(
-                                "{} +{} more",
-                                shown.join(", "),
-                                hosts.len() - self.config.max_hosts_per_condition
-                            )
-                        } else {
-                            hosts.join(", ")
-                        };
+                        let hosts_display: String =
+                            if hosts.len() > self.config.max_hosts_per_condition {
+                                let shown: Vec<_> = hosts
+                                    .iter()
+                                    .take(self.config.max_hosts_per_condition)
+                                    .copied()
+                                    .collect();
+                                format!(
+                                    "{} +{} more",
+                                    shown.join(", "),
+                                    hosts.len() - self.config.max_hosts_per_condition
+                                )
+                            } else {
+                                hosts.join(", ")
+                            };
 
                         println!(
                             "    {} {} ({})",
@@ -532,10 +530,10 @@ impl Clone for FullSkipCallback {
             playbook_start: RwLock::new(*self.playbook_start.read()),
             current_playbook: RwLock::new(self.current_playbook.read().clone()),
             task_counter: std::sync::atomic::AtomicU64::new(
-                self.task_counter.load(std::sync::atomic::Ordering::SeqCst)
+                self.task_counter.load(std::sync::atomic::Ordering::SeqCst),
             ),
             total_tasks: std::sync::atomic::AtomicU64::new(
-                self.total_tasks.load(std::sync::atomic::Ordering::SeqCst)
+                self.total_tasks.load(std::sync::atomic::Ordering::SeqCst),
             ),
         }
     }
@@ -551,8 +549,10 @@ impl ExecutionCallback for FullSkipCallback {
         // Clear stats from any previous run
         self.skipped_tasks.write().clear();
         self.host_stats.write().clear();
-        self.task_counter.store(0, std::sync::atomic::Ordering::SeqCst);
-        self.total_tasks.store(0, std::sync::atomic::Ordering::SeqCst);
+        self.task_counter
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        self.total_tasks
+            .store(0, std::sync::atomic::Ordering::SeqCst);
 
         if self.config.verbosity > 0 {
             println!(
@@ -591,7 +591,8 @@ impl ExecutionCallback for FullSkipCallback {
     /// Called when a task completes - track skipped tasks
     async fn on_task_complete(&self, result: &ExecutionResult) {
         // Increment total task counter
-        self.total_tasks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.total_tasks
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         // Update host stats
         {
@@ -609,18 +610,16 @@ impl ExecutionCallback for FullSkipCallback {
             return;
         }
 
-        let order = self.task_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let order = self
+            .task_counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let message = result.result.message.as_str();
 
         // Parse the skip reason
         let (condition, reason) = Self::parse_skip_reason(message);
 
-        let mut skipped_task = SkippedTask::new(
-            result.task_name.clone(),
-            result.host.clone(),
-            reason,
-            order,
-        );
+        let mut skipped_task =
+            SkippedTask::new(result.task_name.clone(), result.host.clone(), reason, order);
 
         if let Some(cond) = condition {
             skipped_task = skipped_task.with_condition(cond.clone());
@@ -723,7 +722,11 @@ mod tests {
         callback
             .on_play_start(
                 "test-play",
-                &["host1".to_string(), "host2".to_string(), "host3".to_string()],
+                &[
+                    "host1".to_string(),
+                    "host2".to_string(),
+                    "host3".to_string(),
+                ],
             )
             .await;
 
@@ -805,25 +808,21 @@ mod tests {
         callback
             .on_play_start(
                 "test-play",
-                &["host1".to_string(), "host2".to_string(), "host3".to_string()],
+                &[
+                    "host1".to_string(),
+                    "host2".to_string(),
+                    "host3".to_string(),
+                ],
             )
             .await;
 
         // Skip on host1 and host2 only
-        let result1 = create_execution_result(
-            "host1",
-            "Task",
-            true,
-            "Skipped: condition 'X' was false",
-        );
+        let result1 =
+            create_execution_result("host1", "Task", true, "Skipped: condition 'X' was false");
         callback.on_task_complete(&result1).await;
 
-        let result2 = create_execution_result(
-            "host2",
-            "Task",
-            true,
-            "Skipped: condition 'X' was false",
-        );
+        let result2 =
+            create_execution_result("host2", "Task", true, "Skipped: condition 'X' was false");
         callback.on_task_complete(&result2).await;
 
         let result3 = create_execution_result("host3", "Task", false, "OK");
@@ -858,12 +857,8 @@ mod tests {
             .on_play_start("test-play", &["host1".to_string()])
             .await;
 
-        let result = create_execution_result(
-            "host1",
-            "Task",
-            true,
-            "Skipped: condition 'X' was false",
-        );
+        let result =
+            create_execution_result("host1", "Task", true, "Skipped: condition 'X' was false");
         callback.on_task_complete(&result).await;
 
         let report = callback.to_json_report();
@@ -886,12 +881,8 @@ mod tests {
             .on_play_start("test-play", &["host1".to_string()])
             .await;
 
-        let result = create_execution_result(
-            "host1",
-            "Task",
-            true,
-            "Skipped: condition 'X' was false",
-        );
+        let result =
+            create_execution_result("host1", "Task", true, "Skipped: condition 'X' was false");
         callback.on_task_complete(&result).await;
 
         assert_eq!(callback.skip_count(), 1);
@@ -959,12 +950,8 @@ mod tests {
             .await;
 
         // 1 skipped, 2 normal
-        let skipped = create_execution_result(
-            "host1",
-            "Task1",
-            true,
-            "Skipped: condition 'X' was false",
-        );
+        let skipped =
+            create_execution_result("host1", "Task1", true, "Skipped: condition 'X' was false");
         callback.on_task_complete(&skipped).await;
 
         let normal1 = create_execution_result("host1", "Task2", false, "OK");

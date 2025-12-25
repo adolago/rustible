@@ -1,4 +1,4 @@
-//! Real SSH Integration Tests
+//! Real SSH Integration Tests (ssh2-backend)
 //!
 //! These tests require actual SSH targets to be available. They validate:
 //! - SSH connection establishment
@@ -7,19 +7,21 @@
 //! - Connection pooling behavior
 //! - Privilege escalation
 //!
-//! To run these tests:
+//! NOTE: This test file requires the ssh2-backend feature. Run with:
 //! ```bash
 //! export RUSTIBLE_TEST_SSH_ENABLED=1
 //! export RUSTIBLE_TEST_SSH_USER=testuser
-//! cargo test --test real_ssh_tests -- --test-threads=1
+//! cargo test --test real_ssh_tests --features ssh2-backend -- --test-threads=1
 //! ```
 //!
 //! Or use the test infrastructure:
 //! ```bash
 //! cd tests/infrastructure
 //! ./provision.sh deploy
-//! cargo test --test real_ssh_tests
+//! cargo test --test real_ssh_tests --features ssh2-backend
 //! ```
+
+#![cfg(feature = "ssh2-backend")]
 
 use std::env;
 use std::path::PathBuf;
@@ -593,11 +595,7 @@ async fn test_ssh_connection_reuse() {
     assert!(result.success);
 
     // Verify we're using the same connection
-    assert_eq!(
-        conn1.identifier(),
-        &id1,
-        "Should be the same connection"
-    );
+    assert_eq!(conn1.identifier(), &id1, "Should be the same connection");
 
     // Cleanup
     conn1.close().await.ok();

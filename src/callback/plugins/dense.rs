@@ -460,7 +460,11 @@ impl DenseCallback {
         let stars = "*".repeat(80_usize.saturating_sub(header.len()));
 
         if self.config.use_colors {
-            println!("\n{} {}", header.bright_white().bold(), stars.bright_black());
+            println!(
+                "\n{} {}",
+                header.bright_white().bold(),
+                stars.bright_black()
+            );
         } else {
             println!("\n{} {}", header, stars);
         }
@@ -476,7 +480,11 @@ impl DenseCallback {
         let stars = "*".repeat(80_usize.saturating_sub(header.len()));
 
         if self.config.use_colors {
-            println!("\n{} {}", header.bright_white().bold(), stars.bright_black());
+            println!(
+                "\n{} {}",
+                header.bright_white().bold(),
+                stars.bright_black()
+            );
         } else {
             println!("\n{} {}", header, stars);
         }
@@ -488,7 +496,11 @@ impl DenseCallback {
         let stars = "*".repeat(80 - header.len());
 
         if self.config.use_colors {
-            println!("\n{} {}", header.bright_white().bold(), stars.bright_black());
+            println!(
+                "\n{} {}",
+                header.bright_white().bold(),
+                stars.bright_black()
+            );
         } else {
             println!("\n{} {}", header, stars);
         }
@@ -557,7 +569,11 @@ impl DenseCallback {
                 } else {
                     println!(
                         "    {}: ok={} changed={} failed={} unreachable={}",
-                        host, host_stats.ok, host_stats.changed, host_stats.failed, host_stats.unreachable
+                        host,
+                        host_stats.ok,
+                        host_stats.changed,
+                        host_stats.failed,
+                        host_stats.unreachable
                     );
                 }
             }
@@ -958,7 +974,8 @@ mod tests {
         let result1 = create_execution_result("host1", "Install nginx", true, false, false, "ok");
         callback.on_task_complete(&result1).await;
 
-        let result2 = create_execution_result("host2", "Install nginx", true, true, false, "changed");
+        let result2 =
+            create_execution_result("host2", "Install nginx", true, true, false, "changed");
         callback.on_task_complete(&result2).await;
 
         // Verify results were accumulated

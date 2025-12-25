@@ -541,8 +541,14 @@ struct LogFileState {
 impl std::fmt::Debug for LogFileState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LogFileState")
-            .field("text_writer", &self.text_writer.as_ref().map(|_| "<BufWriter>"))
-            .field("json_writer", &self.json_writer.as_ref().map(|_| "<BufWriter>"))
+            .field(
+                "text_writer",
+                &self.text_writer.as_ref().map(|_| "<BufWriter>"),
+            )
+            .field(
+                "json_writer",
+                &self.json_writer.as_ref().map(|_| "<BufWriter>"),
+            )
             .field("text_log_path", &self.text_log_path)
             .field("json_log_path", &self.json_log_path)
             .field("start_time", &self.start_time)
@@ -569,6 +575,7 @@ impl LogFileState {
         }
     }
 
+    #[allow(dead_code)]
     fn reset(&mut self) {
         self.text_writer = None;
         self.json_writer = None;
@@ -729,11 +736,7 @@ impl LogFileCallback {
             // Group by base name (without extension)
             let mut base_names: Vec<String> = log_files
                 .iter()
-                .filter_map(|(path, _)| {
-                    path.file_stem()
-                        .and_then(|s| s.to_str())
-                        .map(String::from)
-                })
+                .filter_map(|(path, _)| path.file_stem().and_then(|s| s.to_str()).map(String::from))
                 .collect();
             base_names.sort();
             base_names.dedup();
@@ -763,9 +766,7 @@ impl LogFileCallback {
 
         format!(
             "{}_{}_{}",
-            self.config.log_prefix,
-            sanitized_playbook,
-            timestamp
+            self.config.log_prefix, sanitized_playbook, timestamp
         )
     }
 
@@ -786,7 +787,10 @@ impl LogFileCallback {
         state.text_log_path = Some(text_path);
 
         if self.config.json_format {
-            let json_path = self.config.log_directory.join(format!("{}.json", base_name));
+            let json_path = self
+                .config
+                .log_directory
+                .join(format!("{}.json", base_name));
             let json_file = OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -1277,13 +1281,15 @@ mod tests {
         let ok_result = create_execution_result("host1", "task1", true, false, false, "ok");
         callback.on_task_complete(&ok_result).await;
 
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
         callback.on_task_complete(&changed_result).await;
 
         let failed_result = create_execution_result("host2", "task1", false, false, false, "error");
         callback.on_task_complete(&failed_result).await;
 
-        let skipped_result = create_execution_result("host2", "task2", true, false, true, "skipped");
+        let skipped_result =
+            create_execution_result("host2", "task2", true, false, true, "skipped");
         callback.on_task_complete(&skipped_result).await;
 
         // Verify stats
@@ -1343,7 +1349,12 @@ mod tests {
         let count = fs::read_dir(log_dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map(|ext| ext == "log").unwrap_or(false))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "log")
+                    .unwrap_or(false)
+            })
             .count();
 
         // Should have at most 5 log files (rotation happened)
@@ -1382,7 +1393,8 @@ mod tests {
         callback.on_task_complete(&ok_result).await;
 
         // Changed result should not be logged (only failures)
-        let changed_result = create_execution_result("host1", "task2", true, true, false, "changed");
+        let changed_result =
+            create_execution_result("host1", "task2", true, true, false, "changed");
         callback.on_task_complete(&changed_result).await;
 
         // Failed result should be logged
@@ -1396,7 +1408,10 @@ mod tests {
         let content = fs::read_to_string(&log_path).unwrap();
 
         // Count TASK RESULT entries
-        let task_results: Vec<_> = content.lines().filter(|l| l.contains("TASK RESULT")).collect();
+        let task_results: Vec<_> = content
+            .lines()
+            .filter(|l| l.contains("TASK RESULT"))
+            .collect();
         assert_eq!(task_results.len(), 1, "Only failed task should be logged");
         assert!(task_results[0].contains("FAILED"));
 

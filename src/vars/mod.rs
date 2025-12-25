@@ -358,6 +358,16 @@ impl VarStore {
         self.layers.clear();
     }
 
+    /// Get the current hash behaviour
+    pub fn hash_behaviour(&self) -> HashBehaviour {
+        self.hash_behaviour
+    }
+
+    /// Check if the merged cache is valid
+    pub fn is_cache_valid(&self) -> bool {
+        self.merged_cache.is_some()
+    }
+
     /// Get all merged variables
     pub fn all(&mut self) -> &IndexMap<String, serde_yaml::Value> {
         self.ensure_merged();
@@ -444,6 +454,7 @@ impl VarStore {
     }
 
     /// Create a child scope with additional variables
+    #[allow(mismatched_lifetime_syntaxes)]
     pub fn scope(&self) -> VarScope {
         VarScope::new(self)
     }
@@ -720,6 +731,7 @@ pub fn parse_inline_vault(
 
 /// Variable resolution helpers
 pub mod resolve {
+    #[allow(unused_imports)]
     use super::*;
 
     /// Resolve a variable path (e.g., "foo.bar.baz")
@@ -851,6 +863,7 @@ pub mod resolve {
 
 /// Legacy Variables type for backward compatibility
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Variables {
     data: IndexMap<String, serde_json::Value>,
 }

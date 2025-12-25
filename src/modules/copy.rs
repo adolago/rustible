@@ -1,8 +1,15 @@
 //! Copy module - Copy files to destination
 //!
 //! This module copies files from a source to a destination, with support for
-//! permissions, ownership, and backup creation. It supports both local operations
-//! and remote file transfers over SSH connections.
+//! permissions, ownership, backup creation, and validation. It supports both local
+//! operations and remote file transfers over SSH connections.
+//!
+//! Features:
+//! - Local and remote file copying via SSH/SFTP
+//! - Content validation before finalizing copy
+//! - Automatic backup creation
+//! - Directory mode control for created parent directories
+//! - Symlink following on source files
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
@@ -13,6 +20,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 
 /// Module for copying files
@@ -92,6 +100,72 @@ impl CopyModule {
 
         fs::copy(src, dest)?;
         Ok(())
+    }
+
+    /// Validate file content using a validation command
+    /// The command should use %s as a placeholder for the file path
+    fn validate_file(path: &Path, validate_cmd: &str) -> ModuleResult<()> {
+        // Replace %s with the actual file path
+        let cmd = validate_cmd.replace("%s", &path.to_string_lossy());
+
+        // Execute via shell to handle complex commands
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .output()
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to run validation command: {}", e))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ModuleError::ValidationFailed(format!(
+                "Validation command failed: {}",
+                stderr.trim()
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Create parent directories with specified mode
+    fn create_parent_dirs(path: &Path, directory_mode: Option<u32>) -> ModuleResult<()> {
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+
+                // Apply directory mode if specified
+                if let Some(mode) = directory_mode {
+                    // Walk up and apply mode to each created directory
+                    let mut current = parent.to_path_buf();
+                    while !current.as_os_str().is_empty() {
+                        if current.exists() {
+                            fs::set_permissions(&current, fs::Permissions::from_mode(mode))?;
+                        }
+                        if !current.pop() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve source path, following symlinks if local_follow is true
+    fn resolve_source(src: &Path, local_follow: bool) -> ModuleResult<std::path::PathBuf> {
+        if local_follow && src.is_symlink() {
+            // Follow the symlink to get the real path
+            fs::canonicalize(src).map_err(|e| {
+                ModuleError::ExecutionFailed(format!(
+                    "Failed to follow symlink '{}': {}",
+                    src.display(),
+                    e
+                ))
+            })
+        } else {
+            Ok(src.to_path_buf())
+        }
     }
 
     /// Compute a simple checksum for content comparison
@@ -384,17 +458,20 @@ impl CopyModule {
         src: Option<&str>,
         content: Option<&str>,
         mode: Option<u32>,
+        directory_mode: Option<u32>,
         force: bool,
         backup: bool,
         backup_suffix: &str,
+        validate: Option<&str>,
+        local_follow: bool,
         check_mode: bool,
         diff_mode: bool,
     ) -> ModuleResult<ModuleOutput> {
         let dest_path = Path::new(dest);
 
         // Determine if we're copying from src or content
-        let (source_content, src_display) = if let Some(content_str) = content {
-            (Some(content_str.to_string()), "(content)".to_string())
+        let (source_content, src_display, resolved_src) = if let Some(content_str) = content {
+            (Some(content_str.to_string()), "(content)".to_string(), None)
         } else if let Some(src_str) = src {
             let src_path = Path::new(src_str);
             if !src_path.exists() {
@@ -403,7 +480,9 @@ impl CopyModule {
                     src_str
                 )));
             }
-            (None, src_str.to_string())
+            // Resolve symlinks if local_follow is true
+            let resolved = Self::resolve_source(src_path, local_follow)?;
+            (None, src_str.to_string(), Some(resolved))
         } else {
             return Err(ModuleError::MissingParameter(
                 "Either 'src' or 'content' must be provided".to_string(),
@@ -428,10 +507,9 @@ impl CopyModule {
             dest_path.to_path_buf()
         };
 
-        // Check if copy is needed
-        let needs_copy = if let Some(src_str) = src {
-            let src_path = Path::new(src_str);
-            Self::files_differ(src_path, &final_dest)?
+        // Check if copy is needed - use resolved source if available
+        let needs_copy = if let Some(ref resolved) = resolved_src {
+            Self::files_differ(resolved, &final_dest)?
         } else {
             // For content, always check
             if final_dest.exists() {
@@ -516,23 +594,50 @@ impl CopyModule {
             None
         };
 
-        // Create parent directories if needed
-        if let Some(parent) = final_dest.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)?;
+        // Create parent directories with specified mode if needed
+        Self::create_parent_dirs(&final_dest, directory_mode)?;
+
+        // For validation, we'll copy to a temp file first, validate, then move
+        let use_validation = validate.is_some();
+        let temp_dest = if use_validation {
+            let temp_name = format!(
+                "{}.rustible.tmp.{}",
+                final_dest.display(),
+                std::process::id()
+            );
+            std::path::PathBuf::from(temp_name)
+        } else {
+            final_dest.clone()
+        };
+
+        // Perform the copy to temp or final destination
+        if let Some(ref content_str) = source_content {
+            Self::copy_content(content_str, &temp_dest)?;
+        } else if let Some(ref resolved) = resolved_src {
+            Self::copy_file(resolved, &temp_dest, force)?;
+        }
+
+        // Set permissions on temp file
+        Self::set_permissions(&temp_dest, mode)?;
+
+        // Run validation if specified
+        if let Some(validate_cmd) = validate {
+            match Self::validate_file(&temp_dest, validate_cmd) {
+                Ok(()) => {
+                    // Validation passed, move temp to final destination
+                    if use_validation {
+                        fs::rename(&temp_dest, &final_dest)?;
+                    }
+                }
+                Err(e) => {
+                    // Validation failed, clean up temp file
+                    if use_validation {
+                        let _ = fs::remove_file(&temp_dest);
+                    }
+                    return Err(e);
+                }
             }
         }
-
-        // Perform the copy
-        if let Some(ref content_str) = source_content {
-            Self::copy_content(content_str, &final_dest)?;
-        } else if let Some(src_str) = src {
-            let src_path = Path::new(src_str);
-            Self::copy_file(src_path, &final_dest, force)?;
-        }
-
-        // Set permissions
-        let perm_changed = Self::set_permissions(&final_dest, mode)?;
 
         let mut output = ModuleOutput::changed(format!(
             "Copied {} to '{}'",
@@ -542,10 +647,6 @@ impl CopyModule {
 
         if let Some(backup_path) = backup_file {
             output = output.with_data("backup_file", serde_json::json!(backup_path));
-        }
-
-        if perm_changed {
-            output = output.with_data("mode_changed", serde_json::json!(true));
         }
 
         // Add file info to output
@@ -559,6 +660,10 @@ impl CopyModule {
             )
             .with_data("uid", serde_json::json!(meta.uid()))
             .with_data("gid", serde_json::json!(meta.gid()));
+
+        if validate.is_some() {
+            output = output.with_data("validated", serde_json::json!(true));
+        }
 
         Ok(output)
     }
@@ -607,8 +712,11 @@ impl Module for CopyModule {
             .get_string("backup_suffix")?
             .unwrap_or_else(|| "~".to_string());
         let mode = params.get_u32("mode")?;
+        let directory_mode = params.get_u32("directory_mode")?;
         let owner = params.get_string("owner")?;
         let group = params.get_string("group")?;
+        let validate = params.get_string("validate")?;
+        let local_follow = params.get_bool_or("local_follow", true);
 
         // Check if we have a remote connection
         if let Some(ref connection) = context.connection {
@@ -633,9 +741,12 @@ impl Module for CopyModule {
                 src.as_deref(),
                 content.as_deref(),
                 mode,
+                directory_mode,
                 force,
                 backup,
                 &backup_suffix,
+                validate.as_deref(),
+                local_follow,
                 context.check_mode,
                 context.diff_mode,
             )

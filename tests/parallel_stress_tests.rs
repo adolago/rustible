@@ -10,8 +10,12 @@
 //! To run these tests:
 //! ```bash
 //! export RUSTIBLE_TEST_PARALLEL_ENABLED=1
-//! cargo test --test parallel_stress_tests -- --test-threads=1
+//! cargo test --test parallel_stress_tests --features ssh2-backend -- --test-threads=1
 //! ```
+//!
+//! NOTE: These tests require the ssh2-backend feature which is disabled by default.
+
+#![cfg(feature = "ssh2-backend")]
 
 use std::collections::HashMap;
 use std::env;

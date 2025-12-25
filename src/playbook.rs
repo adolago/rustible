@@ -203,7 +203,10 @@ pub struct Play {
     pub hosts: String,
 
     /// Whether to gather facts before executing tasks
-    #[serde(default = "default_gather_facts", deserialize_with = "deserialize_bool_flexible_default_true")]
+    #[serde(
+        default = "default_gather_facts",
+        deserialize_with = "deserialize_bool_flexible_default_true"
+    )]
     pub gather_facts: bool,
 
     /// Subset of gathered facts
@@ -302,7 +305,9 @@ fn default_gather_facts() -> bool {
 }
 
 /// Deserialize boolean with default true
-fn deserialize_bool_flexible_default_true<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+fn deserialize_bool_flexible_default_true<'de, D>(
+    deserializer: D,
+) -> std::result::Result<bool, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -310,7 +315,9 @@ where
 }
 
 /// Deserialize optional boolean that accepts various formats
-fn deserialize_option_bool_flexible<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
+fn deserialize_option_bool_flexible<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<bool>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -498,6 +505,14 @@ pub struct Task {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub with_items: Option<serde_json::Value>,
 
+    /// Dictionary iteration (with_dict)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub with_dict: Option<serde_json::Value>,
+
+    /// File glob iteration (with_fileglob)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub with_fileglob: Option<serde_json::Value>,
+
     /// Register result in variable
     #[serde(skip_serializing_if = "Option::is_none")]
     pub register: Option<String>,
@@ -585,19 +600,53 @@ impl<'de> Deserialize<'de> for Task {
         // Deserialize as a generic Value first
         let value = serde_json::Value::deserialize(deserializer)?;
 
-        let obj = value.as_object().ok_or_else(|| {
-            D::Error::custom("task must be an object")
-        })?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("task must be an object"))?;
 
         // List of known non-module keys
         let skip_keys: std::collections::HashSet<&str> = [
-            "name", "when", "loop", "loop_", "with_items", "register", "loop_control",
-            "notify", "ignore_errors", "ignore_unreachable", "become", "become_user",
-            "delegate_to", "delegate_facts", "run_once", "changed_when", "failed_when",
-            "tags", "vars", "environment", "async", "async_", "poll", "retries", "delay", "until",
-            "block", "rescue", "always", "args", "include_tasks", "import_tasks", "include_vars",
-            "include_role", "import_role",
-        ].iter().copied().collect();
+            "name",
+            "when",
+            "loop",
+            "loop_",
+            "with_items",
+            "with_dict",
+            "with_fileglob",
+            "register",
+            "loop_control",
+            "notify",
+            "ignore_errors",
+            "ignore_unreachable",
+            "become",
+            "become_user",
+            "delegate_to",
+            "delegate_facts",
+            "run_once",
+            "changed_when",
+            "failed_when",
+            "tags",
+            "vars",
+            "environment",
+            "async",
+            "async_",
+            "poll",
+            "retries",
+            "delay",
+            "until",
+            "block",
+            "rescue",
+            "always",
+            "args",
+            "include_tasks",
+            "import_tasks",
+            "include_vars",
+            "include_role",
+            "import_role",
+        ]
+        .iter()
+        .copied()
+        .collect();
 
         // Find the module name (first key that's not in skip list)
         let module_name = obj
@@ -607,7 +656,9 @@ impl<'de> Deserialize<'de> for Task {
             .unwrap_or_else(|| "debug".to_string());
 
         // Get module arguments
-        let module_args = obj.get(&module_name).cloned()
+        let module_args = obj
+            .get(&module_name)
+            .cloned()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
         // Helper to parse bool from various formats
@@ -623,28 +674,25 @@ impl<'de> Deserialize<'de> for Task {
         };
 
         // Helper to parse optional bool
-        let parse_option_bool = |v: Option<&serde_json::Value>| -> Option<bool> {
-            v.map(parse_bool)
-        };
+        let parse_option_bool =
+            |v: Option<&serde_json::Value>| -> Option<bool> { v.map(parse_bool) };
 
         // Parse notify as string or vec
         let notify = match obj.get("notify") {
             Some(serde_json::Value::String(s)) => vec![s.clone()],
-            Some(serde_json::Value::Array(arr)) => {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            }
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
             _ => Vec::new(),
         };
 
         // Parse tags
         let tags = match obj.get("tags") {
-            Some(serde_json::Value::Array(arr)) => {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            }
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
             Some(serde_json::Value::String(s)) => vec![s.clone()],
             _ => Vec::new(),
         };
@@ -653,7 +701,8 @@ impl<'de> Deserialize<'de> for Task {
         let when = match obj.get("when") {
             Some(serde_json::Value::String(s)) => Some(When::Single(s.clone())),
             Some(serde_json::Value::Array(arr)) => {
-                let conditions: Vec<String> = arr.iter()
+                let conditions: Vec<String> = arr
+                    .iter()
                     .filter_map(|v| v.as_str().map(String::from))
                     .collect();
                 if conditions.is_empty() {
@@ -670,17 +719,19 @@ impl<'de> Deserialize<'de> for Task {
         let loop_ = obj.get("loop").or(obj.get("loop_")).cloned();
 
         // Parse loop_control
-        let loop_control = obj.get("loop_control").and_then(|v| {
-            serde_json::from_value::<LoopControl>(v.clone()).ok()
-        });
+        let loop_control = obj
+            .get("loop_control")
+            .and_then(|v| serde_json::from_value::<LoopControl>(v.clone()).ok());
 
         // Parse vars
-        let vars = obj.get("vars")
+        let vars = obj
+            .get("vars")
             .and_then(|v| serde_json::from_value::<Variables>(v.clone()).ok())
             .unwrap_or_default();
 
         // Parse environment
-        let environment = obj.get("environment")
+        let environment = obj
+            .get("environment")
             .and_then(|v| v.as_object())
             .map(|m| {
                 m.iter()
@@ -690,7 +741,8 @@ impl<'de> Deserialize<'de> for Task {
             .unwrap_or_default();
 
         Ok(Task {
-            name: obj.get("name")
+            name: obj
+                .get("name")
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .unwrap_or_default(),
@@ -701,30 +753,51 @@ impl<'de> Deserialize<'de> for Task {
             when,
             loop_,
             with_items: obj.get("with_items").cloned(),
-            register: obj.get("register").and_then(|v| v.as_str()).map(String::from),
+            with_dict: obj.get("with_dict").cloned(),
+            with_fileglob: obj.get("with_fileglob").cloned(),
+            register: obj
+                .get("register")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             loop_control,
             notify,
             ignore_errors: obj.get("ignore_errors").map(parse_bool).unwrap_or(false),
-            ignore_unreachable: obj.get("ignore_unreachable").map(parse_bool).unwrap_or(false),
+            ignore_unreachable: obj
+                .get("ignore_unreachable")
+                .map(parse_bool)
+                .unwrap_or(false),
             r#become: parse_option_bool(obj.get("become")),
-            become_user: obj.get("become_user").and_then(|v| v.as_str()).map(String::from),
-            delegate_to: obj.get("delegate_to").and_then(|v| v.as_str()).map(String::from),
+            become_user: obj
+                .get("become_user")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            delegate_to: obj
+                .get("delegate_to")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             delegate_facts: parse_option_bool(obj.get("delegate_facts")),
             run_once: obj.get("run_once").map(parse_bool).unwrap_or(false),
-            changed_when: obj.get("changed_when").and_then(|v| {
-                match v {
-                    serde_json::Value::String(s) => Some(s.clone()),
-                    serde_json::Value::Bool(b) => Some(b.to_string()),
-                    _ => None,
-                }
+            changed_when: obj.get("changed_when").and_then(|v| match v {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Bool(b) => Some(b.to_string()),
+                _ => None,
             }),
-            failed_when: obj.get("failed_when").and_then(|v| v.as_str()).map(String::from),
+            failed_when: obj
+                .get("failed_when")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             tags,
             vars,
             environment,
-            async_: obj.get("async").or(obj.get("async_")).and_then(|v| v.as_u64()),
+            async_: obj
+                .get("async")
+                .or(obj.get("async_"))
+                .and_then(|v| v.as_u64()),
             poll: obj.get("poll").and_then(|v| v.as_u64()),
-            retries: obj.get("retries").and_then(|v| v.as_u64()).map(|v| v as u32),
+            retries: obj
+                .get("retries")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
             delay: obj.get("delay").and_then(|v| v.as_u64()),
             until: obj.get("until").and_then(|v| v.as_str()).map(String::from),
         })
@@ -747,6 +820,8 @@ impl Task {
             when: None,
             loop_: None,
             with_items: None,
+            with_dict: None,
+            with_fileglob: None,
             register: None,
             loop_control: None,
             notify: Vec::new(),
@@ -961,12 +1036,13 @@ impl<'de> Deserialize<'de> for Handler {
         // Deserialize as a generic Value first
         let value = serde_json::Value::deserialize(deserializer)?;
 
-        let obj = value.as_object().ok_or_else(|| {
-            D::Error::custom("handler must be an object")
-        })?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("handler must be an object"))?;
 
         // Get the handler name
-        let name = obj.get("name")
+        let name = obj
+            .get("name")
             .and_then(|v| v.as_str())
             .map(String::from)
             .ok_or_else(|| D::Error::custom("handler must have a name"))?;
@@ -974,11 +1050,10 @@ impl<'de> Deserialize<'de> for Handler {
         // Parse listen as string or vec
         let listen = match obj.get("listen") {
             Some(serde_json::Value::String(s)) => vec![s.clone()],
-            Some(serde_json::Value::Array(arr)) => {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            }
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
             _ => Vec::new(),
         };
 
@@ -986,11 +1061,7 @@ impl<'de> Deserialize<'de> for Handler {
         let task: Task = serde_json::from_value(value.clone())
             .map_err(|e| D::Error::custom(format!("failed to parse handler task: {}", e)))?;
 
-        Ok(Handler {
-            name,
-            task,
-            listen,
-        })
+        Ok(Handler { name, task, listen })
     }
 }
 

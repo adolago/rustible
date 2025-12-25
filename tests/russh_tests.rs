@@ -39,12 +39,12 @@ use rustible::connection::config::{
     ConnectionConfig, HostConfig, RetryConfig, SshConfigParser, DEFAULT_RETRIES,
     DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT,
 };
+#[cfg(feature = "russh")]
+use rustible::connection::RusshConnection;
 use rustible::connection::{
     CommandResult, Connection, ConnectionError, ConnectionResult, ExecuteOptions, FileStat,
     TransferOptions,
 };
-#[cfg(feature = "russh")]
-use rustible::connection::RusshConnection;
 
 // ============================================================================
 // TEST FIXTURES DIRECTORY SETUP
@@ -1220,15 +1220,10 @@ mod integration_tests {
 
         #[cfg(feature = "russh")]
         {
-            let conn = RusshConnection::connect(
-                &host,
-                port,
-                &user,
-                None,
-                &ConnectionConfig::default(),
-            )
-            .await
-            .expect("Failed to connect to SSH server");
+            let conn =
+                RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
+                    .await
+                    .expect("Failed to connect to SSH server");
 
             assert!(conn.is_alive().await);
             conn.close().await.unwrap();
@@ -1280,15 +1275,10 @@ mod integration_tests {
 
         #[cfg(feature = "russh")]
         {
-            let conn = RusshConnection::connect(
-                &host,
-                port,
-                &user,
-                None,
-                &ConnectionConfig::default(),
-            )
-            .await
-            .expect("Failed to connect");
+            let conn =
+                RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
+                    .await
+                    .expect("Failed to connect");
 
             // Create a local file to upload
             let local_file = temp_dir.path().join("upload_test.txt");
@@ -1366,15 +1356,10 @@ mod integration_tests {
 
         #[cfg(feature = "russh")]
         {
-            let conn = RusshConnection::connect(
-                &host,
-                port,
-                &user,
-                None,
-                &ConnectionConfig::default(),
-            )
-            .await
-            .expect("Failed to connect");
+            let conn =
+                RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
+                    .await
+                    .expect("Failed to connect");
 
             // Test upload_content
             let content = b"SFTP test content";
@@ -1408,7 +1393,10 @@ mod integration_tests {
         }
 
         #[cfg(not(feature = "russh"))]
-        eprintln!("Would perform SFTP operations on {}@{}:{}", user, host, port);
+        eprintln!(
+            "Would perform SFTP operations on {}@{}:{}",
+            user, host, port
+        );
     }
 
     /// Test SSH connection with key authentication

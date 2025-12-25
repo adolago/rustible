@@ -1,7 +1,7 @@
 //! Pip module - Python package management
 //!
 //! This module manages Python packages using pip, supporting virtualenvs,
-//! requirements files, and different package states.
+//! requirements files, proxy configuration, and different package states.
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
@@ -16,6 +16,7 @@ pub enum PipState {
     Present,
     Absent,
     Latest,
+    ForceReinstall,
 }
 
 impl PipState {
@@ -24,10 +25,124 @@ impl PipState {
             "present" | "installed" => Ok(PipState::Present),
             "absent" | "removed" => Ok(PipState::Absent),
             "latest" => Ok(PipState::Latest),
+            "forcereinstall" | "force-reinstall" | "force_reinstall" => {
+                Ok(PipState::ForceReinstall)
+            }
             _ => Err(ModuleError::InvalidParameter(format!(
-                "Invalid state '{}'. Valid states: present, absent, latest",
+                "Invalid state '{}'. Valid states: present, absent, latest, forcereinstall",
                 s
             ))),
+        }
+    }
+}
+
+/// Configuration for pip operations
+#[derive(Debug, Clone)]
+struct PipConfig {
+    pip_cmd: String,
+    extra_args: Vec<String>,
+    chdir: Option<String>,
+    editable: bool,
+    umask: Option<u32>,
+    proxy: Option<String>,
+    index_url: Option<String>,
+    extra_index_url: Option<String>,
+    no_index: bool,
+    find_links: Option<String>,
+}
+
+impl PipConfig {
+    fn from_params(params: &ModuleParams) -> ModuleResult<Self> {
+        let executable = params
+            .get_string("executable")?
+            .unwrap_or_else(|| "pip3".to_string());
+
+        // If virtualenv is specified, use the pip from that virtualenv
+        let pip_cmd = if let Some(venv) = params.get_string("virtualenv")? {
+            format!("{}/bin/pip", venv)
+        } else {
+            executable
+        };
+
+        // Parse extra_args as either a string or array
+        let extra_args = if let Some(args_str) = params.get_string("extra_args")? {
+            shell_words::split(&args_str)
+                .map_err(|e| ModuleError::InvalidParameter(format!("Invalid extra_args: {}", e)))?
+        } else if let Some(args) = params.get_vec_string("extra_args")? {
+            args
+        } else {
+            Vec::new()
+        };
+
+        // Parse umask as octal string or integer
+        let umask = if let Some(umask_val) = params.get("umask") {
+            if let Some(s) = umask_val.as_str() {
+                Some(
+                    u32::from_str_radix(s.trim_start_matches("0o"), 8).map_err(|_| {
+                        ModuleError::InvalidParameter(format!("Invalid umask: {}", s))
+                    })?,
+                )
+            } else if let Some(n) = umask_val.as_u64() {
+                Some(n as u32)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            pip_cmd,
+            extra_args,
+            chdir: params.get_string("chdir")?,
+            editable: params.get_bool("editable")?.unwrap_or(false),
+            umask,
+            proxy: params.get_string("proxy")?,
+            index_url: params.get_string("index_url")?,
+            extra_index_url: params.get_string("extra_index_url")?,
+            no_index: params.get_bool("no_index")?.unwrap_or(false),
+            find_links: params.get_string("find_links")?,
+        })
+    }
+
+    /// Build the base pip command with common arguments
+    fn build_command(&self) -> Command {
+        let mut cmd = Command::new(&self.pip_cmd);
+
+        // Add proxy if configured
+        if let Some(ref proxy) = self.proxy {
+            cmd.arg("--proxy").arg(proxy);
+        }
+
+        // Add index URL options
+        if let Some(ref index_url) = self.index_url {
+            cmd.arg("--index-url").arg(index_url);
+        }
+
+        if let Some(ref extra_index) = self.extra_index_url {
+            cmd.arg("--extra-index-url").arg(extra_index);
+        }
+
+        if self.no_index {
+            cmd.arg("--no-index");
+        }
+
+        if let Some(ref find_links) = self.find_links {
+            cmd.arg("--find-links").arg(find_links);
+        }
+
+        // Set working directory if specified
+        if let Some(ref chdir) = self.chdir {
+            cmd.current_dir(chdir);
+        }
+
+        cmd
+    }
+
+    /// Apply extra args to a command
+    fn apply_extra_args(&self, cmd: &mut Command) {
+        for arg in &self.extra_args {
+            cmd.arg(arg);
         }
     }
 }
@@ -36,44 +151,48 @@ impl PipState {
 pub struct PipModule;
 
 impl PipModule {
-    /// Build the pip command based on virtualenv settings
-    fn build_pip_command(&self, params: &ModuleParams) -> ModuleResult<String> {
-        let executable = params
-            .get_string("executable")?
-            .unwrap_or_else(|| "pip3".to_string());
-
-        // If virtualenv is specified, use the pip from that virtualenv
-        if let Some(venv) = params.get_string("virtualenv")? {
-            Ok(format!("{}/bin/pip", venv))
-        } else {
-            Ok(executable)
-        }
-    }
-
     /// Check if a package is installed
-    fn is_package_installed(&self, pip_cmd: &str, package: &str) -> ModuleResult<bool> {
-        let output = Command::new(pip_cmd)
-            .arg("show")
-            .arg(package)
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to check package status: {}", e))
-            })?;
+    fn is_package_installed(&self, config: &PipConfig, package: &str) -> ModuleResult<bool> {
+        // Strip version specifier for package check
+        let pkg_name = Self::extract_package_name(package);
+
+        let mut cmd = config.build_command();
+        cmd.arg("show").arg(&pkg_name);
+
+        let output = cmd.output().map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to check package status: {}", e))
+        })?;
         Ok(output.status.success())
     }
 
+    /// Extract package name from a package specification (removes version specifiers)
+    fn extract_package_name(package: &str) -> String {
+        // Handle various version specifier formats
+        // e.g., "flask>=2.0", "django==4.2", "requests[security]>=2.0"
+        let name = package
+            .split(&['>', '<', '=', '!', '~', '@', '['][..])
+            .next()
+            .unwrap_or(package)
+            .trim();
+        name.to_string()
+    }
+
     /// Get installed version of a package
-    fn get_installed_version(&self, pip_cmd: &str, package: &str) -> ModuleResult<Option<String>> {
-        let output = Command::new(pip_cmd)
-            .arg("show")
-            .arg(package)
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to get package version: {}", e))
-            })?;
+    fn get_installed_version(
+        &self,
+        config: &PipConfig,
+        package: &str,
+    ) -> ModuleResult<Option<String>> {
+        let pkg_name = Self::extract_package_name(package);
+
+        let mut cmd = config.build_command();
+        cmd.arg("show").arg(&pkg_name);
+
+        let output = cmd.output().map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to get package version: {}", e))
+        })?;
 
         if output.status.success() {
-            // Parse the output to find the Version line
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if let Some(version) = line.strip_prefix("Version:") {
@@ -90,18 +209,25 @@ impl PipModule {
         }
     }
 
-    /// Execute a pip command
+    /// Execute a pip command with the given configuration
     fn execute_pip_command(
         &self,
-        pip_cmd: &str,
+        config: &PipConfig,
         args: &[&str],
     ) -> ModuleResult<(bool, String, String)> {
-        let output = Command::new(pip_cmd)
-            .args(args)
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to execute pip command: {}", e))
-            })?;
+        let mut cmd = config.build_command();
+        cmd.args(args);
+        config.apply_extra_args(&mut cmd);
+
+        // Apply umask if set
+        if let Some(umask_val) = config.umask {
+            // Set umask via environment or pre-exec (platform-specific)
+            cmd.env("UMASK", format!("{:04o}", umask_val));
+        }
+
+        let output = cmd.output().map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to execute pip command: {}", e))
+        })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -110,22 +236,48 @@ impl PipModule {
     }
 
     /// Create a virtualenv if it doesn't exist
-    fn ensure_virtualenv(&self, venv_path: &str) -> ModuleResult<bool> {
+    fn ensure_virtualenv(
+        &self,
+        venv_path: &str,
+        python: Option<&str>,
+        site_packages: bool,
+        virtualenv_command: Option<&str>,
+    ) -> ModuleResult<bool> {
         // Check if virtualenv exists by checking for the activate script
         let activate_path = std::path::Path::new(venv_path).join("bin").join("activate");
         if activate_path.exists() {
             return Ok(false);
         }
 
-        // Create virtualenv using safe argument passing
-        let output = Command::new("python3")
-            .arg("-m")
-            .arg("venv")
-            .arg(venv_path)
-            .output()
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Failed to create virtualenv: {}", e))
-            })?;
+        // Determine the command to use for creating virtualenv
+        let venv_cmd = virtualenv_command.unwrap_or("python3 -m venv");
+        let venv_parts: Vec<&str> = venv_cmd.split_whitespace().collect();
+
+        let mut cmd = if venv_parts.len() > 1 {
+            let mut c = Command::new(venv_parts[0]);
+            c.args(&venv_parts[1..]);
+            c
+        } else {
+            Command::new(venv_parts[0])
+        };
+
+        // Add system site-packages option if requested
+        if site_packages {
+            cmd.arg("--system-site-packages");
+        }
+
+        // Add python interpreter if specified (for virtualenv command, not venv)
+        if let Some(py) = python {
+            if venv_cmd.contains("virtualenv") {
+                cmd.arg("--python").arg(py);
+            }
+        }
+
+        cmd.arg(venv_path);
+
+        let output = cmd.output().map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to create virtualenv: {}", e))
+        })?;
 
         if !output.status.success() {
             return Err(ModuleError::ExecutionFailed(format!(
@@ -140,7 +292,7 @@ impl PipModule {
     /// Handle requirements file installation
     fn handle_requirements(
         &self,
-        pip_cmd: &str,
+        config: &PipConfig,
         requirements: &str,
         state: &PipState,
         venv_created: bool,
@@ -164,13 +316,20 @@ impl PipModule {
             return Ok(ModuleOutput::changed(msg));
         }
 
-        let args = if *state == PipState::Latest {
-            vec!["install", "--upgrade", "-r", requirements]
-        } else {
-            vec!["install", "-r", requirements]
-        };
+        let mut args = vec!["install"];
 
-        let (success, stdout, stderr) = self.execute_pip_command(pip_cmd, &args)?;
+        if *state == PipState::Latest {
+            args.push("--upgrade");
+        }
+
+        if *state == PipState::ForceReinstall {
+            args.push("--force-reinstall");
+        }
+
+        args.push("-r");
+        args.push(requirements);
+
+        let (success, stdout, stderr) = self.execute_pip_command(config, &args)?;
 
         if !success {
             return Err(ModuleError::ExecutionFailed(format!(
@@ -180,7 +339,8 @@ impl PipModule {
         }
 
         // Check if anything was actually installed by looking for "already satisfied" in output
-        let changed = !stdout.contains("Requirement already satisfied");
+        let changed =
+            !stdout.contains("Requirement already satisfied") || *state == PipState::ForceReinstall;
 
         if changed || venv_created {
             Ok(ModuleOutput::changed(format!(
@@ -193,6 +353,21 @@ impl PipModule {
                 ModuleOutput::ok("All requirements already satisfied".to_string())
                     .with_command_output(Some(stdout), Some(stderr), Some(0)),
             )
+        }
+    }
+
+    /// Build package specification with version if provided
+    fn build_package_spec(name: &str, version: Option<&str>) -> String {
+        if let Some(ver) = version {
+            // If version already contains a specifier, use as-is
+            if ver.starts_with(&['>', '<', '=', '!', '~'][..]) {
+                format!("{}{}", name, ver)
+            } else {
+                // Default to exact version match
+                format!("{}=={}", name, ver)
+            }
+        } else {
+            name.to_string()
         }
     }
 }
@@ -235,7 +410,8 @@ impl Module for PipModule {
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
-        let pip_cmd = self.build_pip_command(params)?;
+        // Build configuration from parameters
+        let config = PipConfig::from_params(params)?;
 
         // Get state
         let state_str = params
@@ -243,23 +419,31 @@ impl Module for PipModule {
             .unwrap_or_else(|| "present".to_string());
         let state = PipState::from_str(&state_str)?;
 
+        // Get version specification
+        let version = params.get_string("version")?;
+
         // Handle virtualenv creation if needed
         let mut venv_created = false;
         if let Some(venv) = params.get_string("virtualenv")? {
             if !context.check_mode {
-                venv_created = self.ensure_virtualenv(&venv)?;
+                let venv_python = params.get_string("virtualenv_python")?;
+                let site_packages = params
+                    .get_bool("virtualenv_site_packages")?
+                    .unwrap_or(false);
+                let venv_command = params.get_string("virtualenv_command")?;
+
+                venv_created = self.ensure_virtualenv(
+                    &venv,
+                    venv_python.as_deref(),
+                    site_packages,
+                    venv_command.as_deref(),
+                )?;
             }
         }
 
         // Handle requirements file
         if let Some(requirements) = params.get_string("requirements")? {
-            return self.handle_requirements(
-                &pip_cmd,
-                &requirements,
-                &state,
-                venv_created,
-                context,
-            );
+            return self.handle_requirements(&config, &requirements, &state, venv_created, context);
         }
 
         // Handle individual packages
@@ -269,19 +453,40 @@ impl Module for PipModule {
             vec![params.get_string_required("name")?]
         };
 
+        // Build package specs with version if provided
+        let package_specs: Vec<String> = packages
+            .iter()
+            .map(|p| Self::build_package_spec(p, version.as_deref()))
+            .collect();
+
         let mut to_install: Vec<String> = Vec::new();
         let mut to_remove: Vec<String> = Vec::new();
         let mut already_ok: Vec<String> = Vec::new();
 
-        for package in &packages {
-            let is_installed = self.is_package_installed(&pip_cmd, package)?;
+        for (package, spec) in packages.iter().zip(package_specs.iter()) {
+            let is_installed = self.is_package_installed(&config, package)?;
 
             match state {
                 PipState::Present => {
-                    if is_installed {
+                    if is_installed && version.is_none() {
                         already_ok.push(package.clone());
+                    } else if is_installed && version.is_some() {
+                        // Check if the installed version matches
+                        let installed_ver = self.get_installed_version(&config, package)?;
+                        if let (Some(inst_ver), Some(req_ver)) = (installed_ver, &version) {
+                            // Simple exact match check - for complex version specs, always upgrade
+                            if inst_ver == *req_ver
+                                || req_ver.starts_with(&['>', '<', '!', '~'][..])
+                            {
+                                already_ok.push(package.clone());
+                            } else if inst_ver != *req_ver {
+                                to_install.push(spec.clone());
+                            }
+                        } else {
+                            to_install.push(spec.clone());
+                        }
                     } else {
-                        to_install.push(package.clone());
+                        to_install.push(spec.clone());
                     }
                 }
                 PipState::Absent => {
@@ -291,9 +496,9 @@ impl Module for PipModule {
                         already_ok.push(package.clone());
                     }
                 }
-                PipState::Latest => {
-                    // For 'latest', we always try to install/upgrade
-                    to_install.push(package.clone());
+                PipState::Latest | PipState::ForceReinstall => {
+                    // For 'latest' or 'forcereinstall', we always try to install/upgrade
+                    to_install.push(spec.clone());
                 }
             }
         }
@@ -326,18 +531,29 @@ impl Module for PipModule {
         let mut results: HashMap<String, String> = HashMap::new();
 
         if !to_install.is_empty() {
-            let install_args = if state == PipState::Latest {
-                vec!["install", "--upgrade"]
-            } else {
-                vec!["install"]
-            };
+            let mut args: Vec<&str> = vec!["install"];
 
-            let mut args = install_args;
-            for pkg in &to_install {
-                args.push(pkg);
+            // Add state-specific flags
+            match state {
+                PipState::Latest => {
+                    args.push("--upgrade");
+                }
+                PipState::ForceReinstall => {
+                    args.push("--force-reinstall");
+                }
+                _ => {}
             }
 
-            let (success, stdout, stderr) = self.execute_pip_command(&pip_cmd, &args)?;
+            // Add editable flag if requested
+            if config.editable {
+                args.push("-e");
+            }
+
+            // Convert to refs for the command
+            let pkg_refs: Vec<&str> = to_install.iter().map(|s| s.as_str()).collect();
+            args.extend(pkg_refs);
+
+            let (success, stdout, stderr) = self.execute_pip_command(&config, &args)?;
 
             if !success {
                 return Err(ModuleError::ExecutionFailed(format!(
@@ -348,17 +564,17 @@ impl Module for PipModule {
 
             changed = true;
             for pkg in &to_install {
-                results.insert(pkg.clone(), "installed".to_string());
+                let pkg_name = Self::extract_package_name(pkg);
+                results.insert(pkg_name, "installed".to_string());
             }
         }
 
         if !to_remove.is_empty() {
-            let mut args = vec!["uninstall", "-y"];
-            for pkg in &to_remove {
-                args.push(pkg);
-            }
+            let mut args: Vec<&str> = vec!["uninstall", "-y"];
+            let pkg_refs: Vec<&str> = to_remove.iter().map(|s| s.as_str()).collect();
+            args.extend(pkg_refs);
 
-            let (success, stdout, stderr) = self.execute_pip_command(&pip_cmd, &args)?;
+            let (success, stdout, stderr) = self.execute_pip_command(&config, &args)?;
 
             if !success {
                 return Err(ModuleError::ExecutionFailed(format!(
@@ -408,13 +624,16 @@ impl Module for PipModule {
     }
 
     fn diff(&self, params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<Option<Diff>> {
-        let pip_cmd = self.build_pip_command(params)?;
+        let config = PipConfig::from_params(params)?;
 
         // Get state
         let state_str = params
             .get_string("state")?
             .unwrap_or_else(|| "present".to_string());
         let state = PipState::from_str(&state_str)?;
+
+        // Get version specification
+        let version = params.get_string("version")?;
 
         // Handle requirements file differently
         if let Some(requirements) = params.get_string("requirements")? {
@@ -435,23 +654,43 @@ impl Module for PipModule {
         let mut after_lines = Vec::new();
 
         for package in &packages {
-            let is_installed = self.is_package_installed(&pip_cmd, package)?;
-            let version = if is_installed {
-                self.get_installed_version(&pip_cmd, package)?
+            let is_installed = self.is_package_installed(&config, package)?;
+            let installed_version = if is_installed {
+                self.get_installed_version(&config, package)?
                     .unwrap_or_default()
             } else {
                 String::new()
             };
 
+            let target_spec = Self::build_package_spec(package, version.as_deref());
+
             match state {
-                PipState::Present | PipState::Latest => {
+                PipState::Present => {
                     if is_installed {
-                        before_lines.push(format!("{}: {}", package, version));
-                        if state == PipState::Latest {
-                            after_lines.push(format!("{}: (will be upgraded)", package));
+                        before_lines.push(format!("{}: {}", package, installed_version));
+                        if version.is_some() {
+                            after_lines.push(format!("{}: {}", package, target_spec));
                         } else {
-                            after_lines.push(format!("{}: {}", package, version));
+                            after_lines.push(format!("{}: {}", package, installed_version));
                         }
+                    } else {
+                        before_lines.push(format!("{}: (not installed)", package));
+                        after_lines.push(format!("{}: (will be installed)", target_spec));
+                    }
+                }
+                PipState::Latest => {
+                    if is_installed {
+                        before_lines.push(format!("{}: {}", package, installed_version));
+                        after_lines.push(format!("{}: (will be upgraded)", package));
+                    } else {
+                        before_lines.push(format!("{}: (not installed)", package));
+                        after_lines.push(format!("{}: (will be installed)", package));
+                    }
+                }
+                PipState::ForceReinstall => {
+                    if is_installed {
+                        before_lines.push(format!("{}: {}", package, installed_version));
+                        after_lines.push(format!("{}: (will be reinstalled)", package));
                     } else {
                         before_lines.push(format!("{}: (not installed)", package));
                         after_lines.push(format!("{}: (will be installed)", package));
@@ -459,7 +698,7 @@ impl Module for PipModule {
                 }
                 PipState::Absent => {
                     if is_installed {
-                        before_lines.push(format!("{}: {}", package, version));
+                        before_lines.push(format!("{}: {}", package, installed_version));
                         after_lines.push(format!("{}: (will be removed)", package));
                     } else {
                         before_lines.push(format!("{}: (not installed)", package));
@@ -487,27 +726,163 @@ mod tests {
         assert_eq!(PipState::from_str("absent").unwrap(), PipState::Absent);
         assert_eq!(PipState::from_str("removed").unwrap(), PipState::Absent);
         assert_eq!(PipState::from_str("latest").unwrap(), PipState::Latest);
+        assert_eq!(
+            PipState::from_str("forcereinstall").unwrap(),
+            PipState::ForceReinstall
+        );
+        assert_eq!(
+            PipState::from_str("force-reinstall").unwrap(),
+            PipState::ForceReinstall
+        );
         assert!(PipState::from_str("invalid").is_err());
     }
 
     #[test]
-    fn test_build_pip_command() {
-        let module = PipModule;
+    fn test_pip_config_from_params() {
         let mut params: ModuleParams = HashMap::new();
 
-        // Default pip command
-        let cmd = module.build_pip_command(&params).unwrap();
-        assert_eq!(cmd, "pip3");
+        // Default configuration
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(config.pip_cmd, "pip3");
+        assert!(config.extra_args.is_empty());
+        assert!(config.chdir.is_none());
+        assert!(!config.editable);
+        assert!(config.proxy.is_none());
 
         // Custom executable
         params.insert("executable".to_string(), serde_json::json!("pip"));
-        let cmd = module.build_pip_command(&params).unwrap();
-        assert_eq!(cmd, "pip");
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(config.pip_cmd, "pip");
 
         // Virtualenv overrides executable
         params.insert("virtualenv".to_string(), serde_json::json!("/path/to/venv"));
-        let cmd = module.build_pip_command(&params).unwrap();
-        assert_eq!(cmd, "/path/to/venv/bin/pip");
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(config.pip_cmd, "/path/to/venv/bin/pip");
+    }
+
+    #[test]
+    fn test_pip_config_extra_args() {
+        let mut params: ModuleParams = HashMap::new();
+
+        // Extra args as string
+        params.insert(
+            "extra_args".to_string(),
+            serde_json::json!("--trusted-host pypi.example.com --no-cache-dir"),
+        );
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(
+            config.extra_args,
+            vec!["--trusted-host", "pypi.example.com", "--no-cache-dir"]
+        );
+
+        // Extra args as array
+        let mut params: ModuleParams = HashMap::new();
+        params.insert(
+            "extra_args".to_string(),
+            serde_json::json!(["--trusted-host", "pypi.example.com"]),
+        );
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(
+            config.extra_args,
+            vec!["--trusted-host", "pypi.example.com"]
+        );
+    }
+
+    #[test]
+    fn test_pip_config_proxy() {
+        let mut params: ModuleParams = HashMap::new();
+        params.insert(
+            "proxy".to_string(),
+            serde_json::json!("http://proxy.example.com:8080"),
+        );
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(
+            config.proxy,
+            Some("http://proxy.example.com:8080".to_string())
+        );
+    }
+
+    #[test]
+    fn test_pip_config_index_urls() {
+        let mut params: ModuleParams = HashMap::new();
+        params.insert(
+            "index_url".to_string(),
+            serde_json::json!("https://pypi.example.com/simple"),
+        );
+        params.insert(
+            "extra_index_url".to_string(),
+            serde_json::json!("https://pypi.org/simple"),
+        );
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(
+            config.index_url,
+            Some("https://pypi.example.com/simple".to_string())
+        );
+        assert_eq!(
+            config.extra_index_url,
+            Some("https://pypi.org/simple".to_string())
+        );
+    }
+
+    #[test]
+    fn test_pip_config_umask() {
+        // Umask as string
+        let mut params: ModuleParams = HashMap::new();
+        params.insert("umask".to_string(), serde_json::json!("0022"));
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(config.umask, Some(0o022));
+
+        // Umask with 0o prefix
+        let mut params: ModuleParams = HashMap::new();
+        params.insert("umask".to_string(), serde_json::json!("0o077"));
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(config.umask, Some(0o077));
+
+        // Umask as integer
+        let mut params: ModuleParams = HashMap::new();
+        params.insert("umask".to_string(), serde_json::json!(18)); // 0o022 in decimal
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(config.umask, Some(18));
+    }
+
+    #[test]
+    fn test_extract_package_name() {
+        assert_eq!(PipModule::extract_package_name("flask"), "flask");
+        assert_eq!(PipModule::extract_package_name("flask>=2.0"), "flask");
+        assert_eq!(PipModule::extract_package_name("django==4.2"), "django");
+        assert_eq!(
+            PipModule::extract_package_name("requests[security]>=2.0"),
+            "requests"
+        );
+        assert_eq!(PipModule::extract_package_name("package~=1.0"), "package");
+        assert_eq!(PipModule::extract_package_name("pkg!=1.0"), "pkg");
+        assert_eq!(PipModule::extract_package_name("pkg<2.0,>=1.0"), "pkg");
+    }
+
+    #[test]
+    fn test_build_package_spec() {
+        // No version
+        assert_eq!(PipModule::build_package_spec("flask", None), "flask");
+
+        // Simple version
+        assert_eq!(
+            PipModule::build_package_spec("flask", Some("2.0")),
+            "flask==2.0"
+        );
+
+        // Version with specifier
+        assert_eq!(
+            PipModule::build_package_spec("flask", Some(">=2.0")),
+            "flask>=2.0"
+        );
+        assert_eq!(
+            PipModule::build_package_spec("django", Some("<4.0,>=3.2")),
+            "django<4.0,>=3.2"
+        );
+        assert_eq!(
+            PipModule::build_package_spec("requests", Some("~=2.28")),
+            "requests~=2.28"
+        );
     }
 
     #[test]
@@ -530,5 +905,34 @@ mod tests {
             serde_json::json!("requirements.txt"),
         );
         assert!(module.validate_params(&params).is_ok());
+    }
+
+    #[test]
+    fn test_pip_config_editable() {
+        let mut params: ModuleParams = HashMap::new();
+        params.insert("editable".to_string(), serde_json::json!(true));
+        let config = PipConfig::from_params(&params).unwrap();
+        assert!(config.editable);
+    }
+
+    #[test]
+    fn test_pip_config_chdir() {
+        let mut params: ModuleParams = HashMap::new();
+        params.insert("chdir".to_string(), serde_json::json!("/opt/myapp"));
+        let config = PipConfig::from_params(&params).unwrap();
+        assert_eq!(config.chdir, Some("/opt/myapp".to_string()));
+    }
+
+    #[test]
+    fn test_pip_config_no_index() {
+        let mut params: ModuleParams = HashMap::new();
+        params.insert("no_index".to_string(), serde_json::json!(true));
+        params.insert(
+            "find_links".to_string(),
+            serde_json::json!("/path/to/packages"),
+        );
+        let config = PipConfig::from_params(&params).unwrap();
+        assert!(config.no_index);
+        assert_eq!(config.find_links, Some("/path/to/packages".to_string()));
     }
 }

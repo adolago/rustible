@@ -1,6 +1,6 @@
 //! Tests for include_tasks, import_tasks, and include_vars functionality
 
-use rustible::include::{IncludeTasksSpec, ImportTasksSpec, TaskIncluder};
+use rustible::include::{ImportTasksSpec, IncludeTasksSpec, TaskIncluder};
 use rustible::vars::{VarPrecedence, VarStore};
 use std::io::Write;
 use tempfile::TempDir;

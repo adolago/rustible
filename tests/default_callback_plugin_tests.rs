@@ -445,7 +445,9 @@ fn test_task_status_colored_string_contains_text() {
     assert!(TaskStatus::Changed.colored_string().contains("changed"));
     assert!(TaskStatus::Skipped.colored_string().contains("skipping"));
     assert!(TaskStatus::Failed.colored_string().contains("failed"));
-    assert!(TaskStatus::Unreachable.colored_string().contains("unreachable"));
+    assert!(TaskStatus::Unreachable
+        .colored_string()
+        .contains("unreachable"));
     assert!(TaskStatus::Rescued.colored_string().contains("rescued"));
     assert!(TaskStatus::Ignored.colored_string().contains("ignored"));
 }
@@ -812,8 +814,11 @@ fn test_format_task_result_changed() {
 #[test]
 fn test_format_task_result_failed_with_message() {
     let callback = DefaultCallback::new(0, true);
-    let output =
-        callback.format_task_result("webserver01", TaskStatus::Failed, Some("Connection refused"));
+    let output = callback.format_task_result(
+        "webserver01",
+        TaskStatus::Failed,
+        Some("Connection refused"),
+    );
 
     assert!(output.contains("failed:"));
     assert!(output.contains("[webserver01]"));

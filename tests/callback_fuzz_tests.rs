@@ -39,7 +39,7 @@ fn task_status_strategy() -> impl Strategy<Value = String> {
         Just("FAILED".to_string()),
         Just("SKIPPED".to_string()),
         Just("UNREACHABLE".to_string()),
-        ".*",  // Random strings
+        ".*", // Random strings
     ]
 }
 
@@ -60,7 +60,7 @@ fn event_type_strategy() -> impl Strategy<Value = String> {
         Just("warning".to_string()),
         Just("deprecation".to_string()),
         Just("verbose".to_string()),
-        "[a-z_]{1,32}",  // Random event types
+        "[a-z_]{1,32}", // Random event types
     ]
 }
 
@@ -79,11 +79,20 @@ fn parse_task_status(status: &str) -> Option<&'static str> {
 /// Validate an event type name
 fn validate_event_type(event_type: &str) -> bool {
     let valid_events = [
-        "playbook_start", "playbook_end",
-        "play_start", "play_end",
-        "task_start", "task_ok", "task_failed", "task_skipped", "task_unreachable",
-        "handler_triggered", "facts_gathered",
-        "warning", "deprecation", "verbose",
+        "playbook_start",
+        "playbook_end",
+        "play_start",
+        "play_end",
+        "task_start",
+        "task_ok",
+        "task_failed",
+        "task_skipped",
+        "task_unreachable",
+        "handler_triggered",
+        "facts_gathered",
+        "warning",
+        "deprecation",
+        "verbose",
     ];
 
     let normalized = event_type.to_lowercase();
@@ -170,9 +179,21 @@ proptest! {
 
 /// Known plugin names for validation
 const KNOWN_PLUGINS: &[&str] = &[
-    "default", "minimal", "oneline", "json", "yaml",
-    "timer", "tree", "diff", "junit", "notification",
-    "dense", "forked", "selective", "counter", "null",
+    "default",
+    "minimal",
+    "oneline",
+    "json",
+    "yaml",
+    "timer",
+    "tree",
+    "diff",
+    "junit",
+    "notification",
+    "dense",
+    "forked",
+    "selective",
+    "counter",
+    "null",
     "profile_tasks",
 ];
 
@@ -194,7 +215,7 @@ fn plugin_name_strategy() -> impl Strategy<Value = String> {
         Just("selective".to_string()),
         Just("counter".to_string()),
         Just("null".to_string()),
-        "[a-z_]{1,64}",  // Random plugin names
+        "[a-z_]{1,64}", // Random plugin names
     ]
 }
 
@@ -203,8 +224,8 @@ fn output_destination_strategy() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("stdout".to_string()),
         Just("stderr".to_string()),
-        "/tmp/[a-z]{1,20}\\.log",  // Random file paths
-        "[a-zA-Z0-9/_.-]{1,256}",  // Various paths
+        "/tmp/[a-z]{1,20}\\.log", // Random file paths
+        "[a-zA-Z0-9/_.-]{1,256}", // Various paths
     ]
 }
 
@@ -307,9 +328,9 @@ proptest! {
 /// Strategy for generating plugin name variations
 fn plugin_variation_strategy() -> impl Strategy<Value = (String, Option<String>, Option<String>)> {
     (
-        "[a-z_-]{1,64}",  // Base name
-        prop::option::of("[a-z.]+"),  // Optional namespace
-        prop::option::of("[0-9.]+"),  // Optional version
+        "[a-z_-]{1,64}",             // Base name
+        prop::option::of("[a-z.]+"), // Optional namespace
+        prop::option::of("[0-9.]+"), // Optional version
     )
 }
 
@@ -346,7 +367,7 @@ fn plugin_alias_strategy() -> impl Strategy<Value = String> {
         Just("silent".to_string()),
         Just("profile".to_string()),
         Just("perf".to_string()),
-        "[a-z]{1,16}",  // Random aliases
+        "[a-z]{1,16}", // Random aliases
     ]
 }
 
@@ -376,8 +397,14 @@ fn resolve_alias(alias: &str) -> Option<&'static str> {
 fn is_valid_plugin_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
-        && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-        && name.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false)
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        && name
+            .chars()
+            .next()
+            .map(|c| c.is_alphabetic())
+            .unwrap_or(false)
 }
 
 proptest! {
@@ -475,24 +502,20 @@ fn large_string_strategy(max_len: usize) -> impl Strategy<Value = String> {
 }
 
 /// Strategy for generating large arrays of strings
-fn large_string_array_strategy(max_count: usize, max_string_len: usize) -> impl Strategy<Value = Vec<String>> {
+fn large_string_array_strategy(
+    max_count: usize,
+    max_string_len: usize,
+) -> impl Strategy<Value = Vec<String>> {
     prop::collection::vec(large_string_strategy(max_string_len), 0..=max_count)
 }
 
 /// Strategy for generating large key-value maps
 fn large_map_strategy(max_count: usize) -> impl Strategy<Value = HashMap<String, String>> {
-    prop::collection::hash_map(
-        "[a-z_]{1,32}",
-        "[a-zA-Z0-9 ]{0,256}",
-        0..=max_count,
-    )
+    prop::collection::hash_map("[a-z_]{1,32}", "[a-zA-Z0-9 ]{0,256}", 0..=max_count)
 }
 
 /// Calculate the approximate size of data
-fn calculate_data_size(
-    strings: &[String],
-    map: &HashMap<String, String>,
-) -> usize {
+fn calculate_data_size(strings: &[String], map: &HashMap<String, String>) -> usize {
     let string_size: usize = strings.iter().map(|s| s.len()).sum();
     let map_size: usize = map.iter().map(|(k, v)| k.len() + v.len()).sum();
     string_size + map_size
@@ -779,18 +802,21 @@ fn simulated_event_strategy() -> impl Strategy<Value = SimulatedEvent> {
         "[a-zA-Z0-9 .,!?-]{0,256}",
         0u64..=3_600_000u64,
         large_map_strategy(16),
-    ).prop_map(|(event_type, host, task_name, status, changed, message, duration_ms, data)| {
-        SimulatedEvent {
-            event_type,
-            host,
-            task_name,
-            status,
-            changed,
-            message,
-            duration_ms,
-            data,
-        }
-    })
+    )
+        .prop_map(
+            |(event_type, host, task_name, status, changed, message, duration_ms, data)| {
+                SimulatedEvent {
+                    event_type,
+                    host,
+                    task_name,
+                    status,
+                    changed,
+                    message,
+                    duration_ms,
+                    data,
+                }
+            },
+        )
 }
 
 proptest! {

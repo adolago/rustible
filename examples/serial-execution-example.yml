@@ -1,0 +1,83 @@
+---
+# Serial Execution Examples for Rustible
+# This playbook demonstrates various serial execution patterns
+
+- name: Example 1 - Fixed Batch Size
+  hosts: webservers
+  gather_facts: false
+  serial: 2  # Execute on 2 hosts at a time
+  tasks:
+    - name: Update application
+      debug:
+        msg: "Updating application on {{ inventory_hostname }}"
+
+    - name: Restart service
+      debug:
+        msg: "Restarting service on {{ inventory_hostname }}"
+
+- name: Example 2 - Percentage-Based Batches
+  hosts: all
+  gather_facts: false
+  serial: "50%"  # Execute on 50% of hosts at a time
+  tasks:
+    - name: Apply security patch
+      debug:
+        msg: "Applying security patch to {{ inventory_hostname }}"
+
+- name: Example 3 - Progressive Deployment (Canary)
+  hosts: production
+  gather_facts: false
+  serial: [1, 5, 10]  # 1 host, then 5, then 10 at a time
+  max_fail_percentage: 20  # Abort if >20% fail
+  tasks:
+    - name: Deploy new version
+      debug:
+        msg: "Deploying version 2.0 to {{ inventory_hostname }}"
+
+    - name: Health check
+      debug:
+        msg: "Verifying health of {{ inventory_hostname }}"
+
+- name: Example 4 - Rolling Update with Handlers
+  hosts: loadbalancers
+  gather_facts: false
+  serial: 1  # One at a time for load balancers
+  tasks:
+    - name: Update configuration
+      debug:
+        msg: "Updating config on {{ inventory_hostname }}"
+      changed_when: true
+      notify: reload lb
+
+  handlers:
+    - name: reload lb
+      debug:
+        msg: "Reloading load balancer on {{ inventory_hostname }}"
+
+- name: Example 5 - Database Migration with Safety
+  hosts: databases
+  gather_facts: false
+  serial: "25%"  # 25% at a time for safety
+  max_fail_percentage: 10  # Stop if >10% fail
+  tasks:
+    - name: Backup database
+      debug:
+        msg: "Creating backup on {{ inventory_hostname }}"
+
+    - name: Run migration
+      debug:
+        msg: "Running migration on {{ inventory_hostname }}"
+
+    - name: Verify migration
+      debug:
+        msg: "Verifying migration on {{ inventory_hostname }}"
+
+- name: Example 6 - Complex Progressive with Percentages
+  hosts: all
+  gather_facts: false
+  serial: ["10%", "25%", "50%", "100%"]
+  max_fail_percentage: 15
+  tasks:
+    - name: Staged rollout
+      debug:
+        msg: "Stage {{ ansible_play_batch | length }} hosts, including {{ inventory_hostname }}"

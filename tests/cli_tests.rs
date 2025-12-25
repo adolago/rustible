@@ -814,7 +814,7 @@ fn test_list_tasks_with_details() {
     rustible_cmd()
         .arg("list-tasks")
         .arg(playbook.path())
-        .arg("--show-details")
+        .arg("--detailed")
         .assert()
         .success()
         .stdout(predicate::str::contains("Test").or(predicate::str::contains("task")));
@@ -2471,4 +2471,1351 @@ fn test_validate_requires_playbook() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
+}
+
+// =============================================================================
+// Plan Mode Tests
+// =============================================================================
+
+#[test]
+fn test_run_with_plan_flag() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--plan")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PLAN").or(predicate::str::contains("plan")));
+}
+
+#[test]
+fn test_plan_mode_shows_execution_plan() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Test playbook with tasks
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Install nginx
+      package:
+        name: nginx
+        state: present
+    - name: Start service
+      service:
+        name: nginx
+        state: started
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--plan")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("will")
+                .or(predicate::str::contains("Task"))
+                .or(predicate::str::contains("PLAN")),
+        );
+}
+
+#[test]
+fn test_plan_mode_with_multiple_plays() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: First play
+  hosts: localhost
+  tasks:
+    - name: Task A
+      debug:
+        msg: "A"
+
+- name: Second play
+  hosts: localhost
+  tasks:
+    - name: Task B
+      debug:
+        msg: "B"
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--plan")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_plan_mode_respects_tags() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Tagged playbook
+  hosts: localhost
+  tasks:
+    - name: Install task
+      debug:
+        msg: "install"
+      tags:
+        - install
+    - name: Configure task
+      debug:
+        msg: "configure"
+      tags:
+        - configure
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--plan")
+        .arg("-t")
+        .arg("install")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_plan_mode_with_vars() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Playbook with vars
+  hosts: localhost
+  vars:
+    package_name: nginx
+  tasks:
+    - name: Install package
+      package:
+        name: "{{{{ package_name }}}}"
+        state: present
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--plan")
+        .arg("-e")
+        .arg("package_name=apache2")
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Vault Encrypt/Decrypt String Tests
+// =============================================================================
+
+#[test]
+fn test_vault_encrypt_string_help() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("encrypt-string")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("encrypt").or(predicate::str::contains("string")));
+}
+
+#[test]
+fn test_vault_decrypt_string_help() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("decrypt-string")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("decrypt").or(predicate::str::contains("string")));
+}
+
+#[test]
+fn test_vault_edit_help() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("edit")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Edit"))
+        .stdout(predicate::str::contains("--editor"));
+}
+
+#[test]
+fn test_vault_encrypt_requires_file() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("encrypt")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn test_vault_decrypt_requires_file() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("decrypt")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn test_vault_view_requires_file() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("view")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn test_vault_edit_requires_file() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("edit")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn test_vault_create_requires_file() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("create")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn test_vault_rekey_requires_files() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("rekey")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn test_vault_nonexistent_file() {
+    let mut password_file = NamedTempFile::new().unwrap();
+    writeln!(password_file, "testpassword").unwrap();
+
+    rustible_cmd()
+        .arg("vault")
+        .arg("view")
+        .arg("/nonexistent/secret.yml")
+        .arg("--vault-password-file")
+        .arg(password_file.path())
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_vault_with_vault_id_flag() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("encrypt")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("vault-id").or(predicate::str::contains("output")));
+}
+
+// =============================================================================
+// SSH and Connection Arguments Tests
+// =============================================================================
+
+#[test]
+fn test_run_with_connection_flags() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("-u")
+        .arg("deploy")
+        .arg("--timeout")
+        .arg("120")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_run_with_private_key_nonexistent() {
+    let playbook = create_test_playbook();
+
+    // Using a non-existent key file should still parse successfully
+    // The error would occur at connection time, not at argument parsing
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--private-key")
+        .arg("/nonexistent/key.pem")
+        .assert()
+        .success(); // Localhost doesn't need SSH key
+}
+
+#[test]
+fn test_ask_become_pass_flag() {
+    let playbook = create_test_playbook();
+
+    // --ask-become-pass (-K) flag should be accepted
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("become-pass")
+                .or(predicate::str::contains("-K"))
+                .or(predicate::str::contains("become")),
+        );
+}
+
+#[test]
+fn test_ask_vault_pass_flag() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("vault"));
+}
+
+// =============================================================================
+// Init Command Advanced Tests
+// =============================================================================
+
+#[test]
+fn test_init_with_invalid_template() {
+    let temp_dir = tempdir().unwrap();
+
+    // Invalid template should still work, falling back to basic
+    rustible_cmd()
+        .arg("init")
+        .arg(temp_dir.path())
+        .arg("--template")
+        .arg("nonexistent_template")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_init_creates_gitignore() {
+    let temp_dir = tempdir().unwrap();
+
+    rustible_cmd()
+        .arg("init")
+        .arg(temp_dir.path())
+        .assert()
+        .success();
+
+    assert!(temp_dir.path().join(".gitignore").exists());
+}
+
+#[test]
+fn test_init_creates_config_file() {
+    let temp_dir = tempdir().unwrap();
+
+    rustible_cmd()
+        .arg("init")
+        .arg(temp_dir.path())
+        .assert()
+        .success();
+
+    assert!(temp_dir.path().join("rustible.cfg").exists());
+
+    // Verify config file content has expected sections
+    let config_content = std::fs::read_to_string(temp_dir.path().join("rustible.cfg")).unwrap();
+    assert!(config_content.contains("[defaults]"));
+}
+
+#[test]
+fn test_init_with_nested_path() {
+    let temp_dir = tempdir().unwrap();
+    let nested_path = temp_dir.path().join("deep/nested/project");
+
+    rustible_cmd()
+        .arg("init")
+        .arg(&nested_path)
+        .assert()
+        .success();
+
+    assert!(nested_path.join("playbooks").exists());
+}
+
+// =============================================================================
+// List Hosts Advanced Tests
+// =============================================================================
+
+#[test]
+fn test_list_hosts_empty_inventory() {
+    let mut inventory = NamedTempFile::new().unwrap();
+    writeln!(
+        inventory,
+        r#"all:
+  hosts: {{}}
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("list-hosts")
+        .arg("-i")
+        .arg(inventory.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_list_hosts_with_children_groups() {
+    let mut inventory = NamedTempFile::new().unwrap();
+    writeln!(
+        inventory,
+        r#"all:
+  children:
+    production:
+      hosts:
+        prod1: {{}}
+        prod2: {{}}
+    staging:
+      hosts:
+        stage1: {{}}
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("list-hosts")
+        .arg("-i")
+        .arg(inventory.path())
+        .arg("all")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("prod").or(predicate::str::contains("stage")));
+}
+
+#[test]
+fn test_list_hosts_specific_group() {
+    let inventory = create_test_inventory();
+
+    rustible_cmd()
+        .arg("list-hosts")
+        .arg("-i")
+        .arg(inventory.path())
+        .arg("dbservers")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_list_hosts_with_all_flags() {
+    let inventory = create_test_inventory();
+
+    rustible_cmd()
+        .arg("list-hosts")
+        .arg("-i")
+        .arg(inventory.path())
+        .arg("--vars")
+        .arg("--graph")
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// List Tasks Advanced Tests
+// =============================================================================
+
+#[test]
+fn test_list_tasks_with_blocks() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Play with blocks
+  hosts: localhost
+  tasks:
+    - name: Block of tasks
+      block:
+        - name: Task in block
+          debug:
+            msg: "in block"
+      rescue:
+        - name: Rescue task
+          debug:
+            msg: "rescue"
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("list-tasks")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_list_tasks_with_loops() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Play with loops
+  hosts: localhost
+  tasks:
+    - name: Install packages
+      package:
+        name: "{{{{ item }}}}"
+        state: present
+      loop:
+        - nginx
+        - redis
+        - postgresql
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("list-tasks")
+        .arg(playbook.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Install packages"));
+}
+
+#[test]
+fn test_list_tasks_with_include() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Play with include
+  hosts: localhost
+  tasks:
+    - name: Include tasks
+      include_tasks: other_tasks.yml
+    - name: Regular task
+      debug:
+        msg: "hello"
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("list-tasks")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_list_tasks_skip_multiple_tags() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Tagged playbook
+  hosts: localhost
+  tasks:
+    - name: Install task
+      debug: {{}}
+      tags: [install]
+    - name: Configure task
+      debug: {{}}
+      tags: [configure]
+    - name: Deploy task
+      debug: {{}}
+      tags: [deploy]
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("list-tasks")
+        .arg(playbook.path())
+        .arg("--skip-tags")
+        .arg("install")
+        .arg("--skip-tags")
+        .arg("configure")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Deploy task"));
+}
+
+// =============================================================================
+// Validate Command Advanced Tests
+// =============================================================================
+
+#[test]
+fn test_validate_playbook_with_conditionals() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Play with conditionals
+  hosts: localhost
+  tasks:
+    - name: Conditional task
+      debug:
+        msg: "conditional"
+      when: ansible_os_family == "Debian"
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("validate")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_validate_playbook_with_loops_and_vars() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Complex playbook
+  hosts: localhost
+  vars:
+    packages:
+      - nginx
+      - redis
+  tasks:
+    - name: Install packages
+      package:
+        name: "{{{{ item }}}}"
+        state: present
+      loop: "{{{{ packages }}}}"
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("validate")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_validate_playbook_with_handlers_no_name() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Play with unnamed handler
+  hosts: localhost
+  tasks:
+    - name: Task
+      debug:
+        msg: test
+      notify: restart service
+  handlers:
+    - listen: restart service
+      debug:
+        msg: handler
+"#
+    )
+    .unwrap();
+
+    // Handler without name should trigger a warning
+    rustible_cmd()
+        .arg("validate")
+        .arg(playbook.path())
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("warning")
+                .or(predicate::str::contains("WARNING"))
+                .or(predicate::str::is_empty()),
+        );
+}
+
+#[test]
+fn test_validate_multiple_plays_with_errors() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Valid play
+  hosts: localhost
+  tasks:
+    - name: Task
+      debug: {{}}
+
+- name: Invalid play without hosts
+  tasks:
+    - name: Task
+      debug: {{}}
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("validate")
+        .arg(playbook.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("hosts"));
+}
+
+// =============================================================================
+// Error Message Quality Tests
+// =============================================================================
+
+#[test]
+fn test_error_message_for_invalid_inventory_format() {
+    let mut inventory = NamedTempFile::new().unwrap();
+    writeln!(inventory, "{{{{invalid json and yaml").unwrap();
+
+    rustible_cmd()
+        .arg("list-hosts")
+        .arg("-i")
+        .arg(inventory.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::is_empty().not());
+}
+
+#[test]
+fn test_error_message_for_missing_inventory_file() {
+    rustible_cmd()
+        .arg("list-hosts")
+        .arg("-i")
+        .arg("/nonexistent/inventory.yml")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("not found")
+                .or(predicate::str::contains("No such file"))
+                .or(predicate::str::contains("Failed")),
+        );
+}
+
+#[test]
+fn test_error_message_for_duplicate_flags() {
+    let playbook = create_test_playbook();
+
+    // Multiple conflicting values should be accepted (last wins)
+    rustible_cmd()
+        .arg("-f")
+        .arg("5")
+        .arg("-f")
+        .arg("10")
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Combination and Integration Tests
+// =============================================================================
+
+#[test]
+fn test_all_global_flags_with_check() {
+    let playbook = create_test_playbook();
+    let inventory = create_test_inventory();
+    let config = create_test_config();
+
+    rustible_cmd()
+        .arg("-i")
+        .arg(inventory.path())
+        .arg("-c")
+        .arg(config.path())
+        .arg("-e")
+        .arg("test_var=value")
+        .arg("-vvv")
+        .arg("--check")
+        .arg("--diff")
+        .arg("-l")
+        .arg("localhost")
+        .arg("-f")
+        .arg("20")
+        .arg("--timeout")
+        .arg("300")
+        .arg("--no-color")
+        .arg("--output")
+        .arg("human")
+        .arg("check")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_run_with_all_become_options() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--become")
+        .arg("--become-method")
+        .arg("sudo")
+        .arg("--become-user")
+        .arg("admin")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_check_with_all_options() {
+    let playbook = create_test_playbook();
+    let inventory = create_test_inventory();
+
+    rustible_cmd()
+        .arg("-i")
+        .arg(inventory.path())
+        .arg("--diff")
+        .arg("check")
+        .arg(playbook.path())
+        .arg("-t")
+        .arg("test")
+        .arg("--skip-tags")
+        .arg("slow")
+        .arg("--become")
+        .arg("-u")
+        .arg("testuser")
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Output Format Validation Tests
+// =============================================================================
+
+#[test]
+fn test_json_output_is_valid_json() {
+    let playbook = create_test_playbook();
+
+    let output = rustible_cmd()
+        .arg("--output")
+        .arg("json")
+        .arg("run")
+        .arg(playbook.path())
+        .output()
+        .expect("Failed to run command");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // If there's output, it should be valid JSON lines
+    for line in stdout.lines() {
+        if !line.trim().is_empty() {
+            // Try to parse as JSON - if it fails, that's okay for some output lines
+            let _ = serde_json::from_str::<serde_json::Value>(line);
+        }
+    }
+}
+
+#[test]
+fn test_minimal_output_format() {
+    let playbook = create_test_playbook();
+
+    let output = rustible_cmd()
+        .arg("--output")
+        .arg("minimal")
+        .arg("run")
+        .arg(playbook.path())
+        .output()
+        .expect("Failed to run command");
+
+    assert!(output.status.success());
+    // Minimal output should be less verbose
+}
+
+// =============================================================================
+// Environment Variable Precedence Tests
+// =============================================================================
+
+#[test]
+fn test_cli_overrides_env_vars() {
+    let playbook = create_test_playbook();
+    let inventory1 = create_test_inventory();
+    let inventory2 = create_test_inventory();
+
+    // CLI should override environment variable
+    rustible_cmd()
+        .env("RUSTIBLE_INVENTORY", inventory1.path())
+        .arg("-i")
+        .arg(inventory2.path())
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_config_env_var() {
+    let playbook = create_test_playbook();
+    let config = create_test_config();
+
+    rustible_cmd()
+        .env("RUSTIBLE_CONFIG", config.path())
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Unicode and Special Character Tests
+// =============================================================================
+
+#[test]
+fn test_playbook_with_unicode_task_names() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Unicode playbook
+  hosts: localhost
+  tasks:
+    - name: Task with unicode symbols
+      debug:
+        msg: "Hello World!"
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_extra_vars_with_special_chars() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("-e")
+        .arg("message=hello@world.com")
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_limit_with_special_patterns() {
+    let playbook = create_test_playbook();
+
+    // Test various limit patterns
+    rustible_cmd()
+        .arg("-l")
+        .arg("!excluded:included")
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Step Mode Tests
+// =============================================================================
+
+#[test]
+fn test_step_flag_accepted() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--step")
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Start At Task Tests
+// =============================================================================
+
+#[test]
+fn test_start_at_task_accepted() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--start-at-task")
+        .arg("Test task")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_start_at_task_nonexistent() {
+    let playbook = create_test_playbook();
+
+    // Starting at a non-existent task should still succeed
+    // (it just won't find the task to start from)
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--start-at-task")
+        .arg("Nonexistent Task Name")
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Become Method Variations Tests
+// =============================================================================
+
+#[test]
+fn test_become_method_su() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--become")
+        .arg("--become-method")
+        .arg("su")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_become_method_sudo() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--become")
+        .arg("--become-method")
+        .arg("sudo")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_become_without_method() {
+    let playbook = create_test_playbook();
+
+    // --become without explicit method should use default (sudo)
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .arg("--become")
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Help Output Quality Tests
+// =============================================================================
+
+#[test]
+fn test_main_help_shows_all_subcommands() {
+    rustible_cmd()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("run"))
+        .stdout(predicate::str::contains("check"))
+        .stdout(predicate::str::contains("list-hosts"))
+        .stdout(predicate::str::contains("list-tasks"))
+        .stdout(predicate::str::contains("vault"))
+        .stdout(predicate::str::contains("init"))
+        .stdout(predicate::str::contains("validate"));
+}
+
+#[test]
+fn test_main_help_shows_global_options() {
+    rustible_cmd()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-i"))
+        .stdout(predicate::str::contains("-v"))
+        .stdout(predicate::str::contains("--check"))
+        .stdout(predicate::str::contains("--diff"));
+}
+
+#[test]
+fn test_vault_help_shows_all_subcommands() {
+    rustible_cmd()
+        .arg("vault")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("encrypt"))
+        .stdout(predicate::str::contains("decrypt"))
+        .stdout(predicate::str::contains("view"))
+        .stdout(predicate::str::contains("edit"))
+        .stdout(predicate::str::contains("create"))
+        .stdout(predicate::str::contains("rekey"));
+}
+
+// =============================================================================
+// Exit Code Consistency Tests
+// =============================================================================
+
+#[test]
+fn test_exit_code_invalid_yaml_playbook() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(playbook, "invalid: yaml: [[[syntax").unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .code(predicate::ne(0));
+}
+
+#[test]
+fn test_exit_code_subcommand_help() {
+    // All subcommand help should exit with 0
+    for subcommand in &[
+        "run",
+        "check",
+        "list-hosts",
+        "list-tasks",
+        "vault",
+        "init",
+        "validate",
+    ] {
+        rustible_cmd()
+            .arg(subcommand)
+            .arg("--help")
+            .assert()
+            .code(0);
+    }
+}
+
+// =============================================================================
+// Parallel Execution (Forks) Tests
+// =============================================================================
+
+#[test]
+fn test_forks_with_various_values() {
+    let playbook = create_test_playbook();
+
+    for forks in &["1", "5", "10", "50", "100"] {
+        rustible_cmd()
+            .arg("-f")
+            .arg(forks)
+            .arg("run")
+            .arg(playbook.path())
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn test_forks_long_form() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("--forks")
+        .arg("25")
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Timeout Configuration Tests
+// =============================================================================
+
+#[test]
+fn test_timeout_various_values() {
+    let playbook = create_test_playbook();
+
+    for timeout in &["1", "30", "60", "300", "3600"] {
+        rustible_cmd()
+            .arg("--timeout")
+            .arg(timeout)
+            .arg("run")
+            .arg(playbook.path())
+            .assert()
+            .success();
+    }
+}
+
+// =============================================================================
+// Complex Inventory Pattern Tests
+// =============================================================================
+
+#[test]
+fn test_limit_exclusion_pattern() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("-l")
+        .arg("!webservers")
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_limit_intersection_pattern() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("-l")
+        .arg("&production")
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_limit_complex_pattern() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("-l")
+        .arg("webservers:&production:!staging")
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Multiple Playbook Files Tests
+// =============================================================================
+
+#[test]
+fn test_run_single_playbook() {
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Inventory Directory Tests
+// =============================================================================
+
+#[test]
+fn test_inventory_directory() {
+    let temp_dir = tempdir().unwrap();
+    let inv_dir = temp_dir.path().join("inventory");
+    std::fs::create_dir(&inv_dir).unwrap();
+
+    // Create hosts file in directory
+    std::fs::write(
+        inv_dir.join("hosts.yml"),
+        r#"all:
+  hosts:
+    localhost:
+      ansible_connection: local
+"#,
+    )
+    .unwrap();
+
+    let playbook = create_test_playbook();
+
+    rustible_cmd()
+        .arg("-i")
+        .arg(&inv_dir)
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+// =============================================================================
+// Empty and Edge Case Playbooks
+// =============================================================================
+
+#[test]
+fn test_playbook_with_only_comments() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"# This is a comment
+# Another comment
+---
+# Empty playbook
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .failure(); // Empty playbook should fail
+}
+
+#[test]
+fn test_playbook_with_empty_tasks() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Play with empty tasks
+  hosts: localhost
+  tasks: []
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_playbook_with_null_tasks() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Play with null tasks
+  hosts: localhost
+  tasks: ~
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .success();
 }

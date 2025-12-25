@@ -1,0 +1,22 @@
+---
+# Common role tasks - executed for all hosts
+- name: Set timezone
+  command: timedatectl set-timezone "{{ timezone | default('UTC') }}"
+  changed_when: false
+
+- name: Install common packages
+  package:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ common_packages | default(['vim', 'curl', 'git']) }}"
+
+- name: Configure sysctl settings
+  template:
+    src: sysctl.conf.j2
+    dest: /etc/sysctl.conf
+  notify: reload sysctl
+
+- name: Set hostname
+  hostname:
+    name: "{{ inventory_hostname }}"
+  when: set_hostname | default(false)

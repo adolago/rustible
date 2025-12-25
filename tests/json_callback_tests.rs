@@ -380,7 +380,8 @@ impl JsonCallback {
 #[async_trait]
 impl ExecutionCallback for JsonCallback {
     async fn on_playbook_start(&self, name: &str) {
-        self.playbook_start_time.store(self.now_ms(), Ordering::SeqCst);
+        self.playbook_start_time
+            .store(self.now_ms(), Ordering::SeqCst);
 
         let event = JsonEvent::PlaybookStart {
             playbook: name.to_string(),
@@ -524,12 +525,7 @@ async fn test_all_events_produce_valid_json() {
 
     for (i, line) in lines.iter().enumerate() {
         let parsed: Result<Value, _> = serde_json::from_str(line);
-        assert!(
-            parsed.is_ok(),
-            "Line {} is not valid JSON: {}",
-            i,
-            line
-        );
+        assert!(parsed.is_ok(), "Line {} is not valid JSON: {}", i, line);
     }
 }
 
@@ -538,7 +534,9 @@ async fn test_json_can_be_reparsed_to_events() {
     let callback = JsonCallback::new();
 
     callback.on_playbook_start("roundtrip_test").await;
-    callback.on_play_start("play1", &["localhost".to_string()]).await;
+    callback
+        .on_play_start("play1", &["localhost".to_string()])
+        .await;
     callback.on_task_start("task1", "localhost").await;
 
     let result = ExecutionResult {
@@ -572,10 +570,7 @@ async fn test_pretty_json_output() {
 
     // Pretty-printed JSON should span multiple lines
     let line = &lines[0];
-    assert!(
-        line.contains('\n'),
-        "Pretty JSON should contain newlines"
-    );
+    assert!(line.contains('\n'), "Pretty JSON should contain newlines");
 
     // But still be valid JSON
     let parsed: Result<Value, _> = serde_json::from_str(line);
@@ -769,12 +764,11 @@ async fn test_facts_gathered_serialization() {
     facts.set("distribution_version", json!("22.04"));
     facts.set("memtotal_mb", json!(32768));
     facts.set("processor_count", json!(8));
-    facts.set(
-        "interfaces",
-        json!(["eth0", "lo", "docker0"]),
-    );
+    facts.set("interfaces", json!(["eth0", "lo", "docker0"]));
 
-    callback.on_facts_gathered("production-server", &facts).await;
+    callback
+        .on_facts_gathered("production-server", &facts)
+        .await;
 
     let events = callback.events();
     match &events[0] {
@@ -889,9 +883,7 @@ async fn test_streaming_allows_incremental_parsing() {
     tokio::spawn(async move {
         callback_clone.on_playbook_start("streaming_test").await;
         tokio::time::sleep(Duration::from_millis(5)).await;
-        callback_clone
-            .on_task_start("task1", "host1")
-            .await;
+        callback_clone.on_task_start("task1", "host1").await;
     })
     .await
     .unwrap();
@@ -903,9 +895,10 @@ async fn test_streaming_allows_incremental_parsing() {
     // Each can be parsed independently
     for line in &lines {
         let event: JsonEvent = serde_json::from_str(line).unwrap();
-        assert!(
-            matches!(event, JsonEvent::PlaybookStart { .. } | JsonEvent::TaskStart { .. })
-        );
+        assert!(matches!(
+            event,
+            JsonEvent::PlaybookStart { .. } | JsonEvent::TaskStart { .. }
+        ));
     }
 }
 
@@ -1026,7 +1019,9 @@ async fn test_special_characters_in_strings() {
     callback
         .on_play_start("play with\nnewline", &["host/with/slashes".to_string()])
         .await;
-    callback.on_task_start("task with\ttab", "host\\backslash").await;
+    callback
+        .on_task_start("task with\ttab", "host\\backslash")
+        .await;
     callback
         .on_handler_triggered("handler with unicode: \u{1F600}")
         .await;
@@ -1053,9 +1048,7 @@ async fn test_unicode_in_all_fields() {
     let callback = JsonCallback::new();
 
     callback.on_playbook_start("playbook").await;
-    callback
-        .on_task_start("Deploy to server", "host1")
-        .await;
+    callback.on_task_start("Deploy to server", "host1").await;
 
     let result = ExecutionResult {
         host: "host1".to_string(),
@@ -1139,7 +1132,10 @@ async fn test_ansible_compatible_structure() {
 
     callback.on_playbook_start("site.yml").await;
     callback
-        .on_play_start("Configure webservers", &["web1".to_string(), "web2".to_string()])
+        .on_play_start(
+            "Configure webservers",
+            &["web1".to_string(), "web2".to_string()],
+        )
         .await;
     callback.on_task_start("Install nginx", "web1").await;
 
@@ -1257,7 +1253,10 @@ async fn test_ansible_json_callback_full_run_structure() {
 
     // Play 2: Deploy
     callback
-        .on_play_start("Deploy application", &["app1".to_string(), "app2".to_string()])
+        .on_play_start(
+            "Deploy application",
+            &["app1".to_string(), "app2".to_string()],
+        )
         .await;
 
     callback.on_task_start("Copy files", "app1").await;
@@ -1274,7 +1273,9 @@ async fn test_ansible_json_callback_full_run_structure() {
     callback.on_handler_triggered("restart app").await;
     callback.on_play_end("Deploy application", true).await;
 
-    callback.on_playbook_end("production_deploy.yml", true).await;
+    callback
+        .on_playbook_end("production_deploy.yml", true)
+        .await;
 
     // Verify complete structure
     let lines = callback.output_lines();

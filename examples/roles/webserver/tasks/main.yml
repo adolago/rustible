@@ -1,0 +1,34 @@
+---
+# Webserver role tasks
+- name: Install nginx
+  package:
+    name: nginx
+    state: present
+
+- name: Create nginx config directory
+  file:
+    path: "{{ nginx_config_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Deploy nginx configuration
+  template:
+    src: nginx.conf.j2
+    dest: "{{ nginx_config_dir }}/nginx.conf"
+  notify: restart nginx
+
+- name: Deploy site configuration
+  template:
+    src: site.conf.j2
+    dest: "{{ nginx_sites_dir }}/{{ site_name }}.conf"
+  notify: reload nginx
+
+- name: Ensure nginx is started and enabled
+  service:
+    name: nginx
+    state: started
+    enabled: true
+
+- name: Open firewall port
+  command: "ufw allow {{ nginx_port }}/tcp"
+  when: configure_firewall | default(false)

@@ -91,8 +91,13 @@ fn test_task_skipped_error() {
 
 #[test]
 fn test_module_not_found_error() {
-    let error = Error::ModuleNotFound("custom_module".to_string());
-    assert_eq!(format!("{}", error), "Module 'custom_module' not found");
+    let error = Error::ModuleNotFound {
+        module: "custom_module".to_string(),
+        available: "apt, yum, copy, file".to_string(),
+    };
+    let error_msg = format!("{}", error);
+    assert!(error_msg.contains("Module 'custom_module' not found"));
+    assert!(error_msg.contains("Available modules:"));
 }
 
 #[test]
@@ -128,11 +133,12 @@ fn test_inventory_load_error() {
 
 #[test]
 fn test_host_not_found_error() {
-    let error = Error::HostNotFound("server42".to_string());
-    assert_eq!(
-        format!("{}", error),
-        "Host 'server42' not found in inventory"
-    );
+    let error = Error::HostNotFound {
+        host: "server42".to_string(),
+        suggestion: "Check that the host is defined in your inventory file.".to_string(),
+    };
+    let error_msg = format!("{}", error);
+    assert!(error_msg.contains("Host 'server42' not found in inventory"));
 }
 
 #[test]
@@ -176,6 +182,7 @@ fn test_authentication_failed_error() {
         user: "admin".to_string(),
         host: "secure.server.com".to_string(),
         message: "Invalid credentials".to_string(),
+        troubleshooting: "Check SSH keys and permissions.".to_string(),
     };
     let error_msg = format!("{}", error);
     assert!(error_msg.contains("Authentication failed for 'admin@secure.server.com'"));
@@ -234,6 +241,7 @@ fn test_template_syntax_error() {
     let error = Error::TemplateSyntax {
         template: "config.j2".to_string(),
         message: "unexpected end of template".to_string(),
+        line_info: " at line 15".to_string(),
     };
     let error_msg = format!("{}", error);
     assert!(error_msg.contains("Template syntax error in 'config.j2'"));
@@ -365,6 +373,7 @@ fn test_become_error() {
     let error = Error::BecomeError {
         host: "server1".to_string(),
         message: "sudo: password is required".to_string(),
+        suggestions: "Check sudo configuration".to_string(),
     };
     let error_msg = format!("{}", error);
     assert!(error_msg.contains("Privilege escalation failed on 'server1'"));
@@ -420,7 +429,8 @@ fn test_error_exit_codes() {
         Error::AuthenticationFailed {
             user: "user".to_string(),
             host: "host".to_string(),
-            message: "msg".to_string()
+            message: "msg".to_string(),
+            troubleshooting: "Check credentials".to_string(),
         }
         .exit_code(),
         3
@@ -440,7 +450,14 @@ fn test_error_exit_codes() {
         .exit_code(),
         5
     );
-    assert_eq!(Error::HostNotFound("host".to_string()).exit_code(), 5);
+    assert_eq!(
+        Error::HostNotFound {
+            host: "host".to_string(),
+            suggestion: "Check inventory".to_string(),
+        }
+        .exit_code(),
+        5
+    );
 
     assert_eq!(Error::VaultDecryption("msg".to_string()).exit_code(), 6);
     assert_eq!(Error::InvalidVaultPassword.exit_code(), 6);
@@ -469,7 +486,11 @@ fn test_error_is_recoverable() {
 
     assert!(!Error::task_failed("task", "host", "msg").is_recoverable());
     assert!(!Error::connection_failed("host", "msg").is_recoverable());
-    assert!(!Error::ModuleNotFound("mod".to_string()).is_recoverable());
+    assert!(!Error::ModuleNotFound {
+        module: "mod".to_string(),
+        available: "apt, yum".to_string(),
+    }
+    .is_recoverable());
 }
 
 // ============================================================================
@@ -835,6 +856,7 @@ fn test_connection_error_message_clarity() {
         user: "deploy".to_string(),
         host: "production-db.example.com".to_string(),
         message: "Permission denied (publickey,password)".to_string(),
+        troubleshooting: "Check SSH key permissions".to_string(),
     };
 
     let msg = format!("{}", error);
@@ -1105,6 +1127,7 @@ fn test_become_error_context() {
     let error = Error::BecomeError {
         host: "secure-server".to_string(),
         message: "sudo: 3 incorrect password attempts".to_string(),
+        suggestions: "Verify sudo password or NOPASSWD config".to_string(),
     };
 
     let msg = format!("{}", error);
@@ -1418,7 +1441,8 @@ fn test_template_error_conversion() {
 fn test_template_syntax_error_with_line_info() {
     let error = Error::TemplateSyntax {
         template: "config.j2".to_string(),
-        message: "line 10: unexpected token '}'".to_string(),
+        message: "unexpected token '}'".to_string(),
+        line_info: " at line 10".to_string(),
     };
 
     let msg = format!("{}", error);
@@ -1954,7 +1978,10 @@ fn test_serial_play_parsing() {
     assert!(result.is_ok());
 
     let playbook = result.unwrap();
-    assert_eq!(playbook.plays[0].serial, Some(2));
+    assert_eq!(
+        playbook.plays[0].serial,
+        Some(rustible::playbook::SerialSpec::Fixed(2))
+    );
 }
 
 // ============================================================================
@@ -2405,4 +2432,430 @@ fn test_registered_result_to_json() {
     assert_eq!(json["changed"], true);
     assert_eq!(json["stdout"], "output text");
     assert_eq!(json["rc"], 0);
+}
+
+// ============================================================================
+// Enriched Error Message Quality Tests
+// ============================================================================
+
+#[test]
+fn test_error_context_formatting() {
+    let context = ErrorContext::new()
+        .with_file("playbook.yml")
+        .with_line(42)
+        .with_task("Install nginx")
+        .with_play("Configure webservers")
+        .with_host("web1");
+
+    let loc = context.location_string();
+    assert!(loc.contains("File: playbook.yml"));
+    assert!(loc.contains("line 42"));
+    assert!(loc.contains("Task: 'Install nginx'"));
+    assert!(loc.contains("Play: 'Configure webservers'"));
+    assert!(loc.contains("Host: 'web1'"));
+}
+
+#[test]
+fn test_error_context_partial_info() {
+    let context = ErrorContext::new()
+        .with_file("tasks/main.yml")
+        .with_task("Create user");
+
+    let loc = context.location_string();
+    assert!(loc.contains("File: tasks/main.yml"));
+    assert!(loc.contains("Task: 'Create user'"));
+    assert!(!loc.contains("line")); // No line specified
+    assert!(!loc.contains("Host:")); // No host specified
+}
+
+#[test]
+fn test_error_context_empty() {
+    let context = ErrorContext::new();
+    let loc = context.location_string();
+    assert!(loc.is_empty());
+}
+
+#[test]
+fn test_enriched_error_basic() {
+    use rustible::error::EnrichedError;
+
+    let error = EnrichedError::new("Connection failed")
+        .with_hint("Check SSH service is running")
+        .with_suggestion("Test with: ssh user@host")
+        .with_suggestion("Check firewall rules");
+
+    let formatted = error.format();
+    assert!(formatted.contains("Connection failed"));
+    assert!(formatted.contains("Hint: Check SSH service is running"));
+    assert!(formatted.contains("Test with: ssh user@host"));
+    assert!(formatted.contains("Check firewall rules"));
+}
+
+#[test]
+fn test_enriched_error_with_context() {
+    use rustible::error::EnrichedError;
+
+    let context = ErrorContext::new()
+        .with_file("site.yml")
+        .with_line(15)
+        .with_task("Deploy app");
+
+    let error = EnrichedError::new("Deployment failed")
+        .with_hint("Check disk space")
+        .with_context(context);
+
+    let formatted = error.format();
+    assert!(formatted.contains("Deployment failed"));
+    assert!(formatted.contains("Hint: Check disk space"));
+    assert!(formatted.contains("File: site.yml, line 15"));
+    assert!(formatted.contains("Task: 'Deploy app'"));
+}
+
+#[test]
+fn test_connection_failed_enriched_error() {
+    let error = Error::connection_failed_enriched("web1", "Connection refused");
+
+    let formatted = error.format();
+    assert!(formatted.contains("Failed to connect to 'web1'"));
+    assert!(formatted.contains("Connection refused"));
+    assert!(formatted.contains("Hint:")); // Should have a hint
+    assert!(formatted.contains("SSH service is running")); // Connection refused specific hint
+    assert!(formatted.contains("Suggestions:"));
+}
+
+#[test]
+fn test_connection_hint_for_various_errors() {
+    use rustible::error::get_connection_hint;
+
+    let hint = get_connection_hint("Connection refused by server");
+    assert!(hint.contains("SSH service"));
+
+    let hint = get_connection_hint("No route to host");
+    assert!(hint.contains("network connectivity"));
+
+    let hint = get_connection_hint("Permission denied (publickey)");
+    assert!(hint.contains("key permissions"));
+
+    let hint = get_connection_hint("Host key verification failed");
+    assert!(hint.contains("known_hosts"));
+
+    let hint = get_connection_hint("connection timeout after 30s");
+    assert!(hint.contains("timeout"));
+}
+
+#[test]
+fn test_auth_failed_enriched_error() {
+    let error = Error::auth_failed_enriched("admin", "secure.example.com", "Public key denied");
+
+    let formatted = error.format();
+    assert!(formatted.contains("Authentication failed for 'admin@secure.example.com'"));
+    assert!(formatted.contains("Public key denied"));
+    assert!(formatted.contains("Suggestions:"));
+    assert!(formatted.contains("chmod 600")); // SSH key permissions
+    assert!(formatted.contains("ssh-add -l")); // Agent key check
+}
+
+#[test]
+fn test_module_args_enriched_error() {
+    let context = ErrorContext::new()
+        .with_file("tasks/install.yml")
+        .with_line(10)
+        .with_task("Copy config file");
+
+    let error = Error::module_args_enriched("copy", "missing required argument 'dest'", Some(context));
+
+    let formatted = error.format();
+    assert!(formatted.contains("Invalid arguments for module 'copy'"));
+    assert!(formatted.contains("missing required argument 'dest'"));
+    assert!(formatted.contains("Hint: Required: src, dest")); // copy module hint
+    assert!(formatted.contains("File: tasks/install.yml, line 10"));
+}
+
+#[test]
+fn test_module_args_hints() {
+    use rustible::error::get_module_args_hint;
+
+    // Test common modules have helpful hints
+    let hint = get_module_args_hint("copy");
+    assert!(hint.contains("src"));
+    assert!(hint.contains("dest"));
+
+    let hint = get_module_args_hint("file");
+    assert!(hint.contains("path"));
+    assert!(hint.contains("state"));
+
+    let hint = get_module_args_hint("service");
+    assert!(hint.contains("name"));
+    assert!(hint.contains("started"));
+
+    let hint = get_module_args_hint("apt");
+    assert!(hint.contains("name"));
+    assert!(hint.contains("state"));
+
+    let hint = get_module_args_hint("user");
+    assert!(hint.contains("name"));
+    assert!(hint.contains("groups"));
+
+    // Unknown module should have generic hint
+    let hint = get_module_args_hint("custom_module");
+    assert!(hint.contains("documentation"));
+}
+
+#[test]
+fn test_module_execution_enriched_error() {
+    let error = Error::module_execution_enriched("command", "command not found: foo", None);
+
+    let formatted = error.format();
+    assert!(formatted.contains("Module 'command' execution failed"));
+    assert!(formatted.contains("command not found: foo"));
+    assert!(formatted.contains("Hint:")); // Should have module-specific hint
+    assert!(formatted.contains("PATH")); // Command module hint mentions PATH
+}
+
+#[test]
+fn test_module_execution_hints() {
+    use rustible::error::get_module_execution_hint;
+
+    let hint = get_module_execution_hint("command");
+    assert!(hint.contains("PATH"));
+
+    let hint = get_module_execution_hint("copy");
+    assert!(hint.contains("source file"));
+
+    let hint = get_module_execution_hint("service");
+    assert!(hint.contains("systemd"));
+
+    let hint = get_module_execution_hint("apt");
+    assert!(hint.contains("repositories"));
+}
+
+#[test]
+fn test_become_failed_enriched_error_sudo() {
+    let error = Error::become_failed_enriched("server1", "password is required", "sudo");
+
+    let formatted = error.format();
+    assert!(formatted.contains("Privilege escalation failed on 'server1'"));
+    assert!(formatted.contains("password is required"));
+    assert!(formatted.contains("sudo -l")); // sudo-specific suggestion
+    assert!(formatted.contains("sudoers")); // sudo-specific suggestion
+}
+
+#[test]
+fn test_become_failed_enriched_error_su() {
+    let error = Error::become_failed_enriched("server1", "authentication failure", "su");
+
+    let formatted = error.format();
+    assert!(formatted.contains("Privilege escalation failed"));
+    assert!(formatted.contains("--ask-become-pass")); // su suggestion
+}
+
+#[test]
+fn test_become_suggestions_by_method() {
+    use rustible::error::get_become_suggestions;
+
+    let sudo_suggestions = get_become_suggestions("sudo");
+    assert!(sudo_suggestions.iter().any(|s| s.contains("sudo -l")));
+    assert!(sudo_suggestions.iter().any(|s| s.contains("sudoers")));
+
+    let su_suggestions = get_become_suggestions("su");
+    assert!(su_suggestions.iter().any(|s| s.contains("--ask-become-pass")));
+
+    let doas_suggestions = get_become_suggestions("doas");
+    assert!(doas_suggestions.iter().any(|s| s.contains("doas.conf")));
+}
+
+#[test]
+fn test_playbook_parse_enriched_error() {
+    let error = Error::playbook_parse_enriched(
+        "site.yml",
+        "mapping values are not allowed here",
+        Some(15),
+    );
+
+    let formatted = error.format();
+    assert!(formatted.contains("Failed to parse playbook 'site.yml'"));
+    assert!(formatted.contains("mapping values are not allowed"));
+    assert!(formatted.contains("Hint:"));
+    assert!(formatted.contains("YAML syntax"));
+    assert!(formatted.contains("yamllint"));
+    assert!(formatted.contains("File: site.yml, line 15"));
+    assert!(formatted.contains("indentation")); // Common YAML issue
+}
+
+#[test]
+fn test_undefined_variable_enriched_with_suggestions() {
+    let similar = vec![
+        "http_port".to_string(),
+        "https_port".to_string(),
+    ];
+
+    let error = Error::undefined_variable_enriched("htpp_port", &similar, None);
+
+    let formatted = error.format();
+    assert!(formatted.contains("Undefined variable: 'htpp_port'"));
+    assert!(formatted.contains("Did you mean: http_port, https_port")); // Fuzzy suggestions
+    assert!(formatted.contains("default' filter")); // Helpful suggestion
+}
+
+#[test]
+fn test_undefined_variable_enriched_no_suggestions() {
+    let error = Error::undefined_variable_enriched("custom_var_xyz", &[], None);
+
+    let formatted = error.format();
+    assert!(formatted.contains("Undefined variable: 'custom_var_xyz'"));
+    assert!(formatted.contains("case-sensitive")); // Helpful reminder
+}
+
+#[test]
+fn test_host_not_found_enriched_with_few_hosts() {
+    let available = vec![
+        "web1".to_string(),
+        "web2".to_string(),
+        "db1".to_string(),
+    ];
+
+    let error = Error::host_not_found_enriched("wbe1", &available);
+
+    let formatted = error.format();
+    assert!(formatted.contains("Host 'wbe1' not found"));
+    assert!(formatted.contains("Available hosts: web1, web2, db1"));
+    assert!(formatted.contains("list-hosts")); // Command suggestion
+}
+
+#[test]
+fn test_host_not_found_enriched_with_many_hosts() {
+    let available: Vec<String> = (1..=50)
+        .map(|i| format!("server{}", i))
+        .collect();
+
+    let error = Error::host_not_found_enriched("serverX", &available);
+
+    let formatted = error.format();
+    assert!(formatted.contains("Host 'serverX' not found"));
+    assert!(formatted.contains("Did you mean:")); // Should show top suggestions
+    assert!(formatted.contains("50 total hosts"));
+}
+
+#[test]
+fn test_host_not_found_enriched_empty_inventory() {
+    let error = Error::host_not_found_enriched("any_host", &[]);
+
+    let formatted = error.format();
+    assert!(formatted.contains("empty"));
+    assert!(formatted.contains("-i option")); // Hint about inventory flag
+}
+
+#[test]
+fn test_handler_not_found_enriched() {
+    let available = vec![
+        "restart nginx".to_string(),
+        "reload nginx".to_string(),
+    ];
+
+    let error = Error::handler_not_found_enriched("restart ngingx", &available);
+
+    let formatted = error.format();
+    assert!(formatted.contains("Handler 'restart ngingx' not found"));
+    assert!(formatted.contains("restart nginx, reload nginx"));
+    assert!(formatted.contains("case-sensitive"));
+    assert!(formatted.contains("handlers' section"));
+}
+
+#[test]
+fn test_role_not_found_enriched() {
+    let searched = vec![
+        PathBuf::from("./roles"),
+        PathBuf::from("~/.ansible/roles"),
+        PathBuf::from("/etc/ansible/roles"),
+    ];
+
+    let error = Error::role_not_found_enriched("nginx", &searched);
+
+    let formatted = error.format();
+    assert!(formatted.contains("Role 'nginx' not found"));
+    assert!(formatted.contains("Searched paths:"));
+    assert!(formatted.contains("./roles"));
+    assert!(formatted.contains("rustible-galaxy install"));
+}
+
+#[test]
+fn test_task_failed_enriched_with_full_context() {
+    let context = ErrorContext::new()
+        .with_file("playbook.yml")
+        .with_line(42)
+        .with_task("Install nginx")
+        .with_play("Configure webservers")
+        .with_host("web1");
+
+    let error = Error::task_failed_enriched(
+        "Install nginx",
+        "web1",
+        "Package nginx not found",
+        Some(context),
+    );
+
+    let formatted = error.format();
+
+    // Check the main error message follows the pattern
+    assert!(formatted.contains("Task 'Install nginx' failed on host 'web1': Package nginx not found"));
+
+    // Check hint is present
+    assert!(formatted.contains("Hint:"));
+
+    // Check location information
+    assert!(formatted.contains("File: playbook.yml, line 42"));
+    assert!(formatted.contains("Task: 'Install nginx'"));
+
+    // Check suggestions are present
+    assert!(formatted.contains("Suggestions:"));
+    assert!(formatted.contains("-vvv")); // Verbose output suggestion
+}
+
+#[test]
+fn test_enriched_error_display_trait() {
+    use rustible::error::EnrichedError;
+
+    let error = EnrichedError::new("Test error")
+        .with_hint("Test hint")
+        .with_suggestion("Test suggestion");
+
+    // Display trait should produce the same output as format()
+    let displayed = format!("{}", error);
+    let formatted = error.format();
+    assert_eq!(displayed, formatted);
+}
+
+#[test]
+fn test_error_message_actionable_pattern() {
+    // Verify our enriched errors follow the actionable pattern:
+    // "Failed to <operation> '<target>': <reason>
+    //   Hint: <specific guidance>
+    //   Location: File: <file>, line <n>, Task: '<task>'
+    //   Suggestions:
+    //     - <action 1>
+    //     - <action 2>"
+
+    let context = ErrorContext::new()
+        .with_file("playbook.yml")
+        .with_line(15)
+        .with_task("Install nginx");
+
+    let error = Error::connection_failed_enriched("web1", "Connection refused");
+
+    let formatted = error.format();
+
+    // Check structure
+    let lines: Vec<&str> = formatted.lines().collect();
+
+    // First line should be the main error
+    assert!(lines[0].starts_with("Failed to connect"));
+
+    // Should have Hint line
+    assert!(lines.iter().any(|l| l.trim().starts_with("Hint:")));
+
+    // Should have Suggestions section
+    assert!(lines.iter().any(|l| l.trim().starts_with("Suggestions:")));
+
+    // Suggestions should be bulleted
+    assert!(lines.iter().any(|l| l.trim().starts_with("-") || l.trim().starts_with("*")));
 }

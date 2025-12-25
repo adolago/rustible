@@ -7,8 +7,8 @@
 //! execution via async connections (SSH, Docker, etc.).
 
 use super::{
-    Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
-    ModuleResult, ParamExt,
+    validate_env_var_name, validate_path_param, Diff, Module, ModuleClassification, ModuleContext,
+    ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
 };
 use crate::connection::{Connection, ExecuteOptions};
 use std::path::Path;
@@ -73,9 +73,11 @@ impl ShellModule {
             options = options.with_cwd(work_dir.clone());
         }
 
-        // Set environment variables
+        // Set environment variables (with validation)
         if let Some(serde_json::Value::Object(env)) = params.get("env") {
             for (key, value) in env {
+                // Validate environment variable name for security
+                validate_env_var_name(key)?;
                 if let serde_json::Value::String(v) = value {
                     options = options.with_env(key, v);
                 }
@@ -106,6 +108,8 @@ impl ShellModule {
     ) -> ModuleResult<Option<ModuleOutput>> {
         // Check 'creates' - skip if file exists
         if let Some(creates) = params.get_string("creates")? {
+            // Validate the path for security
+            validate_path_param(&creates, "creates")?;
             if Path::new(&creates).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' exists",
@@ -116,6 +120,8 @@ impl ShellModule {
 
         // Check 'removes' - skip if file doesn't exist
         if let Some(removes) = params.get_string("removes")? {
+            // Validate the path for security
+            validate_path_param(&removes, "removes")?;
             if !Path::new(&removes).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' does not exist",
@@ -135,6 +141,8 @@ impl ShellModule {
     ) -> ModuleResult<Option<ModuleOutput>> {
         // Check 'creates' - skip if file exists
         if let Some(creates) = params.get_string("creates")? {
+            // Validate the path for security
+            validate_path_param(&creates, "creates")?;
             let exists = connection
                 .path_exists(Path::new(&creates))
                 .await
@@ -149,6 +157,8 @@ impl ShellModule {
 
         // Check 'removes' - skip if file doesn't exist
         if let Some(removes) = params.get_string("removes")? {
+            // Validate the path for security
+            validate_path_param(&removes, "removes")?;
             let exists = connection
                 .path_exists(Path::new(&removes))
                 .await
@@ -197,9 +207,11 @@ impl ShellModule {
             command.current_dir(work_dir);
         }
 
-        // Set environment variables
+        // Set environment variables (with validation)
         if let Some(serde_json::Value::Object(env)) = params.get("env") {
             for (key, value) in env {
+                // Validate environment variable name for security
+                validate_env_var_name(key)?;
                 if let serde_json::Value::String(v) = value {
                     command.env(key, v);
                 }
@@ -394,7 +406,13 @@ impl Module for ShellModule {
             check_mode: true,
             ..context.clone()
         };
-        self.execute(params, &check_context)
+        let mut output = self.execute(params, &check_context)?;
+
+        // Add diff to show what would be executed
+        if let Some(diff) = self.diff(params, context)? {
+            output.diff = Some(diff);
+        }
+        Ok(output)
     }
 
     fn diff(&self, params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<Option<Diff>> {
