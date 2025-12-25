@@ -342,6 +342,19 @@ impl OutputFormatter {
         } else {
             println!("\nPlaybook run took {}", duration_str);
         }
+
+        // Print final status summary
+        if self.use_color {
+            if stats.has_failures() {
+                println!("{}", "Playbook run failed.".red().bold());
+            } else {
+                println!("{}", "Playbook completed successfully.".green().bold());
+            }
+        } else if stats.has_failures() {
+            println!("Playbook run failed.");
+        } else {
+            println!("Playbook completed successfully.");
+        }
     }
 
     /// Print an error message
