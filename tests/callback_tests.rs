@@ -1127,3 +1127,1190 @@ async fn test_failed_playbook_execution_simulation() {
     let events = callback.event_order.read();
     assert!(events.iter().any(|e| e.contains("false"))); // Contains failure indicators
 }
+
+// ============================================================================
+// Test: Edge Cases - Empty Events
+// ============================================================================
+
+#[tokio::test]
+async fn test_empty_playbook_name() {
+    let callback = MockCallback::new();
+
+    callback.on_playbook_start("").await;
+    callback.on_playbook_end("", true).await;
+
+    assert!(callback.playbook_start_called.load(Ordering::SeqCst));
+    assert!(callback.playbook_end_called.load(Ordering::SeqCst));
+    assert!(callback.playbook_names.read().contains(&"".to_string()));
+}
+
+#[tokio::test]
+async fn test_empty_hosts_list() {
+    let callback = MockCallback::new();
+    let empty_hosts: Vec<String> = vec![];
+
+    callback.on_play_start("play_with_no_hosts", &empty_hosts).await;
+
+    assert!(callback.play_start_called.load(Ordering::SeqCst));
+    assert!(callback.hosts.read().is_empty());
+}
+
+#[tokio::test]
+async fn test_empty_task_name() {
+    let callback = MockCallback::new();
+
+    callback.on_task_start("", "localhost").await;
+
+    assert!(callback.task_start_called.load(Ordering::SeqCst));
+    assert!(callback.task_names.read().contains(&"".to_string()));
+}
+
+#[tokio::test]
+async fn test_empty_host_name() {
+    let callback = MockCallback::new();
+
+    callback.on_task_start("task", "").await;
+
+    assert!(callback.task_start_called.load(Ordering::SeqCst));
+    assert!(callback.hosts.read().contains(&"".to_string()));
+}
+
+#[tokio::test]
+async fn test_empty_handler_name() {
+    let callback = MockCallback::new();
+
+    callback.on_handler_triggered("").await;
+
+    assert!(callback.handler_triggered_called.load(Ordering::SeqCst));
+    assert!(callback.handler_names.read().contains(&"".to_string()));
+}
+
+#[tokio::test]
+async fn test_empty_facts() {
+    let callback = MockCallback::new();
+    let empty_facts = Facts::new();
+
+    callback.on_facts_gathered("host1", &empty_facts).await;
+
+    assert!(callback.facts_gathered_called.load(Ordering::SeqCst));
+    assert!(callback.facts_hosts.read().contains(&"host1".to_string()));
+}
+
+// ============================================================================
+// Test: Edge Cases - Unicode and Special Characters
+// ============================================================================
+
+#[tokio::test]
+async fn test_unicode_playbook_name() {
+    let callback = MockCallback::new();
+    let unicode_name = "playbook_\u{1F680}_\u{4E2D}\u{6587}_\u{0441}\u{043A}\u{0440}\u{0438}\u{043F}\u{0442}";
+
+    callback.on_playbook_start(unicode_name).await;
+
+    assert!(callback.playbook_names.read().contains(&unicode_name.to_string()));
+}
+
+#[tokio::test]
+async fn test_special_characters_in_task_name() {
+    let callback = MockCallback::new();
+    let special_name = "task [with] (special) {chars} <and> 'quotes' \"double\"";
+
+    callback.on_task_start(special_name, "host").await;
+
+    assert!(callback.task_names.read().contains(&special_name.to_string()));
+}
+
+#[tokio::test]
+async fn test_newlines_in_names() {
+    let callback = MockCallback::new();
+    let name_with_newlines = "task\nwith\nnewlines";
+
+    callback.on_task_start(name_with_newlines, "host").await;
+
+    assert!(callback.task_names.read().contains(&name_with_newlines.to_string()));
+}
+
+// ============================================================================
+// Test: Edge Cases - Many Plugins (Stress Test)
+// ============================================================================
+
+#[tokio::test]
+async fn test_many_callbacks_registered() {
+    let mut aggregator = CallbackAggregator::new();
+    let callbacks: Vec<Arc<MockCallback>> = (0..100)
+        .map(|_| Arc::new(MockCallback::new()))
+        .collect();
+
+    for cb in &callbacks {
+        aggregator.add_callback(cb.clone());
+    }
+
+    aggregator.on_playbook_start("stress_test").await;
+
+    // All 100 callbacks should have been called
+    for cb in &callbacks {
+        assert!(cb.playbook_start_called.load(Ordering::SeqCst));
+    }
+}
+
+#[tokio::test]
+async fn test_many_sequential_events() {
+    let callback = MockCallback::new();
+
+    // Fire 1000 events sequentially
+    for i in 0..1000 {
+        callback.on_task_start(&format!("task_{}", i), "host").await;
+        let result = ExecutionResult {
+            host: "host".to_string(),
+            task_name: format!("task_{}", i),
+            result: ModuleResult::ok("OK"),
+            duration: Duration::from_millis(1),
+            notify: vec![],
+        };
+        callback.on_task_complete(&result).await;
+    }
+
+    assert_eq!(callback.task_start_count.load(Ordering::SeqCst), 1000);
+    assert_eq!(callback.task_complete_count.load(Ordering::SeqCst), 1000);
+    assert_eq!(callback.event_order.read().len(), 2000);
+}
+
+#[tokio::test]
+async fn test_many_hosts() {
+    let callback = MockCallback::new();
+    let hosts: Vec<String> = (0..500).map(|i| format!("host_{}", i)).collect();
+
+    callback.on_play_start("big_play", &hosts).await;
+
+    assert_eq!(callback.hosts.read().len(), 500);
+}
+
+// ============================================================================
+// Test: Plugin Error Handling
+// ============================================================================
+
+/// A callback that panics on specific events (for testing error isolation)
+#[derive(Debug, Default)]
+pub struct PanickingCallback {
+    should_panic: AtomicBool,
+    calls_before_panic: AtomicU32,
+}
+
+impl PanickingCallback {
+    pub fn new(panic_after_n_calls: u32) -> Self {
+        Self {
+            should_panic: AtomicBool::new(true),
+            calls_before_panic: AtomicU32::new(panic_after_n_calls),
+        }
+    }
+}
+
+#[async_trait]
+impl ExecutionCallback for PanickingCallback {
+    async fn on_task_complete(&self, _result: &ExecutionResult) {
+        if self.should_panic.load(Ordering::SeqCst) {
+            let remaining = self.calls_before_panic.fetch_sub(1, Ordering::SeqCst);
+            if remaining == 1 {
+                panic!("Intentional panic in callback");
+            }
+        }
+    }
+}
+
+/// A callback that tracks error conditions
+#[derive(Debug, Default)]
+pub struct ErrorTrackingCallback {
+    error_count: AtomicU32,
+    failed_tasks: RwLock<Vec<String>>,
+    failed_hosts: RwLock<Vec<String>>,
+}
+
+impl ErrorTrackingCallback {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn error_count(&self) -> u32 {
+        self.error_count.load(Ordering::SeqCst)
+    }
+
+    pub fn failed_tasks(&self) -> Vec<String> {
+        self.failed_tasks.read().clone()
+    }
+
+    pub fn failed_hosts(&self) -> Vec<String> {
+        self.failed_hosts.read().clone()
+    }
+}
+
+#[async_trait]
+impl ExecutionCallback for ErrorTrackingCallback {
+    async fn on_task_complete(&self, result: &ExecutionResult) {
+        if !result.result.success {
+            self.error_count.fetch_add(1, Ordering::SeqCst);
+            self.failed_tasks.write().push(result.task_name.clone());
+            self.failed_hosts.write().push(result.host.clone());
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_error_tracking_callback() {
+    let callback = ErrorTrackingCallback::new();
+
+    // Mix of successful and failed tasks
+    let tasks = vec![
+        ("task1", true),
+        ("task2", false),
+        ("task3", true),
+        ("task4", false),
+        ("task5", false),
+    ];
+
+    for (name, success) in tasks {
+        let result = ExecutionResult {
+            host: "host1".to_string(),
+            task_name: name.to_string(),
+            result: if success {
+                ModuleResult::ok("OK")
+            } else {
+                ModuleResult::failed("Failed")
+            },
+            duration: Duration::from_millis(10),
+            notify: vec![],
+        };
+        callback.on_task_complete(&result).await;
+    }
+
+    assert_eq!(callback.error_count(), 3);
+    assert_eq!(callback.failed_tasks(), vec!["task2", "task4", "task5"]);
+}
+
+// ============================================================================
+// Test: CallbackManager Registration and Dispatch
+// ============================================================================
+
+/// A full-featured CallbackManager for testing
+pub struct CallbackManager {
+    callbacks: RwLock<Vec<Arc<dyn ExecutionCallback>>>,
+    enabled: AtomicBool,
+}
+
+impl CallbackManager {
+    pub fn new() -> Self {
+        Self {
+            callbacks: RwLock::new(Vec::new()),
+            enabled: AtomicBool::new(true),
+        }
+    }
+
+    pub fn register(&self, callback: Arc<dyn ExecutionCallback>) {
+        self.callbacks.write().push(callback);
+    }
+
+    pub fn unregister_all(&self) {
+        self.callbacks.write().clear();
+    }
+
+    pub fn callback_count(&self) -> usize {
+        self.callbacks.read().len()
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::SeqCst);
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::SeqCst)
+    }
+
+    pub async fn dispatch_playbook_start(&self, name: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        let callbacks: Vec<_> = self.callbacks.read().clone();
+        for callback in callbacks.iter() {
+            callback.on_playbook_start(name).await;
+        }
+    }
+
+    pub async fn dispatch_playbook_end(&self, name: &str, success: bool) {
+        if !self.is_enabled() {
+            return;
+        }
+        let callbacks: Vec<_> = self.callbacks.read().clone();
+        for callback in callbacks.iter() {
+            callback.on_playbook_end(name, success).await;
+        }
+    }
+
+    pub async fn dispatch_play_start(&self, name: &str, hosts: &[String]) {
+        if !self.is_enabled() {
+            return;
+        }
+        let callbacks: Vec<_> = self.callbacks.read().clone();
+        for callback in callbacks.iter() {
+            callback.on_play_start(name, hosts).await;
+        }
+    }
+
+    pub async fn dispatch_play_end(&self, name: &str, success: bool) {
+        if !self.is_enabled() {
+            return;
+        }
+        let callbacks: Vec<_> = self.callbacks.read().clone();
+        for callback in callbacks.iter() {
+            callback.on_play_end(name, success).await;
+        }
+    }
+
+    pub async fn dispatch_task_start(&self, name: &str, host: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        let callbacks: Vec<_> = self.callbacks.read().clone();
+        for callback in callbacks.iter() {
+            callback.on_task_start(name, host).await;
+        }
+    }
+
+    pub async fn dispatch_task_complete(&self, result: &ExecutionResult) {
+        if !self.is_enabled() {
+            return;
+        }
+        let callbacks: Vec<_> = self.callbacks.read().clone();
+        for callback in callbacks.iter() {
+            callback.on_task_complete(result).await;
+        }
+    }
+
+    pub async fn dispatch_handler_triggered(&self, name: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        let callbacks: Vec<_> = self.callbacks.read().clone();
+        for callback in callbacks.iter() {
+            callback.on_handler_triggered(name).await;
+        }
+    }
+
+    pub async fn dispatch_facts_gathered(&self, host: &str, facts: &Facts) {
+        if !self.is_enabled() {
+            return;
+        }
+        let callbacks: Vec<_> = self.callbacks.read().clone();
+        for callback in callbacks.iter() {
+            callback.on_facts_gathered(host, facts).await;
+        }
+    }
+}
+
+impl Default for CallbackManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[tokio::test]
+async fn test_callback_manager_registration() {
+    let manager = CallbackManager::new();
+
+    assert_eq!(manager.callback_count(), 0);
+
+    let cb1 = Arc::new(MockCallback::new());
+    let cb2 = Arc::new(MockCallback::new());
+
+    manager.register(cb1.clone());
+    assert_eq!(manager.callback_count(), 1);
+
+    manager.register(cb2.clone());
+    assert_eq!(manager.callback_count(), 2);
+}
+
+#[tokio::test]
+async fn test_callback_manager_unregister_all() {
+    let manager = CallbackManager::new();
+
+    manager.register(Arc::new(MockCallback::new()));
+    manager.register(Arc::new(MockCallback::new()));
+    manager.register(Arc::new(MockCallback::new()));
+
+    assert_eq!(manager.callback_count(), 3);
+
+    manager.unregister_all();
+
+    assert_eq!(manager.callback_count(), 0);
+}
+
+#[tokio::test]
+async fn test_callback_manager_dispatch() {
+    let manager = CallbackManager::new();
+
+    let cb1 = Arc::new(MockCallback::new());
+    let cb2 = Arc::new(CountingCallback::new());
+
+    manager.register(cb1.clone());
+    manager.register(cb2.clone());
+
+    manager.dispatch_playbook_start("test_playbook").await;
+
+    assert!(cb1.playbook_start_called.load(Ordering::SeqCst));
+    assert_eq!(cb2.total(), 1);
+}
+
+#[tokio::test]
+async fn test_callback_manager_disable() {
+    let manager = CallbackManager::new();
+
+    let cb = Arc::new(MockCallback::new());
+    manager.register(cb.clone());
+
+    // Dispatch while enabled
+    manager.dispatch_playbook_start("test1").await;
+    assert!(cb.playbook_start_called.load(Ordering::SeqCst));
+    assert_eq!(cb.playbook_start_count.load(Ordering::SeqCst), 1);
+
+    cb.reset();
+
+    // Disable and dispatch
+    manager.set_enabled(false);
+    manager.dispatch_playbook_start("test2").await;
+
+    // Should not have been called
+    assert!(!cb.playbook_start_called.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn test_callback_manager_full_workflow() {
+    let manager = CallbackManager::new();
+
+    let mock = Arc::new(MockCallback::new());
+    let counter = Arc::new(CountingCallback::new());
+    let error_tracker = Arc::new(ErrorTrackingCallback::new());
+
+    manager.register(mock.clone());
+    manager.register(counter.clone());
+    manager.register(error_tracker.clone());
+
+    let hosts = vec!["host1".to_string(), "host2".to_string()];
+
+    // Full workflow
+    manager.dispatch_playbook_start("deploy").await;
+    manager.dispatch_play_start("Configure servers", &hosts).await;
+
+    let mut facts = Facts::new();
+    facts.set("os", json!("linux"));
+    manager.dispatch_facts_gathered("host1", &facts).await;
+    manager.dispatch_facts_gathered("host2", &facts).await;
+
+    manager.dispatch_task_start("Install package", "host1").await;
+    let success_result = ExecutionResult {
+        host: "host1".to_string(),
+        task_name: "Install package".to_string(),
+        result: ModuleResult::changed("Installed"),
+        duration: Duration::from_secs(2),
+        notify: vec!["restart service".to_string()],
+    };
+    manager.dispatch_task_complete(&success_result).await;
+
+    manager.dispatch_task_start("Install package", "host2").await;
+    let failed_result = ExecutionResult {
+        host: "host2".to_string(),
+        task_name: "Install package".to_string(),
+        result: ModuleResult::failed("Package not found"),
+        duration: Duration::from_secs(1),
+        notify: vec![],
+    };
+    manager.dispatch_task_complete(&failed_result).await;
+
+    manager.dispatch_handler_triggered("restart service").await;
+    manager.dispatch_play_end("Configure servers", false).await;
+    manager.dispatch_playbook_end("deploy", false).await;
+
+    // Verify mock callback
+    assert!(mock.playbook_start_called.load(Ordering::SeqCst));
+    assert!(mock.playbook_end_called.load(Ordering::SeqCst));
+    assert_eq!(mock.task_complete_count.load(Ordering::SeqCst), 2);
+    assert_eq!(mock.facts_gathered_count.load(Ordering::SeqCst), 2);
+    assert_eq!(mock.handler_triggered_count.load(Ordering::SeqCst), 1);
+
+    // Verify counter callback
+    assert_eq!(counter.total(), 4); // playbook_start + 2 task_complete + playbook_end
+    assert_eq!(counter.successes(), 1); // Only 1 successful task
+    assert_eq!(counter.failures(), 2); // 1 failed task + 1 failed playbook
+
+    // Verify error tracker
+    assert_eq!(error_tracker.error_count(), 1);
+    assert_eq!(error_tracker.failed_hosts(), vec!["host2"]);
+}
+
+// ============================================================================
+// Test: Event Type Serialization
+// ============================================================================
+
+#[tokio::test]
+async fn test_module_result_serialization() {
+    let result = ModuleResult::changed("File created successfully");
+    let json = serde_json::to_string(&result).unwrap();
+
+    assert!(json.contains("\"success\":true"));
+    assert!(json.contains("\"changed\":true"));
+    assert!(json.contains("File created successfully"));
+}
+
+#[tokio::test]
+async fn test_module_result_with_data_serialization() {
+    let result = ModuleResult::ok("Command executed")
+        .with_data(json!({
+            "stdout": "Hello World",
+            "exit_code": 0
+        }));
+
+    let json = serde_json::to_string(&result).unwrap();
+
+    assert!(json.contains("\"data\""));
+    assert!(json.contains("\"stdout\":\"Hello World\""));
+    assert!(json.contains("\"exit_code\":0"));
+}
+
+#[tokio::test]
+async fn test_module_result_with_warnings_serialization() {
+    let result = ModuleResult::changed("Config updated")
+        .with_warning("Deprecated option used")
+        .with_warning("Consider upgrading");
+
+    let json = serde_json::to_string(&result).unwrap();
+
+    assert!(json.contains("\"warnings\""));
+    assert!(json.contains("Deprecated option used"));
+    assert!(json.contains("Consider upgrading"));
+}
+
+#[tokio::test]
+async fn test_facts_serialization() {
+    let mut facts = Facts::new();
+    facts.set("os_family", json!("Debian"));
+    facts.set("architecture", json!("x86_64"));
+    facts.set("memory_mb", json!(16384));
+    facts.set("processors", json!(["Intel Core i7", "Intel Core i7"]));
+
+    let json = serde_json::to_string(&facts).unwrap();
+
+    assert!(json.contains("Debian"));
+    assert!(json.contains("x86_64"));
+    assert!(json.contains("16384"));
+}
+
+#[tokio::test]
+async fn test_execution_result_fields() {
+    let result = ExecutionResult {
+        host: "production-server-01".to_string(),
+        task_name: "Install nginx".to_string(),
+        result: ModuleResult::changed("nginx 1.24 installed"),
+        duration: Duration::from_millis(5432),
+        notify: vec!["restart nginx".to_string(), "reload config".to_string()],
+    };
+
+    assert_eq!(result.host, "production-server-01");
+    assert_eq!(result.task_name, "Install nginx");
+    assert!(result.result.success);
+    assert!(result.result.changed);
+    assert_eq!(result.duration.as_millis(), 5432);
+    assert_eq!(result.notify.len(), 2);
+}
+
+// ============================================================================
+// Test: Context Struct Creation
+// ============================================================================
+
+#[tokio::test]
+async fn test_module_result_ok_creation() {
+    let result = ModuleResult::ok("Task completed");
+
+    assert!(result.success);
+    assert!(!result.changed);
+    assert!(!result.skipped);
+    assert_eq!(result.message, "Task completed");
+    assert!(result.data.is_none());
+    assert!(result.warnings.is_empty());
+}
+
+#[tokio::test]
+async fn test_module_result_changed_creation() {
+    let result = ModuleResult::changed("File modified");
+
+    assert!(result.success);
+    assert!(result.changed);
+    assert!(!result.skipped);
+    assert_eq!(result.message, "File modified");
+}
+
+#[tokio::test]
+async fn test_module_result_failed_creation() {
+    let result = ModuleResult::failed("Permission denied");
+
+    assert!(!result.success);
+    assert!(!result.changed);
+    assert!(!result.skipped);
+    assert_eq!(result.message, "Permission denied");
+}
+
+#[tokio::test]
+async fn test_module_result_skipped_creation() {
+    let result = ModuleResult::skipped("Condition not met");
+
+    assert!(result.success);
+    assert!(!result.changed);
+    assert!(result.skipped);
+    assert_eq!(result.message, "Condition not met");
+}
+
+#[tokio::test]
+async fn test_module_result_builder_pattern() {
+    let result = ModuleResult::changed("Package installed")
+        .with_data(json!({
+            "package": "nginx",
+            "version": "1.24.0"
+        }))
+        .with_warning("Using deprecated repository");
+
+    assert!(result.changed);
+    assert!(result.data.is_some());
+    assert_eq!(result.warnings.len(), 1);
+
+    let data = result.data.unwrap();
+    assert_eq!(data["package"], "nginx");
+    assert_eq!(data["version"], "1.24.0");
+}
+
+#[tokio::test]
+async fn test_facts_creation_and_access() {
+    let mut facts = Facts::new();
+
+    assert!(facts.all().is_empty());
+
+    facts.set("os", json!("linux"));
+    facts.set("arch", json!("x86_64"));
+
+    assert_eq!(facts.get("os"), Some(&json!("linux")));
+    assert_eq!(facts.get("arch"), Some(&json!("x86_64")));
+    assert_eq!(facts.get("nonexistent"), None);
+    assert_eq!(facts.all().len(), 2);
+}
+
+#[tokio::test]
+async fn test_facts_gather_local() {
+    let facts = Facts::gather_local();
+
+    // These should always be present
+    assert!(facts.get("os_family").is_some());
+    assert!(facts.get("os_arch").is_some());
+}
+
+// ============================================================================
+// Test: Advanced Mock Implementations
+// ============================================================================
+
+/// A timing-aware callback that tracks event latencies
+#[derive(Debug)]
+pub struct TimingCallback {
+    event_timestamps: RwLock<Vec<(String, std::time::Instant)>>,
+    start_time: std::time::Instant,
+}
+
+impl TimingCallback {
+    pub fn new() -> Self {
+        Self {
+            event_timestamps: RwLock::new(Vec::new()),
+            start_time: std::time::Instant::now(),
+        }
+    }
+
+    pub fn elapsed_since_start(&self) -> Duration {
+        self.start_time.elapsed()
+    }
+
+    pub fn event_count(&self) -> usize {
+        self.event_timestamps.read().len()
+    }
+
+    fn record(&self, event: &str) {
+        self.event_timestamps
+            .write()
+            .push((event.to_string(), std::time::Instant::now()));
+    }
+}
+
+impl Default for TimingCallback {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ExecutionCallback for TimingCallback {
+    async fn on_playbook_start(&self, name: &str) {
+        self.record(&format!("playbook_start:{}", name));
+    }
+
+    async fn on_playbook_end(&self, name: &str, success: bool) {
+        self.record(&format!("playbook_end:{}:{}", name, success));
+    }
+
+    async fn on_task_start(&self, name: &str, host: &str) {
+        self.record(&format!("task_start:{}:{}", name, host));
+    }
+
+    async fn on_task_complete(&self, result: &ExecutionResult) {
+        self.record(&format!(
+            "task_complete:{}:{}",
+            result.task_name, result.host
+        ));
+    }
+}
+
+#[tokio::test]
+async fn test_timing_callback() {
+    let callback = TimingCallback::new();
+
+    callback.on_playbook_start("test").await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    callback.on_task_start("task1", "host1").await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let result = ExecutionResult {
+        host: "host1".to_string(),
+        task_name: "task1".to_string(),
+        result: ModuleResult::ok("OK"),
+        duration: Duration::from_millis(5),
+        notify: vec![],
+    };
+    callback.on_task_complete(&result).await;
+
+    assert_eq!(callback.event_count(), 3);
+    assert!(callback.elapsed_since_start() >= Duration::from_millis(20));
+}
+
+/// A filtering callback that only processes certain events
+#[derive(Debug)]
+pub struct FilteringCallback {
+    host_filter: Option<String>,
+    task_filter: Option<String>,
+    processed_events: RwLock<Vec<String>>,
+}
+
+impl FilteringCallback {
+    pub fn new() -> Self {
+        Self {
+            host_filter: None,
+            task_filter: None,
+            processed_events: RwLock::new(Vec::new()),
+        }
+    }
+
+    pub fn with_host_filter(mut self, host: &str) -> Self {
+        self.host_filter = Some(host.to_string());
+        self
+    }
+
+    pub fn with_task_filter(mut self, task: &str) -> Self {
+        self.task_filter = Some(task.to_string());
+        self
+    }
+
+    pub fn processed_count(&self) -> usize {
+        self.processed_events.read().len()
+    }
+}
+
+impl Default for FilteringCallback {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ExecutionCallback for FilteringCallback {
+    async fn on_task_start(&self, name: &str, host: &str) {
+        let host_matches = self.host_filter.as_ref().map_or(true, |f| f == host);
+        let task_matches = self.task_filter.as_ref().map_or(true, |f| f == name);
+
+        if host_matches && task_matches {
+            self.processed_events
+                .write()
+                .push(format!("task_start:{}:{}", name, host));
+        }
+    }
+
+    async fn on_task_complete(&self, result: &ExecutionResult) {
+        let host_matches = self
+            .host_filter
+            .as_ref()
+            .map_or(true, |f| f == &result.host);
+        let task_matches = self
+            .task_filter
+            .as_ref()
+            .map_or(true, |f| f == &result.task_name);
+
+        if host_matches && task_matches {
+            self.processed_events.write().push(format!(
+                "task_complete:{}:{}",
+                result.task_name, result.host
+            ));
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_filtering_callback_host_filter() {
+    let callback = FilteringCallback::new().with_host_filter("target_host");
+
+    callback.on_task_start("task1", "target_host").await;
+    callback.on_task_start("task2", "other_host").await;
+    callback.on_task_start("task3", "target_host").await;
+
+    assert_eq!(callback.processed_count(), 2);
+}
+
+#[tokio::test]
+async fn test_filtering_callback_task_filter() {
+    let callback = FilteringCallback::new().with_task_filter("important_task");
+
+    callback.on_task_start("important_task", "host1").await;
+    callback.on_task_start("other_task", "host1").await;
+    callback.on_task_start("important_task", "host2").await;
+
+    assert_eq!(callback.processed_count(), 2);
+}
+
+#[tokio::test]
+async fn test_filtering_callback_combined_filters() {
+    let callback = FilteringCallback::new()
+        .with_host_filter("target_host")
+        .with_task_filter("important_task");
+
+    callback.on_task_start("important_task", "target_host").await;
+    callback.on_task_start("important_task", "other_host").await;
+    callback.on_task_start("other_task", "target_host").await;
+    callback.on_task_start("other_task", "other_host").await;
+
+    // Only one event matches both filters
+    assert_eq!(callback.processed_count(), 1);
+}
+
+/// A buffering callback that batches events
+#[derive(Debug)]
+pub struct BufferingCallback {
+    buffer: RwLock<Vec<String>>,
+    buffer_size: usize,
+    flush_count: AtomicU32,
+}
+
+impl BufferingCallback {
+    pub fn new(buffer_size: usize) -> Self {
+        Self {
+            buffer: RwLock::new(Vec::new()),
+            buffer_size,
+            flush_count: AtomicU32::new(0),
+        }
+    }
+
+    fn add_event(&self, event: String) {
+        let mut buffer = self.buffer.write();
+        buffer.push(event);
+
+        if buffer.len() >= self.buffer_size {
+            self.flush_count.fetch_add(1, Ordering::SeqCst);
+            buffer.clear();
+        }
+    }
+
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.read().len()
+    }
+
+    pub fn flush_count(&self) -> u32 {
+        self.flush_count.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl ExecutionCallback for BufferingCallback {
+    async fn on_task_complete(&self, result: &ExecutionResult) {
+        self.add_event(format!("task:{}:{}", result.task_name, result.host));
+    }
+}
+
+#[tokio::test]
+async fn test_buffering_callback() {
+    let callback = BufferingCallback::new(5);
+
+    // Add 12 events - should trigger 2 flushes
+    for i in 0..12 {
+        let result = ExecutionResult {
+            host: "host".to_string(),
+            task_name: format!("task_{}", i),
+            result: ModuleResult::ok("OK"),
+            duration: Duration::from_millis(1),
+            notify: vec![],
+        };
+        callback.on_task_complete(&result).await;
+    }
+
+    assert_eq!(callback.flush_count(), 2); // 2 flushes (at 5 and 10)
+    assert_eq!(callback.buffer_len(), 2); // 2 remaining
+}
+
+// ============================================================================
+// Test: Concurrent Callback Execution
+// ============================================================================
+
+#[tokio::test]
+async fn test_concurrent_task_completions() {
+    let callback = Arc::new(MockCallback::new());
+    let mut handles = vec![];
+
+    // Spawn 50 concurrent task completions
+    for i in 0..50 {
+        let cb = callback.clone();
+        let handle = tokio::spawn(async move {
+            let result = ExecutionResult {
+                host: format!("host_{}", i % 5),
+                task_name: format!("concurrent_task_{}", i),
+                result: if i % 3 == 0 {
+                    ModuleResult::failed("Simulated failure")
+                } else {
+                    ModuleResult::ok("Success")
+                },
+                duration: Duration::from_millis(i as u64),
+                notify: vec![],
+            };
+            cb.on_task_complete(&result).await;
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    assert_eq!(callback.task_complete_count.load(Ordering::SeqCst), 50);
+
+    // Check that results were tracked
+    let results = callback.task_results.read();
+    assert_eq!(results.len(), 50);
+
+    // Count successes and failures
+    let successes = results.iter().filter(|&&r| r).count();
+    let failures = results.iter().filter(|&&r| !r).count();
+
+    // Every 3rd task (0, 3, 6, ..., 48) fails = 17 failures
+    assert_eq!(failures, 17);
+    assert_eq!(successes, 33);
+}
+
+#[tokio::test]
+async fn test_concurrent_manager_dispatch() {
+    let manager = Arc::new(CallbackManager::new());
+    let mock = Arc::new(MockCallback::new());
+
+    manager.register(mock.clone());
+
+    let mut handles = vec![];
+
+    // Spawn concurrent dispatches of different event types
+    for i in 0..20 {
+        let mgr = manager.clone();
+        let handle = tokio::spawn(async move {
+            mgr.dispatch_playbook_start(&format!("playbook_{}", i))
+                .await;
+            mgr.dispatch_task_start(&format!("task_{}", i), &format!("host_{}", i))
+                .await;
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    assert_eq!(mock.playbook_start_count.load(Ordering::SeqCst), 20);
+    assert_eq!(mock.task_start_count.load(Ordering::SeqCst), 20);
+}
+
+// ============================================================================
+// Test: Callback State Isolation
+// ============================================================================
+
+#[tokio::test]
+async fn test_callback_state_isolation() {
+    // Create two separate callback instances
+    let callback1 = MockCallback::new();
+    let callback2 = MockCallback::new();
+
+    // Modify only callback1
+    callback1.on_playbook_start("playbook1").await;
+    callback1.on_task_start("task1", "host1").await;
+
+    // callback2 should be unaffected
+    assert!(callback1.playbook_start_called.load(Ordering::SeqCst));
+    assert!(!callback2.playbook_start_called.load(Ordering::SeqCst));
+
+    assert_eq!(callback1.playbook_start_count.load(Ordering::SeqCst), 1);
+    assert_eq!(callback2.playbook_start_count.load(Ordering::SeqCst), 0);
+
+    assert!(!callback1.playbook_names.read().is_empty());
+    assert!(callback2.playbook_names.read().is_empty());
+}
+
+// ============================================================================
+// Test: Long-running Callback Scenarios
+// ============================================================================
+
+/// A slow callback for testing timeout behavior
+#[derive(Debug, Default)]
+pub struct SlowCallback {
+    delay_ms: AtomicU64,
+    completed_count: AtomicU32,
+}
+
+impl SlowCallback {
+    pub fn new(delay_ms: u64) -> Self {
+        Self {
+            delay_ms: AtomicU64::new(delay_ms),
+            completed_count: AtomicU32::new(0),
+        }
+    }
+
+    pub fn completed_count(&self) -> u32 {
+        self.completed_count.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl ExecutionCallback for SlowCallback {
+    async fn on_task_complete(&self, _result: &ExecutionResult) {
+        let delay = self.delay_ms.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(delay)).await;
+        self.completed_count.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn test_slow_callback_completes() {
+    let callback = SlowCallback::new(10);
+
+    let result = ExecutionResult {
+        host: "host1".to_string(),
+        task_name: "task1".to_string(),
+        result: ModuleResult::ok("OK"),
+        duration: Duration::from_millis(1),
+        notify: vec![],
+    };
+
+    let start = std::time::Instant::now();
+    callback.on_task_complete(&result).await;
+    let elapsed = start.elapsed();
+
+    assert!(elapsed >= Duration::from_millis(10));
+    assert_eq!(callback.completed_count(), 1);
+}
+
+// ============================================================================
+// Test: Skipped Task Handling
+// ============================================================================
+
+#[tokio::test]
+async fn test_skipped_task_result() {
+    let callback = MockCallback::new();
+
+    let skipped_result = ExecutionResult {
+        host: "host1".to_string(),
+        task_name: "conditional_task".to_string(),
+        result: ModuleResult::skipped("when clause evaluated to false"),
+        duration: Duration::from_millis(0),
+        notify: vec![],
+    };
+
+    callback.on_task_complete(&skipped_result).await;
+
+    // Skipped tasks have success=true but the test checks against result.success
+    let results = callback.task_results.read();
+    assert_eq!(results.len(), 1);
+    assert!(results[0]); // Skipped counts as success for tracking
+}
+
+// ============================================================================
+// Test: Multiple Handler Notifications
+// ============================================================================
+
+#[tokio::test]
+async fn test_multiple_handlers_notified() {
+    let callback = MockCallback::new();
+
+    let result = ExecutionResult {
+        host: "host1".to_string(),
+        task_name: "config_update".to_string(),
+        result: ModuleResult::changed("Configuration updated"),
+        duration: Duration::from_millis(50),
+        notify: vec![
+            "restart nginx".to_string(),
+            "reload config".to_string(),
+            "notify monitoring".to_string(),
+        ],
+    };
+
+    callback.on_task_complete(&result).await;
+
+    // Trigger all handlers
+    for handler in &result.notify {
+        callback.on_handler_triggered(handler).await;
+    }
+
+    assert_eq!(callback.handler_triggered_count.load(Ordering::SeqCst), 3);
+
+    let handlers = callback.handler_names.read();
+    assert!(handlers.contains(&"restart nginx".to_string()));
+    assert!(handlers.contains(&"reload config".to_string()));
+    assert!(handlers.contains(&"notify monitoring".to_string()));
+}
+
+// ============================================================================
+// Test: Null/None Handling
+// ============================================================================
+
+#[tokio::test]
+async fn test_result_with_no_data() {
+    let result = ModuleResult::ok("Simple result");
+
+    assert!(result.data.is_none());
+    assert!(result.warnings.is_empty());
+}
+
+#[tokio::test]
+async fn test_result_with_null_json_data() {
+    let result = ModuleResult::ok("Result with null").with_data(json!(null));
+
+    assert!(result.data.is_some());
+    assert!(result.data.unwrap().is_null());
+}
+
+#[tokio::test]
+async fn test_result_with_empty_object_data() {
+    let result = ModuleResult::ok("Result with empty object").with_data(json!({}));
+
+    assert!(result.data.is_some());
+    let data = result.data.unwrap();
+    assert!(data.is_object());
+    assert!(data.as_object().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_result_with_empty_array_data() {
+    let result = ModuleResult::ok("Result with empty array").with_data(json!([]));
+
+    assert!(result.data.is_some());
+    let data = result.data.unwrap();
+    assert!(data.is_array());
+    assert!(data.as_array().unwrap().is_empty());
+}

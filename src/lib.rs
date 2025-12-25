@@ -86,7 +86,39 @@
 // Re-export commonly used items in prelude
 pub mod prelude {
     //! Convenient re-exports of commonly used types and traits.
+    //!
+    //! This prelude provides quick access to the most commonly needed types:
+    //!
+    //! - **Connections**: Various connection types (SSH, Local, Docker)
+    //! - **Execution**: Playbook and task executors
+    //! - **Inventory**: Hosts, groups, and variables
+    //! - **Modules**: Module system and registry
+    //! - **Callbacks**: Common callback plugins (see [`callback::prelude`] for more)
+    //! - **Errors**: Error handling types
+    //!
+    //! # Example
+    //!
+    //! ```rust,ignore
+    //! use rustible::prelude::*;
+    //!
+    //! #[tokio::main]
+    //! async fn main() -> Result<()> {
+    //!     let inventory = Inventory::from_file("inventory.yml").await?;
+    //!     let playbook = Playbook::from_file("playbook.yml").await?;
+    //!
+    //!     let executor = PlaybookExecutor::new()
+    //!         .with_inventory(inventory)
+    //!         .with_parallelism(10)
+    //!         .build()?;
+    //!
+    //!     let result = executor.run(&playbook).await?;
+    //!     Ok(())
+    //! }
+    //! ```
+    //!
+    //! [`callback::prelude`]: crate::callback::prelude
 
+    // Connection types
     pub use crate::connection::config::RetryConfig;
     pub use crate::connection::docker::DockerConnection;
     pub use crate::connection::local::LocalConnection;
@@ -99,16 +131,42 @@ pub mod prelude {
         ConnectionFactory, ConnectionResult, ConnectionType, ExecuteOptions, FileStat, HostConfig,
         TransferOptions,
     };
+
+    // Error handling
     pub use crate::error::{Error, Result};
+
+    // Execution engine
     pub use crate::executor::{PlaybookExecutor, TaskExecutor};
+
+    // Facts system
     pub use crate::facts::Facts;
+
+    // Handlers
     pub use crate::handlers::Handler;
+
+    // Inventory
     pub use crate::inventory::{Group, Host, Inventory};
+
+    // Module system
     pub use crate::modules::{Module, ModuleRegistry, ModuleResult};
+
+    // Playbooks
     pub use crate::playbook::{Play, Playbook, Task};
+
+    // Roles
     pub use crate::roles::Role;
+
+    // Core traits
     pub use crate::traits::*;
+
+    // Variables
     pub use crate::vars::Variables;
+
+    // Common callback plugins (for full callback API, use callback::prelude)
+    pub use crate::callback::{
+        BoxedCallback, DefaultCallback, MinimalCallback, NullCallback, ProgressCallback,
+        SharedCallback,
+    };
 }
 
 // ============================================================================
@@ -172,6 +230,12 @@ pub mod config;
 // ============================================================================
 
 pub mod output;
+
+// ============================================================================
+// Callback Plugins
+// ============================================================================
+
+pub mod callback;
 
 // ============================================================================
 // Version Information

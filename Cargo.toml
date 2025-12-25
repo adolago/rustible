@@ -135,6 +135,9 @@ k8s-openapi = { version = "0.20", features = ["v1_28"], optional = true }
 # Hostname resolution
 hostname = "0.3"
 
+# Unix syslog support
+libc = "0.2"
+
 # File handling
 filetime = "0.2.26"
 zip = "0.6"
@@ -157,11 +160,16 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 wiremock = "0.6"
 proptest = "1.4"
 async-ssh2-tokio = "0.12"
+serial_test = "3.1"
 
 [[bench]]
 name = "russh_benchmark"
 harness = false
 required-features = []
+
+[[bench]]
+name = "callback_benchmark"
+harness = false
 
 # [[bench]]
 # name = "execution_benchmark"
