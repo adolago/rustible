@@ -621,7 +621,10 @@ fn test_load_json_config() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_explicit_config_path_takes_priority() {
+    // Clear any env vars that might interfere with config loading
+    std::env::remove_var("RUSTIBLE_FORKS");
     let temp_dir = tempdir().unwrap();
 
     let explicit_config = r#"

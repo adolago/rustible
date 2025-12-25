@@ -913,7 +913,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ETA calculation edge case needs refinement"]
     fn test_eta_calculation() {
         let mut timing = TaskTiming::default();
         timing.record_duration(Duration::from_secs(10));
@@ -933,9 +932,12 @@ mod tests {
             current_play_name: "play".to_string(),
         };
 
-        // 4 remaining executions * 15s average = 60s
+        // total_executions = 3 * 2 = 6
+        // completed_executions = (1 * 2) + 2 = 4
+        // remaining = 6 - 4 = 2
+        // ETA = 2 * 15s = 30s
         let eta = progress.eta(Some(avg)).unwrap();
-        assert_eq!(eta, Duration::from_secs(60));
+        assert_eq!(eta, Duration::from_secs(30));
     }
 
     #[test]

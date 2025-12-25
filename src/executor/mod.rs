@@ -572,8 +572,22 @@ impl Executor {
             // Run task on all active hosts in parallel (limited by semaphore)
             let task_results = self.run_task_on_hosts(&active_hosts, task).await?;
 
+            debug!(
+                "Task '{}' completed on {} hosts",
+                task.name,
+                task_results.len()
+            );
+
             // Update results and track block failures
             for (host, task_result) in task_results {
+                debug!(
+                    "  Host '{}': status={:?}, changed={}, msg={:?}",
+                    host,
+                    task_result.status,
+                    task_result.changed,
+                    task_result.msg
+                );
+
                 if let Some(host_result) = results.get_mut(&host) {
                     // Check if this task failed
                     let task_failed =

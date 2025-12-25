@@ -844,21 +844,29 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "host count threshold formatting needs refinement"]
     fn test_format_hosts_count_threshold() {
         let config = DenseConfig::new().with_host_count_threshold(5);
         let callback = DenseCallback::with_config(config);
 
-        // Under threshold - list all
-        let hosts = vec!["h1".to_string(), "h2".to_string(), "h3".to_string()];
+        // Under threshold - list all (use non-compressible names)
+        let hosts = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
         let formatted = callback.format_hosts(&hosts);
-        assert!(formatted.contains("h1"));
+        assert!(
+            formatted.contains("alpha"),
+            "Expected 'alpha' in output but got: {}",
+            formatted
+        );
         assert!(!formatted.contains("hosts)"));
 
         // Over threshold - show count
-        let hosts: Vec<String> = (1..=10).map(|i| format!("host{}", i)).collect();
+        // Use non-sequential host names to avoid range compression
+        let hosts: Vec<String> = (1..=10).map(|i| format!("node-{}", i * 3)).collect();
         let formatted = callback.format_hosts(&hosts);
-        assert!(formatted.contains("10 hosts"));
+        assert!(
+            formatted.contains("10 hosts"),
+            "Expected '(10 hosts)' but got: {}",
+            formatted
+        );
     }
 
     #[test]

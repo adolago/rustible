@@ -19,6 +19,7 @@ use std::time::Duration;
 use colored::control::{set_override, unset_override};
 use colored::{Color, Colorize};
 use parking_lot::RwLock;
+use serial_test::serial;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -453,6 +454,7 @@ fn test_task_status_colored_string_contains_text() {
 }
 
 #[test]
+#[serial]
 fn test_task_status_colored_string_has_ansi_codes() {
     set_override(true);
 
@@ -767,6 +769,7 @@ fn test_header_with_special_characters() {
 }
 
 #[test]
+#[serial]
 fn test_header_with_color() {
     std::env::remove_var("NO_COLOR");
     set_override(true);
@@ -964,6 +967,7 @@ fn test_duration_format_zero() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_ok_color_is_green() {
     set_override(true);
     let colored = TaskStatus::Ok.colored_string();
@@ -976,6 +980,7 @@ fn test_ok_color_is_green() {
 }
 
 #[test]
+#[serial]
 fn test_changed_color_is_yellow() {
     set_override(true);
     let colored = TaskStatus::Changed.colored_string();
@@ -988,6 +993,7 @@ fn test_changed_color_is_yellow() {
 }
 
 #[test]
+#[serial]
 fn test_failed_color_is_red() {
     set_override(true);
     let colored = TaskStatus::Failed.colored_string();
@@ -1000,6 +1006,7 @@ fn test_failed_color_is_red() {
 }
 
 #[test]
+#[serial]
 fn test_skipped_color_is_cyan() {
     set_override(true);
     let colored = TaskStatus::Skipped.colored_string();
@@ -1012,6 +1019,7 @@ fn test_skipped_color_is_cyan() {
 }
 
 #[test]
+#[serial]
 fn test_unreachable_color_is_red() {
     set_override(true);
     let colored = TaskStatus::Unreachable.colored_string();
@@ -1024,6 +1032,7 @@ fn test_unreachable_color_is_red() {
 }
 
 #[test]
+#[serial]
 fn test_rescued_color_is_magenta() {
     set_override(true);
     let colored = TaskStatus::Rescued.colored_string();
@@ -1036,6 +1045,7 @@ fn test_rescued_color_is_magenta() {
 }
 
 #[test]
+#[serial]
 fn test_ignored_color_is_blue() {
     set_override(true);
     let colored = TaskStatus::Ignored.colored_string();

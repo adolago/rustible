@@ -64,14 +64,28 @@ impl PipConfig {
             executable
         };
 
-        // Parse extra_args as either a string or array
-        let extra_args = if let Some(args_str) = params.get_string("extra_args")? {
-            shell_words::split(&args_str)
-                .map_err(|e| ModuleError::InvalidParameter(format!("Invalid extra_args: {}", e)))?
-        } else if let Some(args) = params.get_vec_string("extra_args")? {
-            args
-        } else {
-            Vec::new()
+        // Parse extra_args - check raw type to handle array vs string correctly
+        let extra_args = match params.get("extra_args") {
+            Some(serde_json::Value::Array(arr)) => {
+                // Array: use elements directly
+                arr.iter()
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string().trim_matches('"').to_string(),
+                    })
+                    .collect()
+            }
+            Some(serde_json::Value::String(s)) => {
+                // String: parse with shell_words for proper quote/space handling
+                shell_words::split(s)
+                    .map_err(|e| ModuleError::InvalidParameter(format!("Invalid extra_args: {}", e)))?
+            }
+            Some(_) => {
+                return Err(ModuleError::InvalidParameter(
+                    "extra_args must be a string or array".to_string(),
+                ))
+            }
+            None => Vec::new(),
         };
 
         // Parse umask as octal string or integer

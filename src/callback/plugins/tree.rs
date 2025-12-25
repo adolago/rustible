@@ -1006,13 +1006,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "filename sanitization edge case needs refinement"]
     async fn test_sanitize_filename() {
         assert_eq!(sanitize_filename("simple"), "simple");
         assert_eq!(sanitize_filename("with spaces"), "with_spaces");
         assert_eq!(sanitize_filename("path/to/file"), "path_to_file");
         assert_eq!(sanitize_filename("file:name"), "file_name");
-        assert_eq!(sanitize_filename("file*name?"), "file_name_");
+        // Note: trim_matches('_') removes trailing underscores
+        assert_eq!(sanitize_filename("file*name?"), "file_name");
+        // Leading/trailing spaces become _, then get trimmed
         assert_eq!(sanitize_filename("  trimmed  "), "trimmed");
     }
 

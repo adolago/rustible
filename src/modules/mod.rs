@@ -709,9 +709,20 @@ impl ParamExt for ModuleParams {
                 .ok_or_else(|| {
                     ModuleError::InvalidParameter(format!("{} must be a positive integer", key))
                 }),
-            Some(serde_json::Value::String(s)) => s.parse().map(Some).map_err(|_| {
-                ModuleError::InvalidParameter(format!("{} must be a positive integer", key))
-            }),
+            Some(serde_json::Value::String(s)) => {
+                // Handle octal notation (e.g., "0755" for mode)
+                // If the string starts with "0" and has only digits, treat it as octal
+                let s = s.trim();
+                if s.starts_with('0') && s.len() > 1 && s.chars().skip(1).all(|c| c.is_ascii_digit()) {
+                    u32::from_str_radix(&s[1..], 8).map(Some).map_err(|_| {
+                        ModuleError::InvalidParameter(format!("{} must be a valid octal number", key))
+                    })
+                } else {
+                    s.parse().map(Some).map_err(|_| {
+                        ModuleError::InvalidParameter(format!("{} must be a positive integer", key))
+                    })
+                }
+            }
             Some(_) => Err(ModuleError::InvalidParameter(format!(
                 "{} must be a positive integer",
                 key

@@ -15,7 +15,8 @@ use tokio::runtime::Handle;
 
 /// Regex pattern for validating cron time fields
 static CRON_FIELD_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^(\*|[0-9]+(-[0-9]+)?(/[0-9]+)?(,[0-9]+(-[0-9]+)?(/[0-9]+)?)*)$")
+    // Matches: *, */N, N, N-N, N/N, N-N/N, or comma-separated combinations
+    Regex::new(r"^(\*(/[0-9]+)?|[0-9]+(-[0-9]+)?(/[0-9]+)?(,([0-9]+(-[0-9]+)?(/[0-9]+)?|\*(/[0-9]+)?))*)$")
         .expect("Invalid cron field regex")
 });
 
