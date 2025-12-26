@@ -240,62 +240,102 @@ impl RunArgs {
                 }
             }
 
-            // Get tasks
+            // Get pre_tasks, tasks, post_tasks, roles
+            let pre_tasks = play
+                .get("pre_tasks")
+                .and_then(|t| t.as_sequence())
+                .cloned()
+                .unwrap_or_default();
+
             let tasks = play
                 .get("tasks")
                 .and_then(|t| t.as_sequence())
                 .cloned()
                 .unwrap_or_default();
 
-            if tasks.is_empty() {
+            let post_tasks = play
+                .get("post_tasks")
+                .and_then(|t| t.as_sequence())
+                .cloned()
+                .unwrap_or_default();
+
+            let roles = play
+                .get("roles")
+                .and_then(|r| r.as_sequence())
+                .cloned()
+                .unwrap_or_default();
+
+            // Count role tasks
+            let playbook_dir = self.playbook.parent().unwrap_or(std::path::Path::new("."));
+            let mut role_task_count = 0;
+            for role in &roles {
+                let role_name = if let Some(name) = role.as_str() {
+                    name.to_string()
+                } else if let Some(name) = role.get("role").and_then(|r| r.as_str()) {
+                    name.to_string()
+                } else if let Some(name) = role.get("name").and_then(|r| r.as_str()) {
+                    name.to_string()
+                } else {
+                    continue;
+                };
+                let role_tasks_path = playbook_dir.join("roles").join(&role_name).join("tasks").join("main.yml");
+                if role_tasks_path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
+                        if let Ok(role_tasks) = serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content) {
+                            role_task_count += role_tasks.len();
+                        }
+                    }
+                }
+            }
+
+            let total_play_tasks = pre_tasks.len() + role_task_count + tasks.len() + post_tasks.len();
+
+            if total_play_tasks == 0 {
                 ctx.output.plan("  No tasks to execute");
                 continue;
             }
 
             ctx.output.plan(&format!(
                 "  Tasks: {} task{}",
-                tasks.len(),
-                if tasks.len() == 1 { "" } else { "s" }
+                total_play_tasks,
+                if total_play_tasks == 1 { "" } else { "s" }
             ));
 
-            // Show each task
-            for (task_idx, task) in tasks.iter().enumerate() {
+            let mut task_num = 0;
+
+            // Helper closure to show a task
+            let show_task = |ctx: &mut CommandContext, task: &serde_yaml::Value, task_num: usize, total: usize, hosts: &[String], vars: &IndexMap<String, serde_yaml::Value>, me: &Self| {
                 let task_name = task
                     .get("name")
                     .and_then(|n| n.as_str())
                     .unwrap_or("Unnamed task");
 
-                // Check if task should run based on tags
-                if !self.should_run_task(task) {
-                    continue;
+                if !me.should_run_task(task) {
+                    return;
                 }
 
-                let (module, args) = self.detect_module(task);
+                let (module, args) = me.detect_module(task);
 
-                // Format the task details
                 ctx.output.plan(&format!(
                     "\n  {} Task {}/{}: {}",
                     "▸".to_string(),
-                    task_idx + 1,
-                    tasks.len(),
+                    task_num,
+                    total,
                     task_name
                 ));
                 ctx.output.plan(&format!("    Module: {}", module));
 
-                // Show which hosts will be affected
-                for host in &hosts {
-                    let action_desc = self.get_action_description(module, args, &vars);
+                for host in hosts {
+                    let action_desc = me.get_action_description(module, args, vars);
                     ctx.output
                         .plan(&format!("      [{}] {}", host, action_desc));
                 }
 
-                // Show when condition if present
                 if let Some(when) = task.get("when") {
                     let condition = when.as_str().unwrap_or("<complex condition>");
                     ctx.output.plan(&format!("    When: {}", condition));
                 }
 
-                // Show notify handlers if present
                 if let Some(notify) = task.get("notify") {
                     let handlers = if let Some(s) = notify.as_str() {
                         vec![s]
@@ -304,12 +344,54 @@ impl RunArgs {
                     } else {
                         vec![]
                     };
-
                     if !handlers.is_empty() {
                         ctx.output
                             .plan(&format!("    Notify: {}", handlers.join(", ")));
                     }
                 }
+            };
+
+            // Show pre_tasks
+            for task in &pre_tasks {
+                task_num += 1;
+                show_task(ctx, task, task_num, total_play_tasks, &hosts, &vars, self);
+            }
+
+            // Show role tasks
+            for role in &roles {
+                let role_name = if let Some(name) = role.as_str() {
+                    name.to_string()
+                } else if let Some(name) = role.get("role").and_then(|r| r.as_str()) {
+                    name.to_string()
+                } else if let Some(name) = role.get("name").and_then(|r| r.as_str()) {
+                    name.to_string()
+                } else {
+                    continue;
+                };
+
+                let role_tasks_path = playbook_dir.join("roles").join(&role_name).join("tasks").join("main.yml");
+                if role_tasks_path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
+                        if let Ok(role_tasks) = serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content) {
+                            for task in &role_tasks {
+                                task_num += 1;
+                                show_task(ctx, task, task_num, total_play_tasks, &hosts, &vars, self);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Show tasks
+            for task in &tasks {
+                task_num += 1;
+                show_task(ctx, task, task_num, total_play_tasks, &hosts, &vars, self);
+            }
+
+            // Show post_tasks
+            for task in &post_tasks {
+                task_num += 1;
+                show_task(ctx, task, task_num, total_play_tasks, &hosts, &vars, self);
             }
         }
 
@@ -331,9 +413,53 @@ impl RunArgs {
                 }
             }
 
+            // Count all tasks: pre_tasks + role tasks + tasks + post_tasks
+            let playbook_dir = self.playbook.parent().unwrap_or(std::path::Path::new("."));
+
+            if let Some(pre_tasks) = play.get("pre_tasks").and_then(|t| t.as_sequence()) {
+                for task in pre_tasks {
+                    if self.should_run_task(task) {
+                        total_tasks += 1;
+                    }
+                }
+            }
+
+            if let Some(roles) = play.get("roles").and_then(|r| r.as_sequence()) {
+                for role in roles {
+                    let role_name = if let Some(name) = role.as_str() {
+                        name.to_string()
+                    } else if let Some(name) = role.get("role").and_then(|r| r.as_str()) {
+                        name.to_string()
+                    } else if let Some(name) = role.get("name").and_then(|r| r.as_str()) {
+                        name.to_string()
+                    } else {
+                        continue;
+                    };
+                    let role_tasks_path = playbook_dir.join("roles").join(&role_name).join("tasks").join("main.yml");
+                    if role_tasks_path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
+                            if let Ok(role_tasks) = serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content) {
+                                for task in &role_tasks {
+                                    if self.should_run_task(task) {
+                                        total_tasks += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if let Some(tasks) = play.get("tasks").and_then(|t| t.as_sequence()) {
-                // Count only tasks that would run based on tags
                 for task in tasks {
+                    if self.should_run_task(task) {
+                        total_tasks += 1;
+                    }
+                }
+            }
+
+            if let Some(post_tasks) = play.get("post_tasks").and_then(|t| t.as_sequence()) {
+                for task in post_tasks {
                     if self.should_run_task(task) {
                         total_tasks += 1;
                     }
@@ -582,15 +708,111 @@ impl RunArgs {
             }
         }
 
-        // Get tasks
+        // Get pre_tasks, tasks, post_tasks
+        let pre_tasks = play
+            .get("pre_tasks")
+            .and_then(|t| t.as_sequence())
+            .cloned()
+            .unwrap_or_default();
+
         let tasks = play
             .get("tasks")
             .and_then(|t| t.as_sequence())
             .cloned()
             .unwrap_or_default();
 
-        // Execute tasks
+        let post_tasks = play
+            .get("post_tasks")
+            .and_then(|t| t.as_sequence())
+            .cloned()
+            .unwrap_or_default();
+
+        // Get roles
+        let roles = play
+            .get("roles")
+            .and_then(|r| r.as_sequence())
+            .cloned()
+            .unwrap_or_default();
+
+        // Ansible execution order: pre_tasks -> roles -> tasks -> post_tasks
+
+        // 1. Execute pre_tasks
+        for task in &pre_tasks {
+            self.execute_task(ctx, task, &hosts, stats, &vars).await?;
+        }
+
+        // 2. Execute role tasks
+        for role in &roles {
+            let role_name = if let Some(name) = role.as_str() {
+                name.to_string()
+            } else if let Some(name) = role.get("role").and_then(|r| r.as_str()) {
+                name.to_string()
+            } else if let Some(name) = role.get("name").and_then(|r| r.as_str()) {
+                name.to_string()
+            } else {
+                continue;
+            };
+
+            // Load role tasks from roles/<role_name>/tasks/main.yml
+            let playbook_dir = self.playbook.parent().unwrap_or(std::path::Path::new("."));
+            let role_tasks_path = playbook_dir.join("roles").join(&role_name).join("tasks").join("main.yml");
+
+            if role_tasks_path.exists() {
+                if let Ok(role_content) = std::fs::read_to_string(&role_tasks_path) {
+                    if let Ok(role_tasks) = serde_yaml::from_str::<Vec<serde_yaml::Value>>(&role_content) {
+                        // Merge role vars if present
+                        let mut role_vars = vars.clone();
+
+                        // Load role defaults
+                        let defaults_path = playbook_dir.join("roles").join(&role_name).join("defaults").join("main.yml");
+                        if defaults_path.exists() {
+                            if let Ok(defaults_content) = std::fs::read_to_string(&defaults_path) {
+                                if let Ok(defaults) = serde_yaml::from_str::<serde_yaml::Value>(&defaults_content) {
+                                    if let Some(mapping) = defaults.as_mapping() {
+                                        for (k, v) in mapping {
+                                            if let Some(key) = k.as_str() {
+                                                role_vars.entry(key.to_string()).or_insert(v.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Load role vars (higher precedence than defaults)
+                        let vars_path = playbook_dir.join("roles").join(&role_name).join("vars").join("main.yml");
+                        if vars_path.exists() {
+                            if let Ok(vars_content) = std::fs::read_to_string(&vars_path) {
+                                if let Ok(role_vars_file) = serde_yaml::from_str::<serde_yaml::Value>(&vars_content) {
+                                    if let Some(mapping) = role_vars_file.as_mapping() {
+                                        for (k, v) in mapping {
+                                            if let Some(key) = k.as_str() {
+                                                role_vars.insert(key.to_string(), v.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Execute role tasks
+                        for task in &role_tasks {
+                            self.execute_task(ctx, task, &hosts, stats, &role_vars).await?;
+                        }
+                    }
+                }
+            } else {
+                ctx.output.warning(&format!("Role '{}' not found at {}", role_name, role_tasks_path.display()));
+            }
+        }
+
+        // 3. Execute tasks
         for task in &tasks {
+            self.execute_task(ctx, task, &hosts, stats, &vars).await?;
+        }
+
+        // 4. Execute post_tasks
+        for task in &post_tasks {
             self.execute_task(ctx, task, &hosts, stats, &vars).await?;
         }
 
