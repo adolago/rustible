@@ -63,6 +63,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use futures::future::join_all;
+use indexmap::IndexMap;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tracing::{debug, error, info, instrument, warn};
@@ -407,6 +408,12 @@ impl Executor {
             for handler in &play.handlers {
                 handlers.insert(handler.name.clone(), handler.clone());
             }
+            // Register handlers from roles
+            for role in &play.roles {
+                for handler in role.get_all_handlers() {
+                    handlers.insert(handler.name.clone(), handler.clone());
+                }
+            }
         }
 
         // Set play-level variables
@@ -414,6 +421,13 @@ impl Executor {
             let mut runtime = self.runtime.write().await;
             for (key, value) in &play.vars {
                 runtime.set_play_var(key.clone(), value.clone());
+            }
+            // Load role variables into runtime context
+            // Role variables are set as play vars since they have similar precedence
+            for role in &play.roles {
+                for (key, value) in role.get_all_vars() {
+                    runtime.set_play_var(key.clone(), value.clone());
+                }
             }
         }
 
@@ -427,11 +441,54 @@ impl Executor {
 
         debug!("Executing on {} hosts", hosts.len());
 
-        // Combine all tasks: pre_tasks + tasks + post_tasks
+        // Combine all tasks: gather_facts (if enabled) + pre_tasks + role tasks + tasks + post_tasks
         // Pre-allocate with known capacity to avoid reallocations
-        let total_tasks = play.pre_tasks.len() + play.tasks.len() + play.post_tasks.len();
+        let gather_facts_count = if play.gather_facts { 1 } else { 0 };
+        let role_tasks_count: usize = play.roles.iter().map(|r| r.get_all_tasks().len()).sum();
+        let total_tasks = gather_facts_count
+            + play.pre_tasks.len()
+            + role_tasks_count
+            + play.tasks.len()
+            + play.post_tasks.len();
         let mut all_tasks = Vec::with_capacity(total_tasks);
+
+        // If gather_facts is enabled, inject a facts-gathering task at the start
+        if play.gather_facts {
+            debug!("Injecting gather_facts task for play: {}", play.name);
+            let gather_facts_task = Task {
+                name: "Gathering Facts".to_string(),
+                module: "gather_facts".to_string(),
+                args: IndexMap::new(),
+                when: None,
+                notify: Vec::new(),
+                register: None,
+                loop_items: None,
+                loop_var: "item".to_string(),
+                loop_control: None,
+                ignore_errors: false,
+                changed_when: None,
+                failed_when: None,
+                delegate_to: None,
+                delegate_facts: None,
+                run_once: false,
+                tags: Vec::new(),
+                r#become: false,
+                become_user: None,
+                block_id: None,
+                block_role: crate::executor::task::BlockRole::Normal,
+                retries: None,
+                delay: None,
+                until: None,
+            };
+            all_tasks.push(gather_facts_task);
+        }
+
+        // Ansible execution order: pre_tasks -> role tasks -> tasks -> post_tasks
         all_tasks.extend(play.pre_tasks.iter().cloned());
+        // Add role tasks (from play.roles) after pre_tasks and before regular tasks
+        for role in &play.roles {
+            all_tasks.extend(role.get_all_tasks());
+        }
         all_tasks.extend(play.tasks.iter().cloned());
         all_tasks.extend(play.post_tasks.iter().cloned());
 

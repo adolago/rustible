@@ -11,8 +11,7 @@ pub mod copy;
 pub mod cron;
 pub mod debug;
 pub mod dnf;
-// TODO: facts module needs to be converted to sync Module trait
-// pub mod facts;
+pub mod facts;
 pub mod file;
 pub mod git;
 pub mod group;
@@ -832,8 +831,7 @@ impl ModuleRegistry {
         registry.register(Arc::new(set_fact::SetFactModule));
         registry.register(Arc::new(stat::StatModule));
 
-        // TODO: facts module needs to be converted to sync Module trait
-        // registry.register(Arc::new(facts::FactsModule));
+        registry.register(Arc::new(facts::FactsModule));
         registry
     }
 

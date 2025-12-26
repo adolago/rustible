@@ -4,7 +4,7 @@
 //! network, and other system information.
 
 use super::{
-    Module, ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
+    Module, ModuleContext, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
 };
 use std::collections::HashMap;
 use std::fs;

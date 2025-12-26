@@ -465,11 +465,17 @@ impl RuntimeContext {
     #[inline]
     pub fn get_merged_vars(&self, host: &str) -> IndexMap<String, JsonValue> {
         // OPTIMIZATION: Pre-allocate with estimated capacity to reduce reallocations
+        let host_facts_count = self
+            .host_data
+            .get(host)
+            .map(|hd| hd.facts.len())
+            .unwrap_or(0);
         let estimated_size = self.magic_vars.len()
             + self.global_vars.len()
             + self.play_vars.len()
             + self.task_vars.len()
             + self.extra_vars.len()
+            + host_facts_count // For top-level ansible_* fact variables
             + 10; // Buffer for special vars
         let mut merged = IndexMap::with_capacity(estimated_size);
 
@@ -512,13 +518,25 @@ impl RuntimeContext {
             merged.insert(k.clone(), v.clone());
         }
 
-        // Host facts (under 'ansible_facts' namespace)
+        // Host facts (under 'ansible_facts' namespace and as top-level ansible_* variables)
         if let Some(host_data) = self.host_data.get(host) {
             if !host_data.facts.is_empty() {
+                // Store facts under ansible_facts for backwards compatibility
                 merged.insert(
                     "ansible_facts".to_string(),
                     serde_json::to_value(host_data.get_all_facts()).unwrap_or(JsonValue::Null),
                 );
+
+                // Also expose each fact as a top-level ansible_* variable
+                // Facts like {"hostname": "server1"} become {"ansible_hostname": "server1"}
+                for (fact_name, fact_value) in host_data.get_all_facts() {
+                    let prefixed_name = if fact_name.starts_with("ansible_") {
+                        fact_name.clone()
+                    } else {
+                        format!("ansible_{}", fact_name)
+                    };
+                    merged.insert(prefixed_name, fact_value.clone());
+                }
             }
 
             // Registered vars
@@ -1375,6 +1393,64 @@ mod tests {
         assert!(context.contains_key("hostvars"));
         assert!(context.contains_key("ansible_play_hosts"));
         assert_eq!(context.get("custom"), Some(&serde_json::json!("value")));
+    }
+
+    #[test]
+    fn test_facts_exposed_as_ansible_variables() {
+        let mut ctx = RuntimeContext::new();
+        ctx.add_host("server1".to_string(), None);
+
+        // Set facts without ansible_ prefix
+        ctx.set_host_fact(
+            "server1",
+            "hostname".to_string(),
+            serde_json::json!("myserver"),
+        );
+        ctx.set_host_fact(
+            "server1",
+            "distribution".to_string(),
+            serde_json::json!("Ubuntu"),
+        );
+        ctx.set_host_fact(
+            "server1",
+            "os_family".to_string(),
+            serde_json::json!("Debian"),
+        );
+
+        // Set a fact that already has ansible_ prefix
+        ctx.set_host_fact(
+            "server1",
+            "ansible_python_interpreter".to_string(),
+            serde_json::json!("/usr/bin/python3"),
+        );
+
+        let merged = ctx.get_merged_vars("server1");
+
+        // Facts should be accessible as top-level ansible_* variables
+        assert_eq!(
+            merged.get("ansible_hostname"),
+            Some(&serde_json::json!("myserver"))
+        );
+        assert_eq!(
+            merged.get("ansible_distribution"),
+            Some(&serde_json::json!("Ubuntu"))
+        );
+        assert_eq!(
+            merged.get("ansible_os_family"),
+            Some(&serde_json::json!("Debian"))
+        );
+
+        // Facts that already have ansible_ prefix should not be double-prefixed
+        assert_eq!(
+            merged.get("ansible_python_interpreter"),
+            Some(&serde_json::json!("/usr/bin/python3"))
+        );
+        assert!(merged.get("ansible_ansible_python_interpreter").is_none());
+
+        // ansible_facts should still contain the nested structure for backwards compatibility
+        let ansible_facts = merged.get("ansible_facts").unwrap();
+        assert_eq!(ansible_facts.get("hostname"), Some(&serde_json::json!("myserver")));
+        assert_eq!(ansible_facts.get("distribution"), Some(&serde_json::json!("Ubuntu")));
     }
 
     #[test]

@@ -673,7 +673,26 @@ impl ExecutionCallback for DefaultCallback {
         // Format the result line
         if result.result.skipped || (result.result.success && !result.result.changed) {
             // ok/skipped: simple format
-            println!("{}: [{}]", status_str, host_str);
+            // Check if this is a debug task - debug module always has data with a single key
+            // (either "msg" for message mode or the variable name for var mode)
+            let is_debug_task = result
+                .result
+                .data
+                .as_ref()
+                .and_then(|d| d.as_object())
+                .is_some_and(|obj| obj.len() == 1);
+
+            if is_debug_task && !result.result.message.is_empty() {
+                // Debug module: always show the message
+                print!("{}: [{}]", status_str, host_str);
+                if self.use_color() {
+                    println!(" => {}", result.result.message.bright_black());
+                } else {
+                    println!(" => {}", result.result.message);
+                }
+            } else {
+                println!("{}: [{}]", status_str, host_str);
+            }
         } else if result.result.changed {
             // changed: show message if brief
             print!("{}: [{}]", status_str, host_str);

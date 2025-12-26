@@ -569,6 +569,24 @@ impl Task {
             .await?
         };
 
+        // Extract and store ansible_facts from module results
+        // Many modules (like gather_facts, setup, etc.) return facts in their result
+        if let Some(ref result_data) = result.result {
+            if let Some(ansible_facts) = result_data.get("ansible_facts") {
+                if let Some(facts_obj) = ansible_facts.as_object() {
+                    let mut rt = runtime.write().await;
+                    let fact_target = &ctx.host;
+                    for (key, value) in facts_obj {
+                        rt.set_host_fact(fact_target, key.clone(), value.clone());
+                        debug!(
+                            "Stored fact '{}' from module result for host '{}'",
+                            key, fact_target
+                        );
+                    }
+                }
+            }
+        }
+
         // Apply changed_when override - use execution context for condition evaluation
         let result = self
             .apply_changed_when(result, &execution_ctx, runtime)
@@ -701,6 +719,22 @@ impl Task {
                 .execute_module(ctx, runtime, handlers, notified, parallelization_manager)
                 .await?;
 
+            // Extract and store ansible_facts from module results in loops
+            if let Some(ref result_data) = result.result {
+                if let Some(ansible_facts) = result_data.get("ansible_facts") {
+                    if let Some(facts_obj) = ansible_facts.as_object() {
+                        let mut rt = runtime.write().await;
+                        for (key, value) in facts_obj {
+                            rt.set_host_fact(&ctx.host, key.clone(), value.clone());
+                            debug!(
+                                "Stored fact '{}' from loop iteration for host '{}'",
+                                key, ctx.host
+                            );
+                        }
+                    }
+                }
+            }
+
             if result.changed {
                 any_changed = true;
             }
@@ -793,6 +827,22 @@ impl Task {
             let result = self
                 .execute_module(ctx, runtime, handlers, notified, parallelization_manager)
                 .await?;
+
+            // Extract and store ansible_facts from module results during retries
+            if let Some(ref result_data) = result.result {
+                if let Some(ansible_facts) = result_data.get("ansible_facts") {
+                    if let Some(facts_obj) = ansible_facts.as_object() {
+                        let mut rt = runtime.write().await;
+                        for (key, value) in facts_obj {
+                            rt.set_host_fact(&ctx.host, key.clone(), value.clone());
+                            debug!(
+                                "Stored fact '{}' from retry attempt {} for host '{}'",
+                                key, attempt, ctx.host
+                            );
+                        }
+                    }
+                }
+            }
 
             // Register the result for condition evaluation
             if let Some(ref register_name) = self.register {
