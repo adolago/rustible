@@ -494,7 +494,7 @@ impl InventoryPluginFactory {
 
     /// Get list of available plugin names
     pub fn available_plugin_names() -> Vec<&'static str> {
-        let mut names = vec!["file", "ini", "yaml", "json", "script", "aws_ec2"];
+        let names = vec!["file", "ini", "yaml", "json", "script", "aws_ec2"];
 
         #[cfg(feature = "docker")]
         names.push("docker");
@@ -507,7 +507,7 @@ impl InventoryPluginFactory {
 
     /// Get information about all available plugins
     pub fn available_plugins() -> Vec<PluginInfo> {
-        let mut plugins = vec![
+        let plugins = vec![
             PluginInfo {
                 name: "file",
                 description: "File-based inventory (INI, YAML, JSON)",
@@ -703,6 +703,7 @@ impl fmt::Debug for InventoryPluginRegistry {
 
 /// File-based inventory plugin
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct FileInventoryPlugin {
     path: PathBuf,
     config: InventoryPluginConfig,
@@ -739,6 +740,7 @@ impl InventoryPlugin for FileInventoryPlugin {
 
 /// Script-based dynamic inventory plugin
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ScriptInventoryPlugin {
     path: PathBuf,
     config: InventoryPluginConfig,

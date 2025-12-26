@@ -33,6 +33,7 @@ static TEMPLATE_VAR_REGEX: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"\{\{\s*([^}]+?)\s*\}\}").expect("Invalid template regex"));
 
 /// Cached regex for checking if string contains template syntax
+#[allow(dead_code)]
 static TEMPLATE_CHECK_REGEX: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"\{\{|\{%").expect("Invalid template check regex"));
 
@@ -781,7 +782,7 @@ impl Task {
             max_retries, delay_seconds, until_condition
         );
 
-        let mut last_result: Option<TaskResult> = None;
+        let mut last_result: Option<TaskResult>;
         let mut attempt = 0;
 
         loop {
@@ -1171,7 +1172,7 @@ impl Task {
         runtime: &Arc<RwLock<RuntimeContext>>,
     ) -> ExecutorResult<TaskResult> {
         // Convert args to ModuleParams
-        let mut params: std::collections::HashMap<String, serde_json::Value> =
+        let params: std::collections::HashMap<String, serde_json::Value> =
             args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
         // Get all variables from runtime for potential content template substitution

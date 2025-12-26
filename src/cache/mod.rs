@@ -22,7 +22,6 @@
 //! - Variable resolution: ~80% reduction in template rendering time
 //! - Role loading: Near-instant for cached roles
 
-use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -353,7 +352,9 @@ where
 {
     entries: DashMap<K, CacheEntry<V>>,
     config: CacheConfig,
+    #[allow(dead_code)]
     metrics: Arc<CacheMetrics>,
+    #[allow(dead_code)]
     cache_type: CacheType,
 }
 
@@ -576,7 +577,7 @@ where
             .collect();
         entries.sort_by_key(|(_, accessed, _)| *accessed);
 
-        for (key, _, size) in entries {
+        for (key, _, _size) in entries {
             if freed >= target {
                 break;
             }
@@ -607,8 +608,10 @@ pub struct CacheManager {
     /// Variable cache
     pub variables: VariableCache,
     /// Overall configuration
+    #[allow(dead_code)]
     config: CacheConfig,
     /// Combined metrics
+    #[allow(dead_code)]
     metrics: Arc<CacheMetrics>,
 }
 

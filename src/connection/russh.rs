@@ -36,6 +36,7 @@ const MAX_CONCURRENT_TRANSFERS: usize = 10;
 const DEFAULT_KEEPALIVE_INTERVAL: u64 = 15;
 
 /// Connection warmup timeout
+#[allow(dead_code)]
 const WARMUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Minimum time between keepalive pings

@@ -653,7 +653,7 @@ impl Executor {
 
         // After all tasks, check if any blocks failed without being rescued
         for (host, host_failed_blocks) in &failed_blocks {
-            if let Some(host_result) = results.get_mut(host) {
+            if let Some(_host_result) = results.get_mut(host) {
                 let host_rescued = rescued_blocks.get(host);
                 for block_id in host_failed_blocks {
                     let was_rescued = host_rescued.map(|r| r.contains(block_id)).unwrap_or(false);

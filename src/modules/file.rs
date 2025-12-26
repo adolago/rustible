@@ -11,7 +11,6 @@ use super::{
 use std::fs;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Desired state for a file/directory
 #[derive(Debug, Clone, PartialEq)]

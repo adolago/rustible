@@ -16,6 +16,7 @@ fn is_vars_empty(vars: &Variables) -> bool {
 }
 
 /// Deserialize a field that can be either a string or a vector of strings
+#[allow(dead_code)]
 fn string_or_vec<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
@@ -315,6 +316,7 @@ where
 }
 
 /// Deserialize optional boolean that accepts various formats
+#[allow(dead_code)]
 fn deserialize_option_bool_flexible<'de, D>(
     deserializer: D,
 ) -> std::result::Result<Option<bool>, D::Error>

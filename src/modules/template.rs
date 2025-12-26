@@ -360,7 +360,7 @@ impl Module for TemplateModule {
                 ));
             }
         };
-        let src_path = Path::new(&src_name);
+        let _src_path = Path::new(&src_name);
 
         // Build context and render
         let tera_ctx = Self::build_tera_context(context, extra_vars);

@@ -4,8 +4,6 @@
 //! Facts gathering is one of the most expensive operations (3-5s per host),
 //! so caching provides significant performance improvements.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -13,7 +11,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use super::{Cache, CacheConfig, CacheDependency, CacheMetrics, CacheType};
+use super::{Cache, CacheConfig, CacheMetrics, CacheType};
 
 /// Cached facts for a single host
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

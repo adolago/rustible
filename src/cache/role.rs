@@ -8,13 +8,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use super::{Cache, CacheConfig, CacheDependency, CacheMetrics, CacheType};
 use crate::executor::playbook::Role;
-use crate::executor::task::{Handler, Task};
 
 /// Key for role cache entries
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

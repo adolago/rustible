@@ -131,6 +131,7 @@ impl MountModule {
     }
 
     /// Get current mount info for a path
+    #[allow(dead_code)]
     fn get_mount_info(
         connection: &Arc<dyn Connection + Send + Sync>,
         path: &str,

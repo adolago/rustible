@@ -383,7 +383,8 @@ impl Module for CommandModule {
     }
 
     fn required_params(&self) -> &[&'static str] {
-        &["cmd"]
+        // Either 'cmd' or 'argv' is required, validation is done in validate_params
+        &[]
     }
 
     fn validate_params(&self, params: &ModuleParams) -> ModuleResult<()> {

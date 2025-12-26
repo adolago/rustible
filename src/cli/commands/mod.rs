@@ -32,6 +32,7 @@ pub struct CommandContext {
     /// Check mode (dry-run)
     pub check_mode: bool,
     /// Diff mode
+    #[allow(dead_code)]
     pub diff_mode: bool,
     /// Limit pattern
     pub limit: Option<String>,

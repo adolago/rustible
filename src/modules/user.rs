@@ -68,9 +68,20 @@ impl UserModule {
         let options = Self::get_exec_options(context);
 
         // Use tokio runtime to execute async command
-        let result = Handle::current()
-            .block_on(async { connection.execute(command, Some(options)).await })
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
+        // Use thread::scope to avoid nested runtime issues when called from async context
+        let handle = Handle::try_current()
+            .map_err(|_| ModuleError::ExecutionFailed("No tokio runtime available".to_string()))?;
+
+        let connection = connection.clone();
+        let command = command.to_string();
+        let result = std::thread::scope(|s| {
+            s.spawn(|| {
+                handle.block_on(async { connection.execute(&command, Some(options)).await })
+            })
+            .join()
+            .unwrap()
+        })
+        .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
 
         Ok((result.success, result.stdout, result.stderr))
     }

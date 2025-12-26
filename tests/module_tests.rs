@@ -1319,8 +1319,8 @@ async fn test_service_state_started_when_stopped() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     let mut params = HashMap::new();
@@ -1352,8 +1352,8 @@ async fn test_service_state_started_when_already_running() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     let mut params = HashMap::new();
@@ -1387,8 +1387,8 @@ async fn test_service_state_stopped_when_running() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     let mut params = HashMap::new();
@@ -1425,8 +1425,8 @@ async fn test_service_state_stopped_when_already_stopped() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     let mut params = HashMap::new();
@@ -1465,8 +1465,8 @@ async fn test_service_enabled_true() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     // Mock systemctl is-active for final status check
@@ -1515,8 +1515,8 @@ async fn test_service_enabled_false() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     // Mock systemctl is-active for final status check
@@ -1559,8 +1559,8 @@ async fn test_service_enabled_already_enabled() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     // Mock systemctl is-active for final status check
@@ -1598,8 +1598,8 @@ async fn test_service_state_restarted() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     // Mock systemctl is-active (needed for state parsing)
@@ -1637,8 +1637,8 @@ async fn test_service_state_reloaded() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     // Mock systemctl is-active (needed for state parsing)
@@ -1676,8 +1676,8 @@ async fn test_service_daemon_reload() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     // Mock systemctl is-active for final status check
@@ -1761,8 +1761,8 @@ async fn test_service_combined_state_and_enabled() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     let mut params = HashMap::new();
@@ -1802,8 +1802,8 @@ async fn test_service_check_mode_started() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     let mut params = HashMap::new();
@@ -1842,8 +1842,8 @@ async fn test_service_check_mode_enabled() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     // Mock systemctl is-active for final status check
@@ -1875,15 +1875,15 @@ async fn test_service_check_mode_enabled() {
     assert!(!commands.iter().any(|c| c.contains("systemctl enable")));
 }
 
-#[test]
-fn test_service_invalid_state() {
+#[tokio::test]
+async fn test_service_invalid_state() {
     let module = ServiceModule;
     let mock = std::sync::Arc::new(MockConnection::new("test-host"));
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     let mut params = HashMap::new();
@@ -1917,8 +1917,8 @@ async fn test_service_with_status_data() {
 
     // Mock the detection commands
     mock.set_command_result(
-        "test -d /run/systemd/system",
-        CommandResult::success(String::new(), String::new()),
+        "test -d /run/systemd/system && echo yes || echo no",
+        CommandResult::success("yes".to_string(), String::new()),
     );
 
     let mut params = HashMap::new();
@@ -3553,15 +3553,23 @@ fn test_service_with_daemon_reload() {
 // USER MODULE EXTENDED TESTS
 // ============================================================================
 
-#[test]
-fn test_user_check_root_exists() {
+#[tokio::test]
+async fn test_user_check_root_exists() {
     // Root user should always exist
     let module = UserModule;
+    let mock = std::sync::Arc::new(MockConnection::new("test-host"));
+
+    // Mock id command to succeed (root exists)
+    mock.set_command_result(
+        "id 'root'",
+        CommandResult::success("uid=0(root) gid=0(root) groups=0(root)".to_string(), String::new()),
+    );
+
     let mut params = HashMap::new();
     params.insert("name".to_string(), serde_json::json!("root"));
     params.insert("state".to_string(), serde_json::json!("present"));
 
-    let context = ModuleContext::default().with_check_mode(true);
+    let context = ModuleContext::default().with_check_mode(true).with_connection(mock);
     let result = module.check(&params, &context).unwrap();
 
     // Root exists, so in check mode for present state should be ok
@@ -3569,9 +3577,23 @@ fn test_user_check_root_exists() {
     assert!(!result.msg.contains("Would create"));
 }
 
-#[test]
-fn test_user_absent_nonexistent() {
+#[tokio::test]
+async fn test_user_absent_nonexistent() {
     let module = UserModule;
+    let mock = std::sync::Arc::new(MockConnection::new("test-host"));
+
+    // Mock id command to fail (user doesn't exist)
+    // Note: shell_escape doesn't quote alphanumeric usernames
+    mock.set_command_result(
+        "id nonexistent_user_xyz_12345",
+        CommandResult {
+            success: false,
+            stdout: String::new(),
+            stderr: "id: 'nonexistent_user_xyz_12345': no such user".to_string(),
+            exit_code: 1,
+        },
+    );
+
     let mut params = HashMap::new();
     params.insert(
         "name".to_string(),
@@ -3579,16 +3601,29 @@ fn test_user_absent_nonexistent() {
     );
     params.insert("state".to_string(), serde_json::json!("absent"));
 
-    let context = ModuleContext::default();
+    let context = ModuleContext::default().with_connection(mock);
     let result = module.execute(&params, &context).unwrap();
 
     assert!(!result.changed);
     assert!(result.msg.contains("already absent"));
 }
 
-#[test]
-fn test_user_with_all_params() {
+#[tokio::test]
+async fn test_user_with_all_params() {
     let module = UserModule;
+    let mock = std::sync::Arc::new(MockConnection::new("test-host"));
+
+    // Mock id command to fail (user doesn't exist)
+    mock.set_command_result(
+        "id 'testuser'",
+        CommandResult {
+            success: false,
+            stdout: String::new(),
+            stderr: "id: 'testuser': no such user".to_string(),
+            exit_code: 1,
+        },
+    );
+
     let mut params = HashMap::new();
     params.insert("name".to_string(), serde_json::json!("testuser"));
     params.insert("uid".to_string(), serde_json::json!(5000));
@@ -3600,21 +3635,34 @@ fn test_user_with_all_params() {
     params.insert("create_home".to_string(), serde_json::json!(true));
     params.insert("system".to_string(), serde_json::json!(false));
 
-    let context = ModuleContext::default().with_check_mode(true);
+    let context = ModuleContext::default().with_check_mode(true).with_connection(mock);
     let result = module.check(&params, &context);
 
     // Should parse all params correctly
     assert!(result.is_ok());
 }
 
-#[test]
-fn test_user_state_values() {
+#[tokio::test]
+async fn test_user_state_values() {
     let module = UserModule;
+    let mock = std::sync::Arc::new(MockConnection::new("test-host"));
+
+    // Mock id command to fail (user doesn't exist)
+    mock.set_command_result(
+        "id 'testuser'",
+        CommandResult {
+            success: false,
+            stdout: String::new(),
+            stderr: "id: 'testuser': no such user".to_string(),
+            exit_code: 1,
+        },
+    );
+
     let mut params = HashMap::new();
     params.insert("name".to_string(), serde_json::json!("testuser"));
     params.insert("state".to_string(), serde_json::json!("present"));
 
-    let context = ModuleContext::default().with_check_mode(true);
+    let context = ModuleContext::default().with_check_mode(true).with_connection(mock);
     let result = module.check(&params, &context);
 
     assert!(result.is_ok());

@@ -72,6 +72,7 @@ pub struct ExecutorConfig {
     /// Enable dry-run mode (no actual changes)
     pub check_mode: bool,
     /// Enable diff mode (show changes)
+    #[allow(dead_code)]
     pub diff_mode: bool,
     /// Verbosity level (0-4)
     pub verbosity: u8,

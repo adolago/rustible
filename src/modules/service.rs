@@ -178,6 +178,7 @@ impl InitSystem {
     }
 
     /// Get the service binary/command for this init system
+    #[allow(dead_code)]
     fn service_command(&self) -> &'static str {
         match self {
             InitSystem::Systemd => "systemctl",
@@ -428,6 +429,7 @@ impl ServiceModule {
     }
 
     /// Execute a SysV action
+    #[allow(dead_code)]
     async fn sysv_action(
         connection: &dyn Connection,
         service: &str,
@@ -994,7 +996,7 @@ impl ServiceModule {
                         messages.push(format!("Would reload service '{}'", service));
                         changed = true;
                     } else {
-                        let (success, _, stderr) = Self::service_action(
+                        let (success, _, _stderr) = Self::service_action(
                             connection.as_ref(),
                             init,
                             service,
@@ -1325,7 +1327,15 @@ impl Module for ServiceModule {
         let handle = tokio::runtime::Handle::try_current()
             .map_err(|_| ModuleError::ExecutionFailed("No tokio runtime available".to_string()))?;
 
-        handle.block_on(self.execute_async(params, context, connection))
+        // Spawn blocking task on a separate thread to avoid runtime nesting issues
+        let params = params.clone();
+        let context = context.clone();
+        let module = self;
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                handle.block_on(module.execute_async(&params, &context, connection))
+            }).join().unwrap()
+        })
     }
 
     fn check(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<ModuleOutput> {
@@ -1349,7 +1359,15 @@ impl Module for ServiceModule {
             Err(_) => return Ok(None),
         };
 
-        handle.block_on(self.diff_async(params, context, connection))
+        // Spawn blocking task on a separate thread to avoid runtime nesting issues
+        let params = params.clone();
+        let context = context.clone();
+        let module = self;
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                handle.block_on(module.diff_async(&params, &context, connection))
+            }).join().unwrap()
+        })
     }
 }
 

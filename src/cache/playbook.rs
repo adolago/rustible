@@ -8,10 +8,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use serde::{Deserialize, Serialize};
 
 use super::{Cache, CacheConfig, CacheDependency, CacheMetrics, CacheType};
-use crate::executor::playbook::{Play, Playbook};
+use crate::executor::playbook::Playbook;
 
 /// Key for playbook cache entries
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

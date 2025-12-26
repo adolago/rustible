@@ -4,7 +4,6 @@
 //! Variable resolution, especially with complex Jinja2 templates,
 //! can be expensive. Caching reduces template rendering time by ~80%.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;

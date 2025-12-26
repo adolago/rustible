@@ -42,6 +42,7 @@ where
 }
 
 /// Helper function to deserialize optional flexible booleans
+#[allow(dead_code)]
 fn deserialize_option_flexible_bool<'de, D>(
     deserializer: D,
 ) -> std::result::Result<Option<bool>, D::Error>

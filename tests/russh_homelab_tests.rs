@@ -325,7 +325,7 @@ async fn test_russh_execute_batch() {
     // Compare with sequential execution time
     println!("\n  Comparing with sequential execution...");
     let seq_start = Instant::now();
-    for cmd in &commands {
+    for cmd in commands {
         let _ = conn.execute(cmd, None).await;
     }
     let seq_time = seq_start.elapsed();

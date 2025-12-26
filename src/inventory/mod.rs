@@ -562,6 +562,7 @@ impl Inventory {
     }
 
     /// Apply a host variable from YAML
+    #[allow(dead_code)]
     fn apply_host_var(&self, host: &mut Host, key: &str, value: serde_yaml::Value) {
         match key {
             "ansible_host" => {
@@ -1158,7 +1159,51 @@ impl Inventory {
             }
         }
 
-        for group_name in &host.groups {
+        // Helper to check if a group is an ancestor of another
+        fn is_ancestor_of(
+            inventory: &Inventory,
+            potential_ancestor: &str,
+            group: &str,
+            visited: &mut HashSet<String>,
+        ) -> bool {
+            if visited.contains(group) {
+                return false;
+            }
+            visited.insert(group.to_string());
+
+            if let Some(g) = inventory.groups.get(group) {
+                for parent in &g.parents {
+                    if parent == potential_ancestor {
+                        return true;
+                    }
+                    if is_ancestor_of(inventory, potential_ancestor, parent, visited) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+
+        // Filter host.groups to only include "leaf" groups (groups that are not
+        // ancestors of any other group the host is in). This ensures we start
+        // from the most specific groups and traverse up to parents.
+        let host_groups: Vec<&String> = host.groups.iter().collect();
+        let leaf_groups: Vec<&String> = host_groups
+            .iter()
+            .filter(|&group| {
+                // A group is a "leaf" if no other group in host.groups has it as an ancestor
+                !host_groups.iter().any(|other| {
+                    if *other == *group {
+                        return false;
+                    }
+                    let mut check_visited = HashSet::new();
+                    is_ancestor_of(self, group, other, &mut check_visited)
+                })
+            })
+            .copied()
+            .collect();
+
+        for group_name in leaf_groups {
             collect_parents(self, group_name, &mut hierarchy, &mut visited);
         }
 
