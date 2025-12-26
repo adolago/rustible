@@ -215,7 +215,7 @@ impl RunArgs {
                 if play_idx > 0 { "\n" } else { "" },
                 play_idx + 1,
                 plays.len(),
-                "⚡".to_string(),
+                "*".to_string(),
                 play_name
             ));
             ctx.output.plan(&format!(
@@ -275,7 +275,7 @@ impl RunArgs {
                 // Format the task details
                 ctx.output.plan(&format!(
                     "\n  {} Task {}/{}: {}",
-                    "▸".to_string(),
+                    ">".to_string(),
                     task_idx + 1,
                     tasks.len(),
                     task_name
