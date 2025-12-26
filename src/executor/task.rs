@@ -951,6 +951,7 @@ impl Task {
                 .await
             }
             "meta" => self.execute_meta(&args).await,
+            "gather_facts" | "setup" => self.execute_gather_facts(&args, ctx).await,
             _ => {
                 // Python fallback for unknown modules
                 // Check if we can find the module in Ansible's module library
@@ -1139,6 +1140,51 @@ impl Task {
             Ok(TaskResult::ok().with_result(var.clone()))
         } else {
             Ok(TaskResult::ok())
+        }
+    }
+
+    async fn execute_gather_facts(
+        &self,
+        args: &IndexMap<String, JsonValue>,
+        _ctx: &ExecutionContext,
+    ) -> ExecutorResult<TaskResult> {
+        use crate::modules::{Module, ModuleContext};
+
+        // Get gather_subset from args if provided
+        let gather_subset = args
+            .get("gather_subset")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect::<Vec<_>>()
+            });
+
+        // Convert args to ModuleParams
+        let mut params: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        if let Some(subset) = gather_subset {
+            params.insert("gather_subset".to_string(), serde_json::json!(subset));
+        }
+
+        // Create module context
+        let module_ctx = ModuleContext::default();
+
+        // Execute the facts module
+        let facts_module = crate::modules::facts::FactsModule;
+        match facts_module.execute(&params, &module_ctx) {
+            Ok(output) => {
+                let mut result = TaskResult::ok();
+                result.msg = Some(output.msg.clone());
+
+                // Include ansible_facts in the result so they can be stored
+                if !output.data.is_empty() {
+                    result.result = Some(serde_json::to_value(&output.data).unwrap_or_default());
+                }
+
+                Ok(result)
+            }
+            Err(e) => Err(ExecutorError::TaskFailed(format!("gather_facts failed: {}", e))),
         }
     }
 
