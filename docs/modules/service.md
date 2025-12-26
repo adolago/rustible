@@ -285,7 +285,183 @@ On systems with both `service` and `systemctl` commands:
 
 6. **Reload daemon for new units**: Always use `daemon_reload: yes` when installing new systemd unit files.
 
+## Real-World Use Cases
+
+### Web Application Deployment
+
+```yaml
+- name: Stop application for maintenance
+  service:
+    name: myapp
+    state: stopped
+
+- name: Deploy new version
+  copy:
+    src: myapp-{{ version }}.jar
+    dest: /opt/myapp/myapp.jar
+
+- name: Start application
+  service:
+    name: myapp
+    state: started
+    enabled: yes
+```
+
+### Database Cluster Management
+
+```yaml
+- name: Ensure PostgreSQL is running on all nodes
+  service:
+    name: postgresql
+    state: started
+    enabled: yes
+
+- name: Graceful restart with sleep
+  service:
+    name: postgresql
+    state: restarted
+    sleep: 10
+```
+
+### Docker Host Setup
+
+```yaml
+- name: Ensure Docker is running
+  service:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Ensure containerd is running
+  service:
+    name: containerd
+    state: started
+    enabled: yes
+```
+
+## Troubleshooting
+
+### Service not found
+
+Verify the service name matches the init system:
+
+```bash
+# For systemd
+systemctl list-units --type=service | grep myservice
+
+# For SysV
+ls /etc/init.d/
+
+# Check service file exists
+systemctl cat myservice
+```
+
+### Service fails to start
+
+Check service logs:
+
+```bash
+# Systemd
+journalctl -u myservice -n 50 --no-pager
+systemctl status myservice
+
+# SysV
+cat /var/log/myservice.log
+```
+
+Common causes:
+- Configuration file errors
+- Missing dependencies
+- Port already in use
+- Permission issues
+
+### "Service is masked" error
+
+Unmask the service before enabling:
+
+```bash
+systemctl unmask myservice
+```
+
+```yaml
+- name: Unmask and enable service
+  shell: systemctl unmask myservice
+
+- name: Now enable it
+  service:
+    name: myservice
+    enabled: yes
+    state: started
+```
+
+### Enable/disable not working
+
+Check the init system being used:
+
+```yaml
+- name: Debug init system
+  debug:
+    var: ansible_service_mgr
+```
+
+For non-systemd systems, `chkconfig` or `update-rc.d` must be available.
+
+### Reload fails
+
+Not all services support reload. The module falls back to restart:
+
+```yaml
+- name: Try reload, fall back to restart
+  service:
+    name: myservice
+    state: reloaded
+  register: reload_result
+  failed_when: false
+
+- name: Force restart if reload failed
+  service:
+    name: myservice
+    state: restarted
+  when: reload_result.failed
+```
+
+### daemon_reload required for new unit files
+
+After adding or modifying systemd unit files:
+
+```yaml
+- name: Copy new service file
+  copy:
+    src: myservice.service
+    dest: /etc/systemd/system/myservice.service
+
+- name: Start with daemon reload
+  service:
+    name: myservice
+    state: started
+    daemon_reload: yes
+```
+
+### Service shows enabled but does not start on boot
+
+Check the service's WantedBy target:
+
+```bash
+systemctl cat myservice | grep WantedBy
+systemctl get-default  # Check default target
+```
+
+Ensure the service is wanted by the right target:
+
+```ini
+[Install]
+WantedBy=multi-user.target
+```
+
 ## See Also
 
 - [command](command.md) - For custom service management commands
 - [systemd](systemd.md) - For advanced systemd-specific operations
+- [file](file.md) - Manage service configuration files
+- [template](template.md) - Generate systemd unit files
+- [sysctl](sysctl.md) - Set kernel parameters for services

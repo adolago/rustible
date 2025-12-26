@@ -126,7 +126,168 @@ Rustible uses Jinja2-compatible syntax for templates:
 - Template files typically use the `.j2` extension by convention
 - Invalid template syntax will cause the task to fail
 
+## Real-World Use Cases
+
+### Application Configuration
+
+```yaml
+- name: Deploy application config
+  template:
+    src: app.conf.j2
+    dest: /etc/myapp/app.conf
+    owner: myapp
+    group: myapp
+    mode: "0640"
+  notify: Restart myapp
+```
+
+### Dynamic Nginx Virtual Host
+
+```yaml
+- name: Create Nginx virtual host
+  template:
+    src: vhost.conf.j2
+    dest: /etc/nginx/sites-available/{{ domain }}.conf
+    validate: nginx -t -c /etc/nginx/nginx.conf
+  notify: Reload nginx
+```
+
+### Systemd Service File
+
+```yaml
+- name: Create systemd service
+  template:
+    src: myapp.service.j2
+    dest: /etc/systemd/system/myapp.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart myapp
+```
+
+### Environment File Generation
+
+```yaml
+- name: Generate environment file
+  template:
+    src: env.j2
+    dest: /opt/myapp/.env
+    owner: myapp
+    group: myapp
+    mode: "0600"
+```
+
+## Troubleshooting
+
+### Template not found
+
+Templates are searched in this order:
+1. `templates/` directory relative to the playbook
+2. `templates/` directory in the role
+3. The exact path specified
+
+```bash
+# Verify template exists
+ls -la templates/mytemplate.j2
+ls -la roles/myrole/templates/mytemplate.j2
+```
+
+### Undefined variable error
+
+Ensure all variables used in the template are defined:
+
+```yaml
+# Use default filter for optional variables
+{{ optional_var | default('default_value') }}
+
+# Check if variable is defined
+{% if my_var is defined %}
+setting = {{ my_var }}
+{% endif %}
+```
+
+### Syntax error in template
+
+Test templates locally with Jinja2:
+
+```python
+from jinja2 import Template
+with open('template.j2') as f:
+    t = Template(f.read())
+    print(t.render(my_var='test'))
+```
+
+Common syntax issues:
+- Missing `{% endif %}` or `{% endfor %}`
+- Unbalanced braces `{{ }}`
+- Using Python syntax instead of Jinja2
+
+### Whitespace/newline issues
+
+Control whitespace with `-` in template tags:
+
+```jinja2
+{# Remove newline after block #}
+{% for item in items -%}
+{{ item }}
+{% endfor %}
+
+{# Remove newline before block #}
+{%- if condition %}
+content
+{% endif %}
+```
+
+### Special characters being escaped
+
+By default, Jinja2 auto-escapes HTML. For config files, this is usually disabled, but if not:
+
+```jinja2
+{{ my_var | safe }}
+```
+
+### Validation fails
+
+Ensure the validation command works with a temporary file:
+
+```yaml
+# The %s is replaced with temp file path
+- template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    validate: nginx -t -c %s
+```
+
+### File permissions wrong after template
+
+Always specify mode explicitly:
+
+```yaml
+- template:
+    src: script.sh.j2
+    dest: /usr/local/bin/script.sh
+    mode: "0755"  # Executable
+```
+
+### Template renders but application fails
+
+Check for:
+1. Trailing whitespace or newlines
+2. Wrong line endings (DOS vs Unix)
+3. Missing required sections
+
+Use `diff` mode to see what changed:
+
+```bash
+rustible-playbook playbook.yml --diff
+```
+
 ## See Also
 
 - [copy](copy.md) - Copy files without templating
 - [lineinfile](lineinfile.md) - Manage specific lines in files
+- [blockinfile](blockinfile.md) - Manage blocks of text
+- [file](file.md) - Set file permissions after templating
+- [set_fact](set_fact.md) - Define variables for templates

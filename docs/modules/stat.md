@@ -148,7 +148,170 @@ The module returns data in the `stat` key with the following fields:
 - Timestamps are returned as Unix epoch seconds
 - Use `follow: no` to get information about the symlink itself
 
+## Real-World Use Cases
+
+### Conditional File Operations
+
+```yaml
+- name: Check if backup exists
+  stat:
+    path: /backup/database.sql.gz
+  register: backup_stat
+
+- name: Create backup if none exists
+  shell: pg_dump mydb | gzip > /backup/database.sql.gz
+  when: not backup_stat.stat.exists
+
+- name: Verify backup is recent (< 24 hours)
+  assert:
+    that: (ansible_date_time.epoch | int) - backup_stat.stat.mtime < 86400
+    fail_msg: "Backup is older than 24 hours"
+  when: backup_stat.stat.exists
+```
+
+### Security Audit
+
+```yaml
+- name: Check critical file permissions
+  stat:
+    path: "{{ item }}"
+  register: security_stat
+  loop:
+    - /etc/shadow
+    - /etc/ssh/sshd_config
+    - /root/.ssh/authorized_keys
+
+- name: Verify secure permissions
+  assert:
+    that:
+      - item.stat.mode == "0600" or item.stat.mode == "0640"
+      - item.stat.uid == 0
+    fail_msg: "{{ item.item }} has insecure permissions"
+  loop: "{{ security_stat.results }}"
+  when: item.stat.exists
+```
+
+### File Change Detection
+
+```yaml
+- name: Get config file checksum before change
+  stat:
+    path: /etc/myapp/config.yml
+    checksum: yes
+    checksum_algorithm: sha256
+  register: config_before
+
+# ... make changes ...
+
+- name: Get config file checksum after change
+  stat:
+    path: /etc/myapp/config.yml
+    checksum: yes
+    checksum_algorithm: sha256
+  register: config_after
+
+- name: Restart if config changed
+  service:
+    name: myapp
+    state: restarted
+  when: config_before.stat.checksum != config_after.stat.checksum
+```
+
+### Disk Space Check
+
+```yaml
+- name: Get mount point info
+  stat:
+    path: /var/lib/docker
+  register: docker_stat
+
+- name: Ensure sufficient space
+  assert:
+    that: docker_stat.stat.blocks_available * 4096 > 10737418240
+    fail_msg: "Less than 10GB available for Docker"
+```
+
+## Troubleshooting
+
+### File does not exist
+
+Check the `exists` field before accessing other attributes:
+
+```yaml
+- stat:
+    path: /maybe/exists
+  register: result
+
+- debug:
+    msg: "File size is {{ result.stat.size }}"
+  when: result.stat.exists
+```
+
+### Permission denied
+
+Use privilege escalation:
+
+```yaml
+- stat:
+    path: /root/.bashrc
+  become: yes
+  register: result
+```
+
+### Symlink not resolved
+
+By default, stat follows symlinks. To get info about the link itself:
+
+```yaml
+- stat:
+    path: /usr/bin/python
+    follow: no
+  register: python_link
+```
+
+### Checksum calculation slow
+
+Checksum is disabled by default. Only enable when needed:
+
+```yaml
+- stat:
+    path: /large/file
+    checksum: yes  # Takes time for large files
+```
+
+### Mode shows unexpected value
+
+Mode is returned as a string in octal format:
+
+```yaml
+- stat:
+    path: /etc/passwd
+  register: result
+
+- debug:
+    msg: "Mode is {{ result.stat.mode }}"
+  # Shows "0644" not "420" (decimal)
+```
+
+### Cannot access attributes on undefined
+
+Always check existence first:
+
+```yaml
+# WRONG - fails if file doesn't exist
+- debug:
+    msg: "Size: {{ result.stat.size }}"
+
+# CORRECT - check first
+- debug:
+    msg: "Size: {{ result.stat.size }}"
+  when: result.stat.exists
+```
+
 ## See Also
 
 - [file](file.md) - Manage file properties
 - [assert](assert.md) - Assert conditions
+- [copy](copy.md) - Copy files with checksum verification
+- [debug](debug.md) - Print stat results
+- [command](command.md) - Alternative for complex stat operations

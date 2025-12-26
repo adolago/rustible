@@ -302,7 +302,197 @@ Example diff output:
 +  c3b2a1d4 Add new feature
 ```
 
+## Real-World Use Cases
+
+### Blue-Green Deployment
+
+```yaml
+- name: Clone to new release directory
+  git:
+    repo: git@github.com:example/myapp.git
+    dest: /opt/myapp/releases/{{ release_timestamp }}
+    version: "{{ deploy_version }}"
+    key_file: /home/deploy/.ssh/deploy_key
+    accept_hostkey: yes
+    depth: 1
+  register: git_result
+
+- name: Update current symlink
+  file:
+    path: /opt/myapp/current
+    src: /opt/myapp/releases/{{ release_timestamp }}
+    state: link
+  when: git_result.changed
+```
+
+### Multi-Repository Setup
+
+```yaml
+- name: Clone application components
+  git:
+    repo: "{{ item.repo }}"
+    dest: "/opt/{{ item.name }}"
+    version: "{{ item.version | default('main') }}"
+    key_file: /home/deploy/.ssh/deploy_key
+  loop:
+    - { name: frontend, repo: "git@github.com:example/frontend.git", version: "v2.0.0" }
+    - { name: backend, repo: "git@github.com:example/backend.git", version: "v1.5.0" }
+    - { name: shared, repo: "git@github.com:example/shared-lib.git" }
+```
+
+### Development Environment
+
+```yaml
+- name: Clone with full history for development
+  git:
+    repo: https://github.com/example/myapp.git
+    dest: /home/{{ user }}/projects/myapp
+    version: develop
+    update: yes
+    force: no  # Don't overwrite local changes
+```
+
+## Troubleshooting
+
+### Permission denied (publickey)
+
+SSH key authentication issues:
+
+```bash
+# Test SSH connection manually
+ssh -T git@github.com
+
+# Check key permissions
+ls -la ~/.ssh/
+chmod 600 ~/.ssh/id_rsa
+chmod 644 ~/.ssh/id_rsa.pub
+```
+
+Use `key_file` and `accept_hostkey`:
+
+```yaml
+- git:
+    repo: git@github.com:example/repo.git
+    dest: /opt/repo
+    key_file: /home/deploy/.ssh/deploy_key
+    accept_hostkey: yes
+```
+
+### Host key verification failed
+
+First time connecting to a git host:
+
+```yaml
+# Option 1: Accept hostkey automatically (less secure)
+- git:
+    repo: git@github.com:example/repo.git
+    accept_hostkey: yes
+
+# Option 2: Pre-populate known_hosts (more secure)
+- name: Add GitHub to known_hosts
+  known_hosts:
+    name: github.com
+    key: "{{ lookup('pipe', 'ssh-keyscan github.com 2>/dev/null') }}"
+```
+
+### Local changes would be overwritten
+
+The repository has uncommitted changes. Use `force: yes` to discard them:
+
+```yaml
+- git:
+    repo: https://github.com/example/repo.git
+    dest: /opt/repo
+    force: yes  # WARNING: This discards local changes
+```
+
+Or stash changes first:
+
+```yaml
+- name: Stash local changes
+  command: git stash
+  args:
+    chdir: /opt/repo
+  ignore_errors: yes
+
+- name: Update repository
+  git:
+    repo: https://github.com/example/repo.git
+    dest: /opt/repo
+```
+
+### Clone is very slow
+
+Use shallow clones for faster performance:
+
+```yaml
+- git:
+    repo: https://github.com/example/large-repo.git
+    dest: /opt/repo
+    depth: 1
+    single_branch: yes
+```
+
+### Submodule not initialized
+
+Ensure `recursive: yes` is set (default):
+
+```yaml
+- git:
+    repo: https://github.com/example/repo.git
+    dest: /opt/repo
+    recursive: yes
+```
+
+Or initialize manually:
+
+```yaml
+- name: Initialize submodules
+  command: git submodule update --init --recursive
+  args:
+    chdir: /opt/repo
+```
+
+### Version/tag not found
+
+Ensure the version exists and fetch updates:
+
+```yaml
+- name: Fetch all refs first
+  git:
+    repo: https://github.com/example/repo.git
+    dest: /opt/repo
+    update: yes
+
+- name: Checkout specific tag
+  git:
+    repo: https://github.com/example/repo.git
+    dest: /opt/repo
+    version: v1.2.3
+```
+
+### GPG verification fails
+
+Ensure GPG keys are in the keyring:
+
+```bash
+gpg --recv-keys KEYID
+gpg --list-keys
+```
+
+```yaml
+- git:
+    repo: https://github.com/example/repo.git
+    dest: /opt/repo
+    verify_commit: yes
+    gpg_whitelist:
+      - "KEYFINGERPRINT"
+```
+
 ## See Also
 
 - [command](command.md) - For running custom git commands
 - [file](file.md) - For managing repository directory permissions
+- [copy](copy.md) - For deploying built artifacts
+- [template](template.md) - For generating config files for the repo
+- [service](service.md) - For restarting services after deployment

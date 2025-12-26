@@ -278,7 +278,185 @@ Proxy can be configured in several ways:
 
 The module parameter takes precedence over environment variables.
 
+## Real-World Use Cases
+
+### Web Application Deployment
+
+```yaml
+- name: Create virtualenv and install dependencies
+  pip:
+    requirements: /opt/myapp/requirements.txt
+    virtualenv: /opt/myapp/venv
+    virtualenv_python: python3.11
+  notify: Restart application
+```
+
+### Data Science Environment
+
+```yaml
+- name: Install data science packages
+  pip:
+    name:
+      - numpy
+      - pandas
+      - scikit-learn
+      - matplotlib
+      - jupyter
+    virtualenv: /opt/datascience/venv
+    virtualenv_site_packages: yes  # Access system numpy with BLAS
+```
+
+### Development Environment
+
+```yaml
+- name: Install development dependencies
+  pip:
+    requirements: /opt/myapp/requirements-dev.txt
+    virtualenv: /opt/myapp/venv
+    extra_args: --no-cache-dir
+
+- name: Install package in editable mode
+  pip:
+    name: /opt/myapp
+    editable: yes
+    virtualenv: /opt/myapp/venv
+```
+
+### Private Package Repository
+
+```yaml
+- name: Install from private PyPI
+  pip:
+    name: internal-package
+    index_url: https://pypi.internal.example.com/simple
+    extra_index_url: https://pypi.org/simple
+    extra_args:
+      - --trusted-host
+      - pypi.internal.example.com
+```
+
+## Troubleshooting
+
+### pip: command not found
+
+Install pip first:
+
+```yaml
+- name: Install pip on Debian/Ubuntu
+  apt:
+    name: python3-pip
+    state: present
+
+# Or using get-pip.py
+- name: Install pip via get-pip
+  shell: curl -sSL https://bootstrap.pypa.io/get-pip.py | python3
+```
+
+### Permission denied
+
+Use a virtualenv (recommended) or install as root:
+
+```yaml
+# Recommended: Use virtualenv
+- pip:
+    name: flask
+    virtualenv: /opt/myapp/venv
+
+# Alternative: Install system-wide
+- pip:
+    name: flask
+  become: yes
+```
+
+### Version conflict
+
+Check for conflicting dependencies:
+
+```bash
+pip check
+pip list --outdated
+```
+
+Use version constraints:
+
+```yaml
+- pip:
+    name: "package>=1.0,<2.0"
+```
+
+### SSL certificate errors
+
+For internal/self-signed certificates:
+
+```yaml
+- pip:
+    name: package
+    extra_args: --trusted-host pypi.internal.example.com --cert /path/to/cert.pem
+```
+
+### Virtualenv creation fails
+
+Ensure the base Python and venv module are available:
+
+```yaml
+- name: Install venv module
+  apt:
+    name: python3-venv
+    state: present
+
+- name: Create virtualenv
+  pip:
+    name: flask
+    virtualenv: /opt/myapp/venv
+    virtualenv_command: python3 -m venv
+```
+
+### Package installation timeout
+
+For slow networks or large packages:
+
+```yaml
+- pip:
+    name: tensorflow
+    extra_args: --timeout 300
+```
+
+### Cached packages causing issues
+
+Force fresh download:
+
+```yaml
+- pip:
+    name: mypackage
+    extra_args: --no-cache-dir
+    state: forcereinstall
+```
+
+### Wrong Python version in virtualenv
+
+Specify the Python interpreter:
+
+```yaml
+- pip:
+    name: flask
+    virtualenv: /opt/myapp/venv
+    virtualenv_python: /usr/bin/python3.11
+```
+
+### Requirements file not found
+
+Use absolute paths:
+
+```yaml
+- pip:
+    requirements: "{{ playbook_dir }}/files/requirements.txt"
+    virtualenv: /opt/myapp/venv
+```
+
 ## See Also
 
 - [package](package.md) - Generic package manager
 - [apt](apt.md) - System package management (for python3-pip)
+- [command](command.md) - Run pip commands directly
+- [file](file.md) - Manage virtualenv permissions
+- [copy](copy.md) - Deploy requirements.txt files

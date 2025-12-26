@@ -200,6 +200,10 @@ pub enum ConnectionError {
     #[error("Docker error: {0}")]
     DockerError(String),
 
+    /// Kubernetes-specific error during pod operations.
+    #[error("Kubernetes error: {0}")]
+    KubernetesError(String),
+
     /// The requested operation is not supported by this transport.
     #[error("Unsupported operation: {0}")]
     UnsupportedOperation(String),
@@ -474,6 +478,12 @@ pub enum ConnectionType {
     },
     /// Docker container connection
     Docker { container: String },
+    /// Kubernetes pod connection
+    Kubernetes {
+        namespace: String,
+        pod: String,
+        container: Option<String>,
+    },
 }
 
 impl ConnectionType {
@@ -483,6 +493,17 @@ impl ConnectionType {
             ConnectionType::Local => "local".to_string(),
             ConnectionType::Ssh { host, port, user } => format!("ssh://{}@{}:{}", user, host, port),
             ConnectionType::Docker { container } => format!("docker://{}", container),
+            ConnectionType::Kubernetes {
+                namespace,
+                pod,
+                container,
+            } => {
+                if let Some(c) = container {
+                    format!("k8s://{}/{}:{}", namespace, pod, c)
+                } else {
+                    format!("k8s://{}/{}", namespace, pod)
+                }
+            }
         }
     }
 }
@@ -620,6 +641,25 @@ impl ConnectionFactory {
             ConnectionType::Docker { container } => {
                 let conn = docker::DockerConnection::new(container.clone());
                 Ok(Arc::new(conn))
+            }
+            ConnectionType::Kubernetes { namespace, pod, container } => {
+                // Kubernetes connection requires the kubernetes feature
+                #[cfg(feature = "kubernetes")]
+                {
+                    let conn = kubernetes::KubernetesConnection::new(
+                        namespace.clone(),
+                        pod.clone(),
+                        container.clone(),
+                    ).await?;
+                    Ok(Arc::new(conn))
+                }
+                #[cfg(not(feature = "kubernetes"))]
+                {
+                    let _ = (namespace, pod, container);
+                    Err(ConnectionError::InvalidConfig(
+                        "Kubernetes support not available. Enable 'kubernetes' feature.".to_string(),
+                    ))
+                }
             }
         }
     }
@@ -843,6 +883,25 @@ impl ConnectionBuilder {
             }
             ConnectionType::Docker { container } => {
                 Ok(Arc::new(docker::DockerConnection::new(container)))
+            }
+            ConnectionType::Kubernetes { namespace, pod, container } => {
+                // Kubernetes connection requires the kubernetes feature
+                #[cfg(feature = "kubernetes")]
+                {
+                    let conn = kubernetes::KubernetesConnection::new(
+                        namespace,
+                        pod,
+                        container,
+                    ).await?;
+                    Ok(Arc::new(conn))
+                }
+                #[cfg(not(feature = "kubernetes"))]
+                {
+                    let _ = (namespace, pod, container);
+                    Err(ConnectionError::InvalidConfig(
+                        "Kubernetes support not available. Enable 'kubernetes' feature.".to_string(),
+                    ))
+                }
             }
         }
     }

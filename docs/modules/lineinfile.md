@@ -133,8 +133,163 @@ The `lineinfile` module ensures a particular line is in a file, or replaces an e
 - The `backrefs` option requires `regexp` and uses `\1`, `\2`, etc. for groups
 - Use `blockinfile` for managing multiple lines as a block
 
+## Real-World Use Cases
+
+### SSH Configuration
+
+```yaml
+- name: Disable root SSH login
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin'
+    line: 'PermitRootLogin no'
+  notify: Restart sshd
+
+- name: Set SSH port
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?Port\s+'
+    line: 'Port 2222'
+  notify: Restart sshd
+```
+
+### Kernel Parameters
+
+```yaml
+- name: Add kernel module to load at boot
+  lineinfile:
+    path: /etc/modules-load.d/custom.conf
+    line: "br_netfilter"
+    create: yes
+```
+
+### Application Configuration
+
+```yaml
+- name: Set application database host
+  lineinfile:
+    path: /etc/myapp/database.conf
+    regexp: '^db_host='
+    line: 'db_host={{ db_server }}'
+    create: yes
+    backup: yes
+```
+
+### System Limits
+
+```yaml
+- name: Set file descriptor limits
+  lineinfile:
+    path: /etc/security/limits.conf
+    regexp: '^\*\s+soft\s+nofile'
+    line: '*                soft    nofile          65535'
+    insertbefore: '^# End of file'
+```
+
+## Troubleshooting
+
+### Line added multiple times
+
+Use `regexp` to match existing lines:
+
+```yaml
+# WRONG - adds line each run if not exact match
+- lineinfile:
+    path: /etc/config
+    line: "setting = value"
+
+# CORRECT - replaces any line starting with 'setting'
+- lineinfile:
+    path: /etc/config
+    regexp: '^setting\s*='
+    line: "setting = value"
+```
+
+### Regex not matching
+
+Test your regex:
+
+```bash
+grep -E '^#?Port\s+' /etc/ssh/sshd_config
+```
+
+Common regex issues:
+- Forgetting to escape special characters: `.` `*` `+` `?`
+- Anchors: Use `^` for start, `$` for end
+- Whitespace: Use `\s+` for one or more spaces
+
+### Line inserted in wrong place
+
+Use `insertafter` or `insertbefore`:
+
+```yaml
+- lineinfile:
+    path: /etc/config
+    line: "new_setting = value"
+    insertafter: '^# Settings section'
+```
+
+### Backrefs not working
+
+Ensure `backrefs: yes` is set and regexp has capture groups:
+
+```yaml
+- lineinfile:
+    path: /etc/config
+    regexp: '^(version=).*$'
+    line: '\g<1>2.0.0'
+    backrefs: yes
+```
+
+### File permissions change after edit
+
+Specify owner, group, and mode:
+
+```yaml
+- lineinfile:
+    path: /etc/secure.conf
+    line: "secret_key = value"
+    owner: root
+    group: root
+    mode: "0600"
+```
+
+### Create not working
+
+Ensure `create: yes` is set:
+
+```yaml
+- lineinfile:
+    path: /etc/newfile.conf
+    line: "first_line"
+    create: yes
+```
+
+### State absent not removing line
+
+Check your regexp matches the actual line:
+
+```yaml
+- name: Remove all matching lines
+  lineinfile:
+    path: /etc/config
+    regexp: '.*old_pattern.*'
+    state: absent
+```
+
+### File encoding issues
+
+Ensure the file is UTF-8 encoded:
+
+```bash
+file /etc/config
+iconv -f ISO-8859-1 -t UTF-8 /etc/config > /etc/config.utf8
+```
+
 ## See Also
 
 - [blockinfile](blockinfile.md) - Manage blocks of text in files
 - [copy](copy.md) - Copy files
 - [template](template.md) - Template files
+- [file](file.md) - Manage file permissions
+- [stat](stat.md) - Check file before modifying

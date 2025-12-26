@@ -150,8 +150,179 @@ The `assert` module evaluates conditions and fails if they are not true. It is u
 | `var is version('1.0', '>=')` | Version comparison |
 | `var \| int > 100` | Numeric comparison |
 
+## Real-World Use Cases
+
+### Pre-deployment Validation
+
+```yaml
+- name: Validate deployment prerequisites
+  assert:
+    that:
+      - ansible_distribution == 'Ubuntu'
+      - ansible_distribution_version is version('20.04', '>=')
+      - ansible_memtotal_mb >= 4096
+      - ansible_processor_vcpus >= 2
+    fail_msg: "System does not meet deployment requirements"
+    success_msg: "System meets all deployment requirements"
+```
+
+### Configuration Validation
+
+```yaml
+- name: Validate application configuration
+  assert:
+    that:
+      - app_port is defined
+      - app_port | int > 1024
+      - app_port | int < 65535
+      - database_host is defined
+      - database_host != ''
+      - api_key is defined
+      - api_key | length >= 32
+    fail_msg: "Invalid application configuration"
+```
+
+### Security Compliance Check
+
+```yaml
+- name: Check file permissions compliance
+  stat:
+    path: "{{ item }}"
+  register: perm_check
+  loop:
+    - /etc/shadow
+    - /etc/passwd
+    - /etc/sudoers
+
+- name: Assert secure permissions
+  assert:
+    that:
+      - item.stat.mode in ['0600', '0640', '0644', '0440']
+      - item.stat.uid == 0
+    fail_msg: "{{ item.item }} has insecure permissions: {{ item.stat.mode }}"
+  loop: "{{ perm_check.results }}"
+  when: item.stat.exists
+```
+
+### Service Health Check
+
+```yaml
+- name: Check service response
+  uri:
+    url: "http://localhost:{{ app_port }}/health"
+  register: health_check
+
+- name: Assert service is healthy
+  assert:
+    that:
+      - health_check.status == 200
+      - health_check.json.status == 'healthy'
+      - health_check.json.database == 'connected'
+    fail_msg: "Service health check failed: {{ health_check.json | default('no response') }}"
+```
+
+## Troubleshooting
+
+### Assertion fails but condition looks correct
+
+Debug the actual values:
+
+```yaml
+- debug:
+    msg: |
+      Variable value: {{ my_var }}
+      Type: {{ my_var | type_debug }}
+      Length: {{ my_var | length }}
+
+- assert:
+    that: my_var == 'expected'
+```
+
+### Undefined variable errors
+
+Use `is defined` check:
+
+```yaml
+- assert:
+    that:
+      - my_var is defined
+      - my_var is not none
+      - my_var | length > 0
+```
+
+### Numeric comparisons failing
+
+Ensure proper type conversion:
+
+```yaml
+# WRONG - string comparison
+- assert:
+    that: port > 1024
+
+# CORRECT - explicit integer conversion
+- assert:
+    that: port | int > 1024
+```
+
+### Version comparison issues
+
+Use the `version` test:
+
+```yaml
+- assert:
+    that:
+      - app_version is version('2.0.0', '>=')
+      - python_version is version('3.8', '>=')
+```
+
+### Complex logic not working
+
+Break down complex conditions:
+
+```yaml
+# WRONG - complex inline
+- assert:
+    that: (a and b) or (c and d) and not e
+
+# CORRECT - separate conditions
+- assert:
+    that:
+      - (a and b) or (c and d)
+      - not e
+```
+
+### Quiet mode hiding useful info
+
+When debugging, turn off quiet mode:
+
+```yaml
+- assert:
+    that: condition
+    quiet: no  # Show all evaluated conditions
+```
+
+### Multiple assertions masking failures
+
+Run assertions separately for clearer error messages:
+
+```yaml
+- assert:
+    that: memory_check
+    fail_msg: "Insufficient memory"
+
+- assert:
+    that: cpu_check
+    fail_msg: "Insufficient CPU"
+
+- assert:
+    that: disk_check
+    fail_msg: "Insufficient disk space"
+```
+
 ## See Also
 
 - [debug](debug.md) - Print debug information
 - [set_fact](set_fact.md) - Set variables
 - [stat](stat.md) - Get file information for assertions
+- [fail](fail.md) - Explicitly fail with a message
+- [command](command.md) - Run commands to gather data for assertions

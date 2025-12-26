@@ -266,9 +266,169 @@ The apt module supports diff mode (`--diff`). In diff mode, the module provides 
 - The `allow_unauthenticated` option bypasses GPG signature verification
 - All commands are properly escaped to prevent shell injection
 
+## Real-World Use Cases
+
+### Web Server Stack
+
+```yaml
+- name: Install LAMP stack
+  apt:
+    name:
+      - apache2
+      - mariadb-server
+      - php
+      - php-mysql
+      - php-curl
+      - libapache2-mod-php
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+```
+
+### Docker Installation
+
+```yaml
+- name: Install Docker prerequisites
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: yes
+
+- name: Install Docker
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+    state: present
+```
+
+### Security Updates Only
+
+```yaml
+- name: Install security updates
+  apt:
+    upgrade: yes
+    update_cache: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  when: "'security' in ansible_upgrade_results"
+```
+
+## Troubleshooting
+
+### dpkg lock error
+
+Another process is using dpkg. Wait for it to finish or investigate:
+
+```bash
+# Check for lock
+lsof /var/lib/dpkg/lock-frontend
+
+# Wait and retry
+sudo fuser -v /var/lib/dpkg/lock-frontend
+```
+
+Solution: Use a wait loop in your playbook:
+
+```yaml
+- name: Wait for apt lock
+  shell: while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+  changed_when: false
+```
+
+### Package not found
+
+Update the cache and check package name:
+
+```yaml
+- name: Install with cache update
+  apt:
+    name: package-name
+    state: present
+    update_cache: yes
+```
+
+Check if package exists:
+```bash
+apt-cache search package-name
+apt-cache policy package-name
+```
+
+### Version specification not working
+
+Use exact version string from `apt-cache policy`:
+
+```bash
+apt-cache policy nginx
+# Use the exact version shown
+```
+
+```yaml
+- apt:
+    name: nginx=1.18.0-0ubuntu1.4
+    state: present
+```
+
+### Held packages preventing upgrade
+
+Check for held packages:
+```bash
+apt-mark showhold
+```
+
+Either unhold or use force:
+```yaml
+- apt:
+    name: held-package
+    state: latest
+    force: yes  # Use with caution
+```
+
+### Interactive prompts causing failure
+
+Ensure DEBIAN_FRONTEND is set (automatic in module):
+
+```yaml
+- apt:
+    name: package
+    dpkg_options: "force-confdef,force-confold"
+```
+
+### Broken dependencies
+
+Try fixing first:
+```yaml
+- name: Fix broken packages
+  apt:
+    state: fixed
+```
+
+### GPG key errors
+
+Add repository keys before using the repository:
+```yaml
+- name: Add GPG key
+  apt_key:
+    url: https://example.com/key.gpg
+    state: present
+
+- name: Add repository
+  apt_repository:
+    repo: deb https://example.com/repo stable main
+    state: present
+```
+
 ## See Also
 
 - [package](package.md) - Generic package manager (auto-detects apt/yum/dnf)
 - [yum](yum.md) - RHEL/CentOS package management
 - [dnf](dnf.md) - Fedora package management
 - [pip](pip.md) - Python package management
+- [service](service.md) - Manage services after package installation
+- [command](command.md) - Run post-install commands

@@ -3,7 +3,7 @@
 //! This module provides a machine-readable JSON callback plugin that outputs
 //! one JSON object per line (JSON Lines / JSONL format), making it suitable
 //! for piping to tools like `jq`, parsing by scripts, or integration with
-//! log aggregation systems.
+//! log aggregation systems and CI/CD pipelines.
 //!
 //! ## Features
 //!
@@ -12,6 +12,9 @@
 //! - **Full Event Metadata**: Timestamps, UUIDs, durations, host info, task results
 //! - **Diff Support**: Optional diff output for changed resources
 //! - **Stats Summary**: Aggregated statistics at playbook completion
+//! - **CI/CD Integration**: Automatic detection of CI environment (GitHub Actions, GitLab CI, Jenkins, etc.)
+//! - **Correlation IDs**: Unique run IDs for tracking across distributed systems
+//! - **Custom Output Destinations**: Stdout, stderr, file, or append to existing file
 //!
 //! ## Usage
 //!
@@ -27,6 +30,9 @@
 //!
 //! # Save to file while watching
 //! rustible playbook.yml --callback json | tee execution.jsonl | jq -c
+//!
+//! # In CI/CD, write to log file for artifact collection
+//! RUSTIBLE_JSON_OUTPUT=/tmp/execution.jsonl rustible playbook.yml --callback json
 //! ```
 //!
 //! ## Output Format
@@ -36,19 +42,34 @@
 //!
 //! - `event`: Event type (playbook_start, task_ok, task_failed, etc.)
 //! - `timestamp`: ISO 8601 timestamp with microsecond precision
+//! - `run_id`: Unique correlation ID for this execution run
+//! - `sequence`: Monotonically increasing event sequence number
 //! - `host`: Target host name (for task events)
 //! - `task`: Task name (for task events)
 //! - `result`: Task result data including changed status, output, etc.
+//! - `ci_context`: CI/CD environment metadata (when running in CI)
 //!
 //! ## Example Output
 //!
 //! ```json
-//! {"event":"playbook_start","playbook":"site.yml","timestamp":"2024-01-15T10:30:00.000000Z"}
-//! {"event":"play_start","play":"Configure webservers","hosts":["web1","web2"],"timestamp":"2024-01-15T10:30:00.100000Z"}
-//! {"event":"task_start","task":"Install nginx","host":"web1","timestamp":"2024-01-15T10:30:00.200000Z"}
-//! {"event":"task_ok","task":"Install nginx","host":"web1","result":{"changed":true,"success":true},"duration_ms":2500,"timestamp":"2024-01-15T10:30:02.700000Z"}
-//! {"event":"playbook_end","playbook":"site.yml","stats":{"web1":{"ok":5,"changed":2}},"duration_ms":30500,"success":true,"timestamp":"2024-01-15T10:30:30.500000Z"}
+//! {"event":"playbook_start","playbook":"site.yml","run_id":"abc123","sequence":1,"timestamp":"2024-01-15T10:30:00.000000Z"}
+//! {"event":"play_start","play":"Configure webservers","hosts":["web1","web2"],"run_id":"abc123","sequence":2,"timestamp":"2024-01-15T10:30:00.100000Z"}
+//! {"event":"task_start","task":"Install nginx","host":"web1","run_id":"abc123","sequence":3,"timestamp":"2024-01-15T10:30:00.200000Z"}
+//! {"event":"task_ok","task":"Install nginx","host":"web1","result":{"changed":true,"success":true},"duration_ms":2500,"run_id":"abc123","sequence":4,"timestamp":"2024-01-15T10:30:02.700000Z"}
+//! {"event":"playbook_end","playbook":"site.yml","stats":{"web1":{"ok":5,"changed":2}},"duration_ms":30500,"success":true,"run_id":"abc123","sequence":5,"timestamp":"2024-01-15T10:30:30.500000Z"}
 //! ```
+//!
+//! ## CI/CD Integration
+//!
+//! When running in a CI/CD environment, the callback automatically detects and includes
+//! relevant metadata:
+//!
+//! - **GitHub Actions**: `GITHUB_RUN_ID`, `GITHUB_WORKFLOW`, `GITHUB_SHA`, `GITHUB_REF`
+//! - **GitLab CI**: `CI_PIPELINE_ID`, `CI_JOB_ID`, `CI_COMMIT_SHA`, `CI_COMMIT_BRANCH`
+//! - **Jenkins**: `BUILD_NUMBER`, `BUILD_ID`, `JOB_NAME`, `GIT_COMMIT`
+//! - **CircleCI**: `CIRCLE_BUILD_NUM`, `CIRCLE_WORKFLOW_ID`, `CIRCLE_SHA1`
+//! - **Azure DevOps**: `BUILD_BUILDID`, `BUILD_BUILDNUMBER`, `BUILD_SOURCEVERSION`
+//! - **Travis CI**: `TRAVIS_BUILD_ID`, `TRAVIS_JOB_ID`, `TRAVIS_COMMIT`
 
 use std::collections::HashMap;
 use std::io::{self, BufWriter, Write};

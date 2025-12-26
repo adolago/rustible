@@ -4,6 +4,31 @@
 //! If the conditions are not met, the task fails with an optional message.
 //! Unlike most modules, it runs entirely on the control node and does not
 //! require a connection to remote hosts.
+//!
+//! # Parameters
+//!
+//! - `that` (required): A single condition or list of conditions to evaluate.
+//!   All conditions must be true for the assertion to pass.
+//! - `msg` / `fail_msg`: Message to display when assertion fails.
+//! - `success_msg`: Message to display when assertion passes.
+//! - `quiet`: When true, suppresses detailed output about evaluated conditions.
+//!
+//! # Examples
+//!
+//! ```yaml
+//! - name: Assert that version is valid
+//!   assert:
+//!     that:
+//!       - version is defined
+//!       - version >= "1.0.0"
+//!     fail_msg: "Version must be 1.0.0 or higher"
+//!     success_msg: "Version check passed"
+//!
+//! - name: Simple assertion with quiet mode
+//!   assert:
+//!     that: enabled == true
+//!     quiet: true
+//! ```
 
 use super::{
     Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,

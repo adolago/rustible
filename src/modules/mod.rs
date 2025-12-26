@@ -9,6 +9,9 @@ pub mod blockinfile;
 pub mod command;
 pub mod copy;
 pub mod cron;
+// Database modules disabled - requires sqlx integration
+// TODO: Enable when sqlx dependency is added with feature flag
+// pub mod database;
 pub mod debug;
 pub mod dnf;
 pub mod facts;

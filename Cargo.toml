@@ -7,8 +7,12 @@ russh = ["dep:russh", "dep:russh-sftp", "dep:russh-keys"]
 local = []
 docker = ["dep:bollard"]
 kubernetes = ["dep:kube", "dep:k8s-openapi"]
+# AWS cloud modules (EC2, S3, VPC, etc.) - requires optional AWS SDK
+aws = ["dep:aws-config", "dep:aws-sdk-ec2", "dep:aws-sdk-s3"]
 # Full feature set with ssh2 backend
 full = ["russh", "local", "ssh2-backend", "docker", "kubernetes"]
+# Full feature set with AWS (requires additional compile time)
+full-aws = ["full", "aws"]
 # Pure Rust build (no C dependencies)
 pure-rust = ["russh", "local"]
 
@@ -132,6 +136,11 @@ bollard = { version = "0.16", optional = true }
 # Kubernetes support (optional)
 kube = { version = "0.87", features = ["runtime", "derive"], optional = true }
 k8s-openapi = { version = "0.20", features = ["v1_28"], optional = true }
+
+# AWS SDK support (optional)
+aws-config = { version = "1.1", optional = true }
+aws-sdk-ec2 = { version = "1.15", optional = true }
+aws-sdk-s3 = { version = "1.15", optional = true }
 
 # Hostname resolution
 hostname = "0.3"

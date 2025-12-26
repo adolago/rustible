@@ -174,8 +174,94 @@ The debug module is extremely fast since it runs locally and only performs strin
     - item3
 ```
 
+## Troubleshooting
+
+### Variable shows as undefined
+
+Use the `default` filter to handle undefined variables gracefully:
+
+```yaml
+- name: Print with default
+  debug:
+    msg: "Value is {{ my_var | default('not set') }}"
+```
+
+Or check if the variable is defined:
+
+```yaml
+- name: Print if defined
+  debug:
+    var: my_var
+  when: my_var is defined
+```
+
+### Complex object not printing correctly
+
+For nested objects, use `to_nice_yaml` or `to_nice_json` filters:
+
+```yaml
+- name: Print complex object as YAML
+  debug:
+    msg: "{{ complex_object | to_nice_yaml }}"
+
+- name: Print as JSON
+  debug:
+    msg: "{{ complex_object | to_nice_json }}"
+```
+
+### Debug output not showing
+
+Check your verbosity level. If using `verbosity` parameter, increase verbosity with `-v` flags:
+
+```bash
+# Show debug with verbosity: 1
+rustible-playbook playbook.yml -v
+
+# Show debug with verbosity: 2
+rustible-playbook playbook.yml -vv
+```
+
+### Too much output in loops
+
+Use `loop_control` to limit debug output:
+
+```yaml
+- name: Debug loop items
+  debug:
+    msg: "Processing {{ item.name }}"
+  loop: "{{ large_list }}"
+  loop_control:
+    label: "{{ item.name }}"  # Show only name, not full item
+```
+
+### Sensitive data in debug output
+
+Be careful not to log sensitive information. Use `no_log` or avoid printing secrets:
+
+```yaml
+# DON'T do this in production
+- debug:
+    var: vault_password
+
+# DO this instead
+- debug:
+    msg: "Password is set: {{ vault_password is defined }}"
+```
+
+### Jinja2 errors in msg
+
+Ensure proper syntax and escape braces if needed:
+
+```yaml
+# Use raw for literal braces
+- debug:
+    msg: "{% raw %}{{ literal_braces }}{% endraw %}"
+```
+
 ## See Also
 
 - [set_fact](set_fact.md) - Set variables
 - [assert](assert.md) - Validate conditions
 - [fail](fail.md) - Fail with a message
+- [stat](stat.md) - Get file info for debugging
+- [command](command.md) - Run commands to gather debug info
