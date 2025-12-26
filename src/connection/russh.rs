@@ -12,12 +12,12 @@ use russh::ChannelMsg;
 use russh_keys::agent::client::AgentClient;
 use russh_sftp::client::SftpSession;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Threshold for using streaming uploads (1MB)
 const STREAM_THRESHOLD: u64 = 1024 * 1024;
@@ -27,6 +27,19 @@ const CHUNK_SIZE: usize = 64 * 1024;
 
 /// Maximum number of concurrent transfers for batch/directory operations
 const MAX_CONCURRENT_TRANSFERS: usize = 10;
+
+// ============================================================================
+// Performance Constants
+// ============================================================================
+
+/// Default keepalive interval in seconds (0 = disabled)
+const DEFAULT_KEEPALIVE_INTERVAL: u64 = 15;
+
+/// Connection warmup timeout
+const WARMUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Minimum time between keepalive pings
+const MIN_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 
 use super::config::{
     default_identity_files, expand_path, ConnectionConfig, HostConfig, RetryConfig,
@@ -544,12 +557,19 @@ impl Handler for ClientHandler {
     }
 }
 
-/// Russh connection implementation using russh crate
+/// Russh connection implementation with performance optimizations
 ///
 /// This implementation uses RwLock instead of Mutex for the handle to reduce
 /// lock contention during parallel operations. Most operations only need read
 /// access to get a reference to the Handle for opening channels - only close()
 /// needs write access to take ownership of the handle.
+///
+/// # Performance Features
+///
+/// - **Keepalive Support**: Prevents connection drops from idle timeouts
+/// - **Connection Metrics**: Tracks latency and operation counts for monitoring
+/// - **Fast Ciphers**: Prefers ChaCha20-Poly1305 and AES-GCM
+/// - **TCP_NODELAY**: Reduces latency by disabling Nagle's algorithm
 pub struct RusshConnection {
     /// Session identifier
     identifier: String,
@@ -562,6 +582,27 @@ pub struct RusshConnection {
     host_config: HostConfig,
     /// Whether the connection is established
     connected: Arc<AtomicBool>,
+    /// Last keepalive time (nanos since epoch for atomic ops)
+    last_keepalive: AtomicU64,
+    /// Connection creation time
+    created_at: Instant,
+    /// Total commands executed (for metrics)
+    commands_executed: AtomicU64,
+    /// Keepalive interval (0 = disabled)
+    keepalive_interval: Duration,
+}
+
+/// Connection performance metrics
+#[derive(Debug, Clone)]
+pub struct ConnectionMetrics {
+    /// Connection identifier
+    pub identifier: String,
+    /// Time since connection was established
+    pub uptime: Duration,
+    /// Number of commands executed
+    pub commands_executed: u64,
+    /// Whether connection is still active
+    pub is_connected: bool,
 }
 
 impl RusshConnection {
@@ -658,6 +699,98 @@ impl RusshConnection {
 
         Ok(())
     }
+
+    // ========================================================================
+    // Performance Optimization Methods
+    // ========================================================================
+
+    /// Send a keepalive ping if enough time has passed
+    ///
+    /// This method checks if the keepalive interval has elapsed and sends
+    /// a keepalive message to prevent connection timeouts from firewalls/NAT.
+    ///
+    /// Returns true if a keepalive was sent, false otherwise.
+    pub async fn send_keepalive_if_needed(&self) -> ConnectionResult<bool> {
+        if self.keepalive_interval.is_zero() {
+            return Ok(false);
+        }
+
+        let now = Instant::now();
+        let last_keepalive_nanos = self.last_keepalive.load(Ordering::Relaxed);
+
+        // Check if enough time has passed since last keepalive
+        let elapsed = if last_keepalive_nanos == 0 {
+            self.created_at.elapsed()
+        } else {
+            Duration::from_nanos(now.elapsed().as_nanos() as u64 - last_keepalive_nanos)
+        };
+
+        if elapsed < self.keepalive_interval.max(MIN_KEEPALIVE_INTERVAL) {
+            return Ok(false);
+        }
+
+        // Send keepalive by opening and immediately closing a channel
+        let handle_guard = self.handle.read().await;
+        if let Some(handle) = handle_guard.as_ref() {
+            match handle.channel_open_session().await {
+                Ok(channel) => {
+                    let _ = channel.exec(true, "true").await;
+                    let _ = channel.eof().await;
+                    self.last_keepalive
+                        .store(now.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    trace!(identifier = %self.identifier, "Sent keepalive");
+                    Ok(true)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Keepalive failed, connection may be dead");
+                    Err(ConnectionError::ConnectionFailed(format!(
+                        "Keepalive failed: {}",
+                        e
+                    )))
+                }
+            }
+        } else {
+            Err(ConnectionError::ConnectionClosed)
+        }
+    }
+
+    /// Get connection metrics for monitoring
+    pub fn metrics(&self) -> ConnectionMetrics {
+        ConnectionMetrics {
+            identifier: self.identifier.clone(),
+            uptime: self.created_at.elapsed(),
+            commands_executed: self.commands_executed.load(Ordering::Relaxed),
+            is_connected: self.connected.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Pre-warm the connection by validating it's ready for commands
+    ///
+    /// Call this method after connecting to prepare the connection for
+    /// operations. This validates the connection is healthy.
+    pub async fn warm_up(&self) -> ConnectionResult<()> {
+        debug!(identifier = %self.identifier, "Warming up connection");
+
+        // Validate connection by opening a test channel
+        let handle_guard = self.handle.read().await;
+        let handle = handle_guard
+            .as_ref()
+            .ok_or_else(|| ConnectionError::ConnectionClosed)?;
+
+        let channel = handle.channel_open_session().await.map_err(|e| {
+            ConnectionError::ConnectionFailed(format!("Failed to open warmup channel: {}", e))
+        })?;
+
+        // Execute a simple command to validate
+        channel.exec(true, "true").await.map_err(|e| {
+            ConnectionError::ExecutionFailed(format!("Warmup command failed: {}", e))
+        })?;
+
+        let _ = channel.eof().await;
+
+        info!(identifier = %self.identifier, "Connection warmed up");
+        Ok(())
+    }
 }
 
 impl RusshConnection {
@@ -698,12 +831,30 @@ impl RusshConnection {
         )
         .await?;
 
-        Ok(Self {
+        // Determine keepalive interval from host config or use default
+        let keepalive_interval = host_config
+            .server_alive_interval
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::from_secs(DEFAULT_KEEPALIVE_INTERVAL));
+
+        let conn = Self {
             identifier,
             handle: Arc::new(RwLock::new(Some(handle))),
             host_config,
             connected: Arc::new(AtomicBool::new(true)),
-        })
+            last_keepalive: AtomicU64::new(0),
+            created_at: Instant::now(),
+            commands_executed: AtomicU64::new(0),
+            keepalive_interval,
+        };
+
+        debug!(
+            identifier = %conn.identifier,
+            keepalive_interval_secs = %keepalive_interval.as_secs(),
+            "SSH connection established with performance optimizations"
+        );
+
+        Ok(conn)
     }
 
     /// Connect with retry logic
@@ -1037,6 +1188,9 @@ impl Connection for RusshConnection {
         let full_command = Self::build_command_with_env(command, &options);
 
         trace!(command = %full_command, "Executing remote command");
+
+        // Increment command counter for metrics
+        self.commands_executed.fetch_add(1, Ordering::Relaxed);
 
         // Execute the command with optional timeout
         let execute_future = async {
@@ -1528,7 +1682,13 @@ impl Connection for RusshConnection {
     }
 
     async fn close(&self) -> ConnectionResult<()> {
-        debug!("Closing SSH connection");
+        let metrics = self.metrics();
+        debug!(
+            identifier = %metrics.identifier,
+            uptime_secs = %metrics.uptime.as_secs(),
+            commands_executed = %metrics.commands_executed,
+            "Closing SSH connection"
+        );
 
         // Mark as disconnected first (lock-free)
         self.connected.store(false, Ordering::SeqCst);
@@ -1552,6 +1712,26 @@ impl Connection for RusshConnection {
         }
 
         Ok(())
+    }
+
+    /// Execute multiple commands in batch with channel multiplexing
+    ///
+    /// Overrides the default sequential implementation to use SSH channel
+    /// multiplexing for parallel command execution. This significantly
+    /// improves performance when running multiple commands.
+    async fn execute_batch(
+        &self,
+        commands: &[&str],
+        options: Option<ExecuteOptions>,
+    ) -> Vec<ConnectionResult<CommandResult>> {
+        if commands.is_empty() {
+            return Vec::new();
+        }
+
+        // Convert &str slice to String slice for the internal method
+        let cmd_strings: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
+
+        self.execute_batch_internal(&cmd_strings, options).await
     }
 }
 
@@ -1589,7 +1769,7 @@ impl RusshConnection {
     ///     "uptime".to_string(),
     ///     "date".to_string(),
     /// ];
-    /// let results = conn.execute_batch(&commands, None).await;
+    /// let results = conn.execute_batch_internal(&commands, None).await;
     /// for (cmd, result) in commands.iter().zip(results.iter()) {
     ///     match result {
     ///         Ok(r) => println!("{}: {}", cmd, r.stdout),
@@ -1597,7 +1777,7 @@ impl RusshConnection {
     ///     }
     /// }
     /// ```
-    pub async fn execute_batch(
+    async fn execute_batch_internal(
         &self,
         commands: &[String],
         options: Option<ExecuteOptions>,
@@ -3052,6 +3232,364 @@ impl RusshConnection {
         prog.phase = TransferPhase::Completed;
         progress(&prog);
         Ok(())
+    }
+}
+
+// ============================================================================
+// High-Performance Connection Factory
+// ============================================================================
+
+/// High-performance connection factory for parallel SSH connections
+///
+/// This factory provides optimized connection establishment with:
+/// - Parallel connection to multiple hosts
+/// - Connection pre-warming
+/// - Automatic keepalive management
+/// - Connection health monitoring
+///
+/// # Example
+///
+/// ```ignore
+/// use rustible::connection::russh::HighPerformanceConnectionFactory;
+///
+/// let factory = HighPerformanceConnectionFactory::new();
+///
+/// // Connect to multiple hosts in parallel
+/// let hosts = vec![
+///     ("host1.example.com", 22, "user"),
+///     ("host2.example.com", 22, "user"),
+///     ("host3.example.com", 22, "user"),
+/// ];
+///
+/// let connections = factory.connect_parallel(&hosts, &config).await;
+/// ```
+pub struct HighPerformanceConnectionFactory {
+    /// Maximum concurrent connection attempts
+    max_concurrent_connects: usize,
+    /// Whether to pre-warm connections after establishing
+    pre_warm: bool,
+    /// Connection timeout override (uses config default if None)
+    timeout_override: Option<Duration>,
+}
+
+impl Default for HighPerformanceConnectionFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HighPerformanceConnectionFactory {
+    /// Create a new high-performance connection factory
+    pub fn new() -> Self {
+        Self {
+            max_concurrent_connects: 10,
+            pre_warm: true,
+            timeout_override: None,
+        }
+    }
+
+    /// Set maximum concurrent connection attempts
+    pub fn max_concurrent(mut self, max: usize) -> Self {
+        self.max_concurrent_connects = max.max(1);
+        self
+    }
+
+    /// Enable or disable connection pre-warming
+    pub fn pre_warm(mut self, enable: bool) -> Self {
+        self.pre_warm = enable;
+        self
+    }
+
+    /// Set connection timeout override
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout_override = Some(timeout);
+        self
+    }
+
+    /// Connect to a single host with optimizations
+    pub async fn connect(
+        &self,
+        host: &str,
+        port: u16,
+        user: &str,
+        config: &ConnectionConfig,
+    ) -> ConnectionResult<RusshConnection> {
+        let start = Instant::now();
+
+        let conn = RusshConnection::connect(host, port, user, None, config).await?;
+
+        // Pre-warm the connection if enabled
+        if self.pre_warm {
+            if let Err(e) = conn.warm_up().await {
+                warn!(host = %host, error = %e, "Failed to pre-warm connection");
+            }
+        }
+
+        info!(
+            host = %host,
+            elapsed_ms = %start.elapsed().as_millis(),
+            "Connection established"
+        );
+
+        Ok(conn)
+    }
+
+    /// Connect to multiple hosts in parallel
+    ///
+    /// Returns a vector of results in the same order as the input hosts.
+    /// Failed connections are represented as errors in the result vector.
+    pub async fn connect_parallel(
+        &self,
+        hosts: &[(&str, u16, &str)], // (host, port, user)
+        config: &ConnectionConfig,
+    ) -> Vec<ConnectionResult<RusshConnection>> {
+        if hosts.is_empty() {
+            return Vec::new();
+        }
+
+        let start = Instant::now();
+        info!(host_count = %hosts.len(), "Starting parallel connection establishment");
+
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(self.max_concurrent_connects));
+        let pre_warm = self.pre_warm;
+
+        let futures: Vec<_> = hosts
+            .iter()
+            .enumerate()
+            .map(|(idx, (host, port, user))| {
+                let sem = semaphore.clone();
+                let host = host.to_string();
+                let user = user.to_string();
+                let port = *port;
+                let config = config.clone();
+
+                async move {
+                    let _permit = sem.acquire().await.map_err(|_| {
+                        ConnectionError::ConnectionFailed("Semaphore closed".to_string())
+                    })?;
+
+                    let conn_start = Instant::now();
+                    let conn = RusshConnection::connect(&host, port, &user, None, &config).await?;
+
+                    if pre_warm {
+                        let _ = conn.warm_up().await;
+                    }
+
+                    debug!(
+                        host = %host,
+                        elapsed_ms = %conn_start.elapsed().as_millis(),
+                        "Parallel connection established"
+                    );
+
+                    Ok::<(usize, RusshConnection), ConnectionError>((idx, conn))
+                }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
+        // Reconstruct results in order
+        let mut ordered: Vec<ConnectionResult<RusshConnection>> =
+            (0..hosts.len()).map(|_| Err(ConnectionError::ConnectionFailed("Not connected".to_string()))).collect();
+
+        for result in results {
+            match result {
+                Ok((idx, conn)) => {
+                    ordered[idx] = Ok(conn);
+                }
+                Err(e) => {
+                    // Error already logged
+                    warn!(error = %e, "Parallel connection failed");
+                }
+            }
+        }
+
+        info!(
+            total_hosts = %hosts.len(),
+            successful = %ordered.iter().filter(|r| r.is_ok()).count(),
+            elapsed_ms = %start.elapsed().as_millis(),
+            "Parallel connection establishment completed"
+        );
+
+        ordered
+    }
+
+    /// Connect and warm up connections for a list of host configs
+    pub async fn connect_with_configs(
+        &self,
+        host_configs: &[(&str, HostConfig)],
+        global_config: &ConnectionConfig,
+    ) -> Vec<ConnectionResult<RusshConnection>> {
+        if host_configs.is_empty() {
+            return Vec::new();
+        }
+
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(self.max_concurrent_connects));
+        let pre_warm = self.pre_warm;
+
+        let futures: Vec<_> = host_configs
+            .iter()
+            .enumerate()
+            .map(|(idx, (host, host_config))| {
+                let sem = semaphore.clone();
+                let host = host.to_string();
+                let host_config = host_config.clone();
+                let global_config = global_config.clone();
+
+                async move {
+                    let _permit = sem.acquire().await.map_err(|_| {
+                        ConnectionError::ConnectionFailed("Semaphore closed".to_string())
+                    })?;
+
+                    let port = host_config.port.unwrap_or(22);
+                    let user = host_config
+                        .user
+                        .clone()
+                        .unwrap_or_else(|| global_config.defaults.user.clone());
+
+                    let conn = RusshConnection::connect(
+                        &host,
+                        port,
+                        &user,
+                        Some(host_config),
+                        &global_config,
+                    )
+                    .await?;
+
+                    if pre_warm {
+                        let _ = conn.warm_up().await;
+                    }
+
+                    Ok::<(usize, RusshConnection), ConnectionError>((idx, conn))
+                }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
+        // Reconstruct results in order
+        let mut ordered: Vec<ConnectionResult<RusshConnection>> = (0..host_configs.len())
+            .map(|_| Err(ConnectionError::ConnectionFailed("Not connected".to_string())))
+            .collect();
+
+        for result in results {
+            match result {
+                Ok((idx, conn)) => {
+                    ordered[idx] = Ok(conn);
+                }
+                Err(e) => {
+                    warn!(error = %e, "Connection with config failed");
+                }
+            }
+        }
+
+        ordered
+    }
+}
+
+/// Helper struct for managing a group of connections with keepalive
+pub struct ConnectionGroup {
+    connections: Vec<RusshConnection>,
+    keepalive_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ConnectionGroup {
+    /// Create a new connection group from established connections
+    pub fn new(connections: Vec<RusshConnection>) -> Self {
+        Self {
+            connections,
+            keepalive_handle: None,
+        }
+    }
+
+    /// Start background keepalive task for all connections
+    ///
+    /// This spawns a background task that periodically sends keepalive
+    /// messages to all connections in the group.
+    pub fn start_keepalive(&mut self, interval: Duration) {
+        if self.keepalive_handle.is_some() {
+            return; // Already running
+        }
+
+        let connections: Vec<_> = self
+            .connections
+            .iter()
+            .map(|c| (c.handle.clone(), c.identifier.clone()))
+            .collect();
+
+        let handle = tokio::spawn(async move {
+            let mut interval_timer = tokio::time::interval(interval);
+
+            loop {
+                interval_timer.tick().await;
+
+                for (handle, identifier) in &connections {
+                    let handle_guard = handle.read().await;
+                    if let Some(h) = handle_guard.as_ref() {
+                        match h.channel_open_session().await {
+                            Ok(channel) => {
+                                let _ = channel.exec(true, "true").await;
+                                let _ = channel.eof().await;
+                                trace!(identifier = %identifier, "Group keepalive sent");
+                            }
+                            Err(e) => {
+                                warn!(
+                                    identifier = %identifier,
+                                    error = %e,
+                                    "Group keepalive failed"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        self.keepalive_handle = Some(handle);
+    }
+
+    /// Stop the background keepalive task
+    pub fn stop_keepalive(&mut self) {
+        if let Some(handle) = self.keepalive_handle.take() {
+            handle.abort();
+        }
+    }
+
+    /// Get a reference to the connections
+    pub fn connections(&self) -> &[RusshConnection] {
+        &self.connections
+    }
+
+    /// Get a mutable reference to the connections
+    pub fn connections_mut(&mut self) -> &mut [RusshConnection] {
+        &mut self.connections
+    }
+
+    /// Take ownership of the connections
+    pub fn into_connections(mut self) -> Vec<RusshConnection> {
+        self.stop_keepalive();
+        std::mem::take(&mut self.connections)
+    }
+
+    /// Get the number of connections in the group
+    pub fn len(&self) -> usize {
+        self.connections.len()
+    }
+
+    /// Check if the group is empty
+    pub fn is_empty(&self) -> bool {
+        self.connections.is_empty()
+    }
+
+    /// Get metrics for all connections
+    pub fn metrics(&self) -> Vec<ConnectionMetrics> {
+        self.connections.iter().map(|c| c.metrics()).collect()
+    }
+}
+
+impl Drop for ConnectionGroup {
+    fn drop(&mut self) {
+        self.stop_keepalive();
     }
 }
 

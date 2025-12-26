@@ -1,0 +1,222 @@
+# Benchmark 10: Conditional Execution
+# Tests: when conditions and conditional logic performance
+# Purpose: Measures condition evaluation overhead
+---
+- name: Conditional benchmark - Heavy when usage
+  hosts: all
+  gather_facts: false
+  vars:
+    enabled_features:
+      - feature_a
+      - feature_c
+      - feature_e
+    environment: "benchmark"
+    debug_mode: true
+    production_mode: false
+    max_connections: 100
+    min_workers: 2
+    max_workers: 16
+    current_workers: 8
+    bench_dir: /tmp/bench_conditionals
+    platforms:
+      - { name: "linux", enabled: true }
+      - { name: "windows", enabled: false }
+      - { name: "macos", enabled: true }
+    version: "2.5.0"
+    major_version: 2
+    minor_version: 5
+  tasks:
+    - name: Create benchmark directory
+      file:
+        path: "{{ bench_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Simple boolean conditions
+    - name: "Condition 1: Debug mode enabled"
+      command: echo "Debug mode is ON"
+      when: debug_mode
+      changed_when: false
+
+    - name: "Condition 2: Production mode disabled"
+      command: echo "Not in production"
+      when: not production_mode
+      changed_when: false
+
+    - name: "Condition 3: Debug and not production"
+      command: echo "Debug and not production"
+      when: debug_mode and not production_mode
+      changed_when: false
+
+    # Numeric comparisons
+    - name: "Condition 4: Max connections > 50"
+      command: echo "High connection limit"
+      when: max_connections > 50
+      changed_when: false
+
+    - name: "Condition 5: Workers in range"
+      command: echo "Workers in valid range"
+      when: current_workers >= min_workers and current_workers <= max_workers
+      changed_when: false
+
+    - name: "Condition 6: Workers less than max"
+      command: echo "Can add more workers"
+      when: current_workers < max_workers
+      changed_when: false
+
+    # String conditions
+    - name: "Condition 7: Environment check"
+      command: echo "Running in benchmark environment"
+      when: environment == "benchmark"
+      changed_when: false
+
+    - name: "Condition 8: Environment not production"
+      command: echo "Safe to test"
+      when: environment != "production"
+      changed_when: false
+
+    # List membership
+    - name: "Condition 9: Feature A enabled"
+      command: echo "Feature A is enabled"
+      when: "'feature_a' in enabled_features"
+      changed_when: false
+
+    - name: "Condition 10: Feature B disabled"
+      command: echo "Feature B is disabled"
+      when: "'feature_b' not in enabled_features"
+      changed_when: false
+
+    # Complex conditions
+    - name: "Condition 11: Complex boolean"
+      command: echo "Complex condition met"
+      when: (debug_mode or not production_mode) and max_connections >= 100
+      changed_when: false
+
+    - name: "Condition 12: Nested complex"
+      command: echo "Nested complex condition"
+      when: >
+        (environment == "benchmark" or environment == "development") and
+        current_workers > min_workers and
+        debug_mode
+      changed_when: false
+
+    # Condition with registered variable
+    - name: Get hostname
+      command: hostname
+      register: hostname_result
+      changed_when: false
+
+    - name: "Condition 13: Registered var check"
+      command: echo "Hostname captured"
+      when: hostname_result.rc == 0
+      changed_when: false
+
+    - name: "Condition 14: Output not empty"
+      command: "echo Hostname is {{ hostname_result.stdout }}"
+      when: hostname_result.stdout | length > 0
+      changed_when: false
+
+    # Stat-based conditions
+    - name: Check if directory exists
+      stat:
+        path: "{{ bench_dir }}"
+      register: dir_stat
+
+    - name: "Condition 15: Directory exists"
+      command: echo "Directory exists"
+      when: dir_stat.stat.exists
+      changed_when: false
+
+    - name: "Condition 16: Is directory"
+      command: echo "Is a directory"
+      when: dir_stat.stat.isdir
+      changed_when: false
+
+    # Loop with conditions
+    - name: "Condition 17: Conditional loop items"
+      command: "echo Processing {{ item.name }}"
+      loop: "{{ platforms }}"
+      when: item.enabled
+      changed_when: false
+
+    # Version comparisons
+    - name: "Condition 18: Major version check"
+      command: echo "Major version 2"
+      when: major_version == 2
+      changed_when: false
+
+    - name: "Condition 19: Minor version >= 5"
+      command: echo "Minor version at least 5"
+      when: minor_version >= 5
+      changed_when: false
+
+    - name: "Condition 20: Version string check"
+      command: echo "Version 2.5.0"
+      when: version == "2.5.0"
+      changed_when: false
+
+    # Defined/undefined checks
+    - name: "Condition 21: Variable defined"
+      command: echo "Environment is defined"
+      when: environment is defined
+      changed_when: false
+
+    - name: "Condition 22: Variable undefined"
+      command: echo "Undefined var not set"
+      when: undefined_var is not defined
+      changed_when: false
+
+    # File operations with conditions
+    - name: "Condition 23: Create file if debug"
+      copy:
+        content: "Debug file\n"
+        dest: "{{ bench_dir }}/debug.txt"
+        mode: '0644'
+      when: debug_mode
+
+    - name: "Condition 24: Create file if not production"
+      copy:
+        content: "Non-prod file\n"
+        dest: "{{ bench_dir }}/nonprod.txt"
+        mode: '0644'
+      when: not production_mode
+
+    # Multiple condition combinations
+    - name: "Condition 25: OR condition"
+      command: echo "Either condition met"
+      when: debug_mode or production_mode
+      changed_when: false
+
+    - name: "Condition 26: Complex OR-AND"
+      command: echo "Complex OR-AND met"
+      when: (debug_mode and environment == "benchmark") or (production_mode and environment == "production")
+      changed_when: false
+
+    # Negative conditions
+    - name: "Condition 27: Not in list"
+      command: echo "Feature X not enabled"
+      when: "'feature_x' not in enabled_features"
+      changed_when: false
+
+    - name: "Condition 28: Not equal"
+      command: echo "Workers not at min"
+      when: current_workers != min_workers
+      changed_when: false
+
+    # Truthiness checks
+    - name: "Condition 29: Empty list check"
+      command: echo "Features list not empty"
+      when: enabled_features | length > 0
+      changed_when: false
+
+    - name: "Condition 30: List length check"
+      command: echo "Three or more features"
+      when: enabled_features | length >= 3
+      changed_when: false
+
+    # Cleanup with condition
+    - name: Final cleanup
+      file:
+        path: "{{ bench_dir }}"
+        state: absent
+      when: dir_stat.stat.exists

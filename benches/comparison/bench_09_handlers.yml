@@ -1,0 +1,197 @@
+# Benchmark 09: Handler-Heavy Workloads
+# Tests: Handler notification and execution performance
+# Purpose: Measures handler deduplication and trigger overhead
+---
+- name: Handler benchmark - Multiple handler notifications
+  hosts: all
+  gather_facts: false
+  vars:
+    bench_dir: /tmp/bench_handlers
+    config_items:
+      - { name: "config1", value: "value1" }
+      - { name: "config2", value: "value2" }
+      - { name: "config3", value: "value3" }
+      - { name: "config4", value: "value4" }
+      - { name: "config5", value: "value5" }
+  handlers:
+    - name: Restart service A
+      command: echo "Restarting service A"
+      changed_when: false
+
+    - name: Restart service B
+      command: echo "Restarting service B"
+      changed_when: false
+
+    - name: Restart service C
+      command: echo "Restarting service C"
+      changed_when: false
+
+    - name: Reload configuration
+      command: echo "Reloading configuration"
+      changed_when: false
+
+    - name: Refresh cache
+      command: echo "Refreshing cache"
+      changed_when: false
+
+    - name: Update index
+      command: echo "Updating index"
+      changed_when: false
+
+    - name: Notify admin
+      command: echo "Notifying admin"
+      changed_when: false
+
+    - name: Write log
+      copy:
+        content: "Handler triggered at {{ ansible_date_time.iso8601 | default('now') }}\n"
+        dest: "{{ bench_dir }}/handler.log"
+        mode: '0644'
+
+  tasks:
+    - name: Create benchmark directory
+      file:
+        path: "{{ bench_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Multiple tasks notifying the same handler (should deduplicate)
+    - name: "Update config file 1"
+      copy:
+        content: "config_key_1=value_1\n"
+        dest: "{{ bench_dir }}/config1.conf"
+        mode: '0644'
+      notify:
+        - Restart service A
+        - Reload configuration
+
+    - name: "Update config file 2"
+      copy:
+        content: "config_key_2=value_2\n"
+        dest: "{{ bench_dir }}/config2.conf"
+        mode: '0644'
+      notify:
+        - Restart service A
+        - Reload configuration
+
+    - name: "Update config file 3"
+      copy:
+        content: "config_key_3=value_3\n"
+        dest: "{{ bench_dir }}/config3.conf"
+        mode: '0644'
+      notify:
+        - Restart service A
+        - Refresh cache
+
+    # Task with multiple handler notifications
+    - name: "Update main configuration"
+      copy:
+        content: |
+          [main]
+          key1=value1
+          key2=value2
+          key3=value3
+        dest: "{{ bench_dir }}/main.conf"
+        mode: '0644'
+      notify:
+        - Restart service A
+        - Restart service B
+        - Restart service C
+        - Reload configuration
+        - Refresh cache
+
+    # Loop with handler notification
+    - name: "Create config files in loop"
+      copy:
+        content: "{{ item.name }}={{ item.value }}\n"
+        dest: "{{ bench_dir }}/{{ item.name }}.conf"
+        mode: '0644'
+      loop: "{{ config_items }}"
+      notify:
+        - Reload configuration
+        - Update index
+
+    # More handler triggers
+    - name: "Update service B config"
+      copy:
+        content: "[service_b]\nenabled=true\n"
+        dest: "{{ bench_dir }}/service_b.conf"
+        mode: '0644'
+      notify:
+        - Restart service B
+        - Write log
+
+    - name: "Update service C config"
+      copy:
+        content: "[service_c]\nenabled=true\n"
+        dest: "{{ bench_dir }}/service_c.conf"
+        mode: '0644'
+      notify:
+        - Restart service C
+        - Write log
+
+    # Conditional handler notification
+    - name: "Stat config directory"
+      stat:
+        path: "{{ bench_dir }}"
+      register: config_dir
+
+    - name: "Update if directory exists"
+      copy:
+        content: "directory_verified=true\n"
+        dest: "{{ bench_dir }}/verified.conf"
+        mode: '0644'
+      when: config_dir.stat.exists
+      notify:
+        - Notify admin
+        - Write log
+
+    # More tasks to trigger handlers
+    - name: "Create cache config"
+      copy:
+        content: |
+          [cache]
+          size=1024
+          ttl=3600
+        dest: "{{ bench_dir }}/cache.conf"
+        mode: '0644'
+      notify:
+        - Refresh cache
+
+    - name: "Create index config"
+      copy:
+        content: |
+          [index]
+          rebuild=true
+          interval=300
+        dest: "{{ bench_dir }}/index.conf"
+        mode: '0644'
+      notify:
+        - Update index
+
+    - name: "Final configuration update"
+      copy:
+        content: |
+          [final]
+          complete=true
+          timestamp={{ ansible_date_time.iso8601 | default('now') }}
+        dest: "{{ bench_dir }}/final.conf"
+        mode: '0644'
+      notify:
+        - Restart service A
+        - Restart service B
+        - Restart service C
+        - Reload configuration
+        - Refresh cache
+        - Update index
+        - Notify admin
+        - Write log
+
+- name: Handler cleanup phase
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Cleanup benchmark directory
+      file:
+        path: /tmp/bench_handlers
+        state: absent

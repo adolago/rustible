@@ -1,0 +1,177 @@
+# Benchmark 08: Loop-Heavy Workloads
+# Tests: Loop iteration performance (with_items, loop)
+# Purpose: Measures overhead of loop constructs
+---
+- name: Loop benchmark - Extensive loop usage
+  hosts: all
+  gather_facts: false
+  vars:
+    simple_list:
+      - alpha
+      - beta
+      - gamma
+      - delta
+      - epsilon
+      - zeta
+      - eta
+      - theta
+      - iota
+      - kappa
+    number_list:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+    dict_list:
+      - { name: "file1", content: "Content 1", mode: "0644" }
+      - { name: "file2", content: "Content 2", mode: "0644" }
+      - { name: "file3", content: "Content 3", mode: "0644" }
+      - { name: "file4", content: "Content 4", mode: "0644" }
+      - { name: "file5", content: "Content 5", mode: "0644" }
+      - { name: "file6", content: "Content 6", mode: "0755" }
+      - { name: "file7", content: "Content 7", mode: "0755" }
+      - { name: "file8", content: "Content 8", mode: "0755" }
+    nested_list:
+      - items: ["a", "b", "c"]
+        prefix: "group1"
+      - items: ["d", "e", "f"]
+        prefix: "group2"
+      - items: ["g", "h", "i"]
+        prefix: "group3"
+    bench_dir: /tmp/bench_loops
+  tasks:
+    - name: Create benchmark directory
+      file:
+        path: "{{ bench_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Simple loop with strings
+    - name: "Loop 1: Echo simple list items"
+      command: "echo {{ item }}"
+      loop: "{{ simple_list }}"
+      changed_when: false
+
+    # Loop with numbers
+    - name: "Loop 2: Echo number list items"
+      command: "echo Number {{ item }}"
+      loop: "{{ number_list }}"
+      changed_when: false
+
+    # Loop creating files
+    - name: "Loop 3: Create files from dict list"
+      copy:
+        content: "{{ item.content }}\n"
+        dest: "{{ bench_dir }}/{{ item.name }}.txt"
+        mode: "{{ item.mode }}"
+      loop: "{{ dict_list }}"
+
+    # Loop with index
+    - name: "Loop 4: Echo with loop index"
+      command: "echo Item {{ ansible_loop.index }}: {{ item }}"
+      loop: "{{ simple_list }}"
+      loop_control:
+        extended: true
+      changed_when: false
+
+    # Loop with label
+    - name: "Loop 5: File operations with label"
+      stat:
+        path: "{{ bench_dir }}/{{ item.name }}.txt"
+      loop: "{{ dict_list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Range-based loop
+    - name: "Loop 6: Range loop creating directories"
+      file:
+        path: "{{ bench_dir }}/dir_{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ range(1, 11) | list }}"
+
+    # Loop with when condition
+    - name: "Loop 7: Conditional loop"
+      command: "echo Processing {{ item }}"
+      loop: "{{ number_list }}"
+      when: item | int > 5
+      changed_when: false
+
+    # Loop with register
+    - name: "Loop 8: Loop with register"
+      command: "echo Value {{ item }}"
+      loop: "{{ simple_list[:5] }}"
+      register: loop_results
+      changed_when: false
+
+    # Loop over registered results
+    - name: "Loop 9: Loop over registered results"
+      debug:
+        msg: "Result: {{ item.stdout | default('none') }}"
+      loop: "{{ loop_results.results }}"
+      loop_control:
+        label: "result"
+
+    # Nested loop simulation
+    - name: "Loop 10: Create nested structure"
+      copy:
+        content: "{{ item.prefix }}_{{ item.items | join(',') }}\n"
+        dest: "{{ bench_dir }}/{{ item.prefix }}.txt"
+        mode: '0644'
+      loop: "{{ nested_list }}"
+
+    # Loop with until (retry simulation)
+    - name: "Loop 11: Simple retry loop"
+      command: "echo Attempt for {{ item }}"
+      loop: "{{ simple_list[:3] }}"
+      register: result
+      changed_when: false
+
+    # Loop with pause equivalent
+    - name: "Loop 12: Sequential operations"
+      command: "echo Sequential {{ item }}"
+      loop: "{{ number_list[:5] }}"
+      changed_when: false
+
+    # File cleanup loop
+    - name: "Loop 13: Stat all created files"
+      stat:
+        path: "{{ bench_dir }}/{{ item.name }}.txt"
+      loop: "{{ dict_list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Directory cleanup loop
+    - name: "Loop 14: Remove directories"
+      file:
+        path: "{{ bench_dir }}/dir_{{ item }}"
+        state: absent
+      loop: "{{ range(1, 11) | list }}"
+
+    # File cleanup loop
+    - name: "Loop 15: Remove files"
+      file:
+        path: "{{ bench_dir }}/{{ item.name }}.txt"
+        state: absent
+      loop: "{{ dict_list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: "Loop 16: Remove nested files"
+      file:
+        path: "{{ bench_dir }}/{{ item.prefix }}.txt"
+        state: absent
+      loop: "{{ nested_list }}"
+      loop_control:
+        label: "{{ item.prefix }}"
+
+    - name: Final cleanup
+      file:
+        path: "{{ bench_dir }}"
+        state: absent

@@ -387,6 +387,14 @@ impl RuntimeContext {
         self.task_vars.clear();
     }
 
+    /// Remove specific task-level variables by name
+    /// Used for cleaning up loop variables without clearing all task vars
+    pub fn remove_task_vars(&mut self, names: &[&str]) {
+        for name in names {
+            self.task_vars.swap_remove(*name);
+        }
+    }
+
     /// Clear play-level variables (called between plays)
     pub fn clear_play_vars(&mut self) {
         self.play_vars.clear();
@@ -394,6 +402,10 @@ impl RuntimeContext {
     }
 
     /// Get a variable by name, respecting precedence
+    ///
+    /// # Performance
+    /// Hot path function - inline hint for better optimization.
+    #[inline]
     pub fn get_var(&self, name: &str, host: Option<&str>) -> Option<JsonValue> {
         // Check in order of precedence (highest first)
 
@@ -444,8 +456,25 @@ impl RuntimeContext {
     }
 
     /// Get all variables merged for a specific host
+    ///
+    /// # Performance
+    /// This is a hot path function. Optimizations applied:
+    /// - Pre-sized capacity for IndexMap to reduce reallocations
+    /// - Cached host string comparison
+    /// - Inline hint for better optimization
+    #[inline]
     pub fn get_merged_vars(&self, host: &str) -> IndexMap<String, JsonValue> {
-        let mut merged = IndexMap::new();
+        // OPTIMIZATION: Pre-allocate with estimated capacity to reduce reallocations
+        let estimated_size = self.magic_vars.len()
+            + self.global_vars.len()
+            + self.play_vars.len()
+            + self.task_vars.len()
+            + self.extra_vars.len()
+            + 10; // Buffer for special vars
+        let mut merged = IndexMap::with_capacity(estimated_size);
+
+        // OPTIMIZATION: Cache host string for comparisons
+        let host_string = host.to_string();
 
         // Start with magic vars (lowest)
         for (k, v) in &self.magic_vars {
@@ -459,7 +488,7 @@ impl RuntimeContext {
 
         // Group vars for groups this host is in
         for (_group_name, group) in &self.groups {
-            if group.hosts.contains(&host.to_string()) {
+            if group.hosts.contains(&host_string) {
                 for (k, v) in &group.vars {
                     merged.insert(k.clone(), v.clone());
                 }
@@ -506,7 +535,7 @@ impl RuntimeContext {
         // Add special vars
         merged.insert(
             "inventory_hostname".to_string(),
-            JsonValue::String(host.to_string()),
+            JsonValue::String(host_string.clone()),
         );
         merged.insert(
             "inventory_hostname_short".to_string(),
@@ -517,7 +546,7 @@ impl RuntimeContext {
         let group_names: Vec<String> = self
             .groups
             .iter()
-            .filter(|(_, g)| g.hosts.contains(&host.to_string()))
+            .filter(|(_, g)| g.hosts.contains(&host_string))
             .map(|(name, _)| name.clone())
             .collect();
         merged.insert(
@@ -558,9 +587,17 @@ impl RuntimeContext {
         self.groups.insert(name, group);
     }
 
-    /// Get all hosts
+    /// Get all hosts (returns a reference to avoid cloning)
     pub fn get_all_hosts(&self) -> Vec<String> {
+        // Note: Cloning is necessary here as callers may modify the list
+        // or need ownership. Consider using Cow for future optimization.
         self.all_hosts.clone()
+    }
+
+    /// Get a reference to all hosts (avoids cloning when only reading)
+    #[inline]
+    pub fn hosts(&self) -> &[String] {
+        &self.all_hosts
     }
 
     /// Get hosts in a group

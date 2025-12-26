@@ -647,10 +647,19 @@ pub trait ParamExt {
 }
 
 impl ParamExt for ModuleParams {
+    #[inline]
     fn get_string(&self, key: &str) -> ModuleResult<Option<String>> {
         match self.get(key) {
             Some(serde_json::Value::String(s)) => Ok(Some(s.clone())),
-            Some(v) => Ok(Some(v.to_string().trim_matches('"').to_string())),
+            Some(v) => {
+                // Avoid double allocation: only trim if needed
+                let s = v.to_string();
+                if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                    Ok(Some(s[1..s.len() - 1].to_string()))
+                } else {
+                    Ok(Some(s))
+                }
+            }
             None => Ok(None),
         }
     }
@@ -734,18 +743,32 @@ impl ParamExt for ModuleParams {
     fn get_vec_string(&self, key: &str) -> ModuleResult<Option<Vec<String>>> {
         match self.get(key) {
             Some(serde_json::Value::Array(arr)) => {
-                let mut result = Vec::new();
+                // Pre-allocate with known capacity
+                let mut result = Vec::with_capacity(arr.len());
                 for item in arr {
                     match item {
                         serde_json::Value::String(s) => result.push(s.clone()),
-                        v => result.push(v.to_string().trim_matches('"').to_string()),
+                        v => {
+                            // Avoid double allocation: only trim if needed
+                            let s = v.to_string();
+                            if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                result.push(s[1..s.len() - 1].to_string());
+                            } else {
+                                result.push(s);
+                            }
+                        }
                     }
                 }
                 Ok(Some(result))
             }
             Some(serde_json::Value::String(s)) => {
-                // Handle comma-separated string
-                Ok(Some(s.split(',').map(|s| s.trim().to_string()).collect()))
+                // Handle comma-separated string - pre-count for capacity
+                let parts: Vec<&str> = s.split(',').collect();
+                let mut result = Vec::with_capacity(parts.len());
+                for part in parts {
+                    result.push(part.trim().to_string());
+                }
+                Ok(Some(result))
             }
             Some(_) => Err(ModuleError::InvalidParameter(format!(
                 "{} must be an array",

@@ -1,0 +1,93 @@
+# Benchmark 05: Many Hosts Simulation
+# Tests: Scalability with large host counts
+# Simulates running against 20+ hosts using host groups and patterns
+# Note: This benchmark tests host iteration overhead
+---
+- name: Many hosts benchmark - Host-specific operations
+  hosts: all
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Host-specific echo 1
+      command: echo "Processing host {{ inventory_hostname }} - iteration 1"
+      changed_when: false
+
+    - name: Host-specific echo 2
+      command: echo "Processing host {{ inventory_hostname }} - iteration 2"
+      changed_when: false
+
+    - name: Host-specific echo 3
+      command: echo "Processing host {{ inventory_hostname }} - iteration 3"
+      changed_when: false
+
+    - name: Host-specific echo 4
+      command: echo "Processing host {{ inventory_hostname }} - iteration 4"
+      changed_when: false
+
+- name: Parallel operations across all hosts
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Get host identity
+      command: hostname -f
+      changed_when: false
+      register: host_identity
+
+    - name: Create host-specific directory
+      file:
+        path: "/tmp/bench_host_{{ inventory_hostname }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create host-specific file 1
+      copy:
+        content: "Host: {{ inventory_hostname }}\nIdentity: {{ host_identity.stdout | default('unknown') }}\n"
+        dest: "/tmp/bench_host_{{ inventory_hostname }}/info.txt"
+        mode: '0644'
+
+    - name: Create host-specific file 2
+      copy:
+        content: "Benchmark data for {{ inventory_hostname }}\n"
+        dest: "/tmp/bench_host_{{ inventory_hostname }}/data.txt"
+        mode: '0644'
+
+    - name: Create host-specific file 3
+      copy:
+        content: "Config for {{ inventory_hostname }}\n"
+        dest: "/tmp/bench_host_{{ inventory_hostname }}/config.txt"
+        mode: '0644'
+
+    - name: Check host-specific directory
+      stat:
+        path: "/tmp/bench_host_{{ inventory_hostname }}"
+      register: host_dir
+
+    - name: Verify directory exists
+      command: "ls -la /tmp/bench_host_{{ inventory_hostname }}/"
+      changed_when: false
+      when: host_dir.stat.exists
+
+    - name: Get host system info
+      command: uname -a
+      changed_when: false
+
+    - name: Get host uptime
+      command: uptime
+      changed_when: false
+
+    - name: Get host memory
+      command: cat /proc/meminfo | head -5
+      changed_when: false
+
+    - name: Get host CPU count
+      command: nproc
+      changed_when: false
+
+    - name: Get host disk usage
+      command: df -h /
+      changed_when: false
+
+    - name: Cleanup host-specific directory
+      file:
+        path: "/tmp/bench_host_{{ inventory_hostname }}"
+        state: absent

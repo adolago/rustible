@@ -91,7 +91,10 @@ pub use ssh::{SshConnection, SshConnectionBuilder};
 
 // Re-export russh types when the feature is enabled
 #[cfg(feature = "russh")]
-pub use russh::{PendingCommand, PipelinedExecutor, RusshConnection, RusshConnectionBuilder};
+pub use russh::{
+    ConnectionGroup, ConnectionMetrics, HighPerformanceConnectionFactory, PendingCommand,
+    PipelinedExecutor, RusshConnection, RusshConnectionBuilder,
+};
 // TODO: russh_auth needs updating for russh 0.45 API changes
 // #[cfg(feature = "russh")]
 // pub use russh_auth::{

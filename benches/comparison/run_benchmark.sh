@@ -48,6 +48,12 @@ PLAYBOOKS=(
     "bench_02_file_ops.yml"
     "bench_03_multi_task.yml"
     "bench_04_comprehensive.yml"
+    "bench_05_many_hosts.yml"
+    "bench_06_many_tasks.yml"
+    "bench_07_templates.yml"
+    "bench_08_loops.yml"
+    "bench_09_handlers.yml"
+    "bench_10_conditionals.yml"
 )
 
 # Function to run Ansible benchmark

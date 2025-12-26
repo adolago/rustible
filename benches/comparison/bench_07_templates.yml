@@ -1,0 +1,313 @@
+# Benchmark 07: Template-Heavy Workloads
+# Tests: Template rendering performance
+# Note: Uses copy module with Jinja2 templating (compatible with both tools)
+---
+- name: Template benchmark - Heavy template rendering
+  hosts: all
+  gather_facts: false
+  vars:
+    app_name: "benchmark_app"
+    app_version: "1.0.0"
+    app_port: 8080
+    app_workers: 4
+    database:
+      host: "db.example.com"
+      port: 5432
+      name: "benchmark_db"
+      user: "bench_user"
+    cache_servers:
+      - { host: "cache1.example.com", port: 6379 }
+      - { host: "cache2.example.com", port: 6379 }
+      - { host: "cache3.example.com", port: 6379 }
+    log_levels:
+      - debug
+      - info
+      - warn
+      - error
+    features:
+      - name: "feature_a"
+        enabled: true
+        config: "value_a"
+      - name: "feature_b"
+        enabled: false
+        config: "value_b"
+      - name: "feature_c"
+        enabled: true
+        config: "value_c"
+    environment_vars:
+      APP_ENV: "benchmark"
+      APP_DEBUG: "false"
+      APP_LOG_LEVEL: "info"
+      APP_TIMEOUT: "30"
+      APP_MAX_CONNECTIONS: "100"
+  tasks:
+    - name: Create template output directory
+      file:
+        path: /tmp/bench_templates
+        state: directory
+        mode: '0755'
+
+    - name: Generate application config
+      copy:
+        content: |
+          # Application Configuration
+          # Generated for {{ inventory_hostname }}
+          # Application: {{ app_name }} v{{ app_version }}
+
+          [server]
+          host = 0.0.0.0
+          port = {{ app_port }}
+          workers = {{ app_workers }}
+
+          [database]
+          host = {{ database.host }}
+          port = {{ database.port }}
+          name = {{ database.name }}
+          user = {{ database.user }}
+
+          [cache]
+          {% for server in cache_servers %}
+          server_{{ loop.index }} = {{ server.host }}:{{ server.port }}
+          {% endfor %}
+
+          [logging]
+          {% for level in log_levels %}
+          enable_{{ level }} = true
+          {% endfor %}
+
+          [features]
+          {% for feature in features %}
+          {{ feature.name }}.enabled = {{ feature.enabled }}
+          {{ feature.name }}.config = {{ feature.config }}
+          {% endfor %}
+        dest: /tmp/bench_templates/app.conf
+        mode: '0644'
+
+    - name: Generate environment file
+      copy:
+        content: |
+          # Environment Configuration
+          # Host: {{ inventory_hostname }}
+          {% for key, value in environment_vars.items() %}
+          {{ key }}={{ value }}
+          {% endfor %}
+          HOSTNAME={{ inventory_hostname }}
+          GENERATED_AT={{ ansible_date_time.iso8601 | default('unknown') }}
+        dest: /tmp/bench_templates/env.conf
+        mode: '0644'
+
+    - name: Generate nginx config
+      copy:
+        content: |
+          # Nginx Configuration for {{ app_name }}
+          # Server: {{ inventory_hostname }}
+
+          upstream backend {
+          {% for i in range(app_workers) %}
+              server 127.0.0.1:{{ app_port + i }} weight=1;
+          {% endfor %}
+          }
+
+          server {
+              listen 80;
+              server_name {{ inventory_hostname }};
+
+              location / {
+                  proxy_pass http://backend;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+              }
+
+              {% for feature in features %}
+              {% if feature.enabled %}
+              location /{{ feature.name }} {
+                  proxy_pass http://backend/api/{{ feature.name }};
+              }
+              {% endif %}
+              {% endfor %}
+          }
+        dest: /tmp/bench_templates/nginx.conf
+        mode: '0644'
+
+    - name: Generate systemd service file
+      copy:
+        content: |
+          [Unit]
+          Description={{ app_name }} v{{ app_version }}
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=www-data
+          Group=www-data
+          WorkingDirectory=/opt/{{ app_name }}
+          ExecStart=/opt/{{ app_name }}/bin/start --port {{ app_port }} --workers {{ app_workers }}
+          Restart=always
+          RestartSec=5
+          {% for key, value in environment_vars.items() %}
+          Environment="{{ key }}={{ value }}"
+          {% endfor %}
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /tmp/bench_templates/app.service
+        mode: '0644'
+
+    - name: Generate database init script
+      copy:
+        content: |
+          -- Database initialization script
+          -- Generated for {{ database.name }} on {{ database.host }}
+
+          CREATE DATABASE IF NOT EXISTS {{ database.name }};
+          USE {{ database.name }};
+
+          {% for feature in features %}
+          CREATE TABLE IF NOT EXISTS {{ feature.name }}_data (
+              id INT PRIMARY KEY AUTO_INCREMENT,
+              config VARCHAR(255) DEFAULT '{{ feature.config }}',
+              enabled BOOLEAN DEFAULT {{ feature.enabled | lower }},
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          {% endfor %}
+
+          -- Cache server connection pool
+          {% for server in cache_servers %}
+          -- Cache server {{ loop.index }}: {{ server.host }}:{{ server.port }}
+          {% endfor %}
+        dest: /tmp/bench_templates/init.sql
+        mode: '0644'
+
+    - name: Generate JSON config
+      copy:
+        content: |
+          {
+            "application": {
+              "name": "{{ app_name }}",
+              "version": "{{ app_version }}",
+              "host": "{{ inventory_hostname }}"
+            },
+            "server": {
+              "port": {{ app_port }},
+              "workers": {{ app_workers }}
+            },
+            "database": {
+              "host": "{{ database.host }}",
+              "port": {{ database.port }},
+              "name": "{{ database.name }}"
+            },
+            "cache_servers": [
+              {% for server in cache_servers %}
+              {"host": "{{ server.host }}", "port": {{ server.port }}}{% if not loop.last %},{% endif %}
+
+              {% endfor %}
+            ],
+            "features": {
+              {% for feature in features %}
+              "{{ feature.name }}": {"enabled": {{ feature.enabled | lower }}, "config": "{{ feature.config }}"}{% if not loop.last %},{% endif %}
+
+              {% endfor %}
+            }
+          }
+        dest: /tmp/bench_templates/config.json
+        mode: '0644'
+
+    - name: Generate YAML config
+      copy:
+        content: |
+          ---
+          # Application Configuration
+          # Host: {{ inventory_hostname }}
+
+          application:
+            name: {{ app_name }}
+            version: {{ app_version }}
+
+          server:
+            port: {{ app_port }}
+            workers: {{ app_workers }}
+
+          database:
+            host: {{ database.host }}
+            port: {{ database.port }}
+            name: {{ database.name }}
+            user: {{ database.user }}
+
+          cache_servers:
+          {% for server in cache_servers %}
+            - host: {{ server.host }}
+              port: {{ server.port }}
+          {% endfor %}
+
+          features:
+          {% for feature in features %}
+            {{ feature.name }}:
+              enabled: {{ feature.enabled }}
+              config: {{ feature.config }}
+          {% endfor %}
+
+          log_levels:
+          {% for level in log_levels %}
+            - {{ level }}
+          {% endfor %}
+        dest: /tmp/bench_templates/config.yaml
+        mode: '0644'
+
+    - name: Generate HTML report
+      copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>{{ app_name }} - Configuration Report</title>
+          </head>
+          <body>
+              <h1>{{ app_name }} v{{ app_version }}</h1>
+              <h2>Server: {{ inventory_hostname }}</h2>
+
+              <h3>Server Configuration</h3>
+              <table>
+                  <tr><td>Port</td><td>{{ app_port }}</td></tr>
+                  <tr><td>Workers</td><td>{{ app_workers }}</td></tr>
+              </table>
+
+              <h3>Database</h3>
+              <table>
+                  <tr><td>Host</td><td>{{ database.host }}</td></tr>
+                  <tr><td>Port</td><td>{{ database.port }}</td></tr>
+                  <tr><td>Name</td><td>{{ database.name }}</td></tr>
+              </table>
+
+              <h3>Cache Servers</h3>
+              <ul>
+              {% for server in cache_servers %}
+                  <li>{{ server.host }}:{{ server.port }}</li>
+              {% endfor %}
+              </ul>
+
+              <h3>Features</h3>
+              <table>
+              {% for feature in features %}
+                  <tr>
+                      <td>{{ feature.name }}</td>
+                      <td>{% if feature.enabled %}Enabled{% else %}Disabled{% endif %}</td>
+                  </tr>
+              {% endfor %}
+              </table>
+          </body>
+          </html>
+        dest: /tmp/bench_templates/report.html
+        mode: '0644'
+
+    - name: Verify generated files
+      command: ls -la /tmp/bench_templates/
+      changed_when: false
+
+    - name: Count generated files
+      shell: find /tmp/bench_templates -type f | wc -l
+      changed_when: false
+
+    - name: Cleanup template directory
+      file:
+        path: /tmp/bench_templates
+        state: absent

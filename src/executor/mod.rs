@@ -428,10 +428,12 @@ impl Executor {
         debug!("Executing on {} hosts", hosts.len());
 
         // Combine all tasks: pre_tasks + tasks + post_tasks
-        let mut all_tasks = Vec::new();
-        all_tasks.extend(play.pre_tasks.clone());
-        all_tasks.extend(play.tasks.clone());
-        all_tasks.extend(play.post_tasks.clone());
+        // Pre-allocate with known capacity to avoid reallocations
+        let total_tasks = play.pre_tasks.len() + play.tasks.len() + play.post_tasks.len();
+        let mut all_tasks = Vec::with_capacity(total_tasks);
+        all_tasks.extend(play.pre_tasks.iter().cloned());
+        all_tasks.extend(play.tasks.iter().cloned());
+        all_tasks.extend(play.post_tasks.iter().cloned());
 
         // Execute based on serial specification and strategy
         let execution_result = if let Some(ref serial_spec) = play.serial {
@@ -487,27 +489,31 @@ impl Executor {
     ) -> ExecutorResult<HashMap<String, HostResult>> {
         use crate::executor::task::BlockRole;
 
-        let mut results: HashMap<String, HostResult> = hosts
-            .iter()
-            .map(|h| {
-                (
-                    h.clone(),
-                    HostResult {
-                        host: h.clone(),
-                        stats: ExecutionStats::default(),
-                        failed: false,
-                        unreachable: false,
-                    },
-                )
-            })
-            .collect();
+        // Pre-allocate HashMaps with known capacity
+        let host_count = hosts.len();
+        let mut results: HashMap<String, HostResult> = HashMap::with_capacity(host_count);
+        for h in hosts {
+            results.insert(
+                h.clone(),
+                HostResult {
+                    host: h.clone(),
+                    stats: ExecutionStats::default(),
+                    failed: false,
+                    unreachable: false,
+                },
+            );
+        }
 
-        // Track which blocks have failed (per host)
-        let mut failed_blocks: HashMap<String, HashSet<String>> =
-            hosts.iter().map(|h| (h.clone(), HashSet::new())).collect();
+        // Track which blocks have failed (per host) - pre-allocate with capacity
+        let mut failed_blocks: HashMap<String, HashSet<String>> = HashMap::with_capacity(host_count);
+        for h in hosts {
+            failed_blocks.insert(h.clone(), HashSet::new());
+        }
         // Track which blocks have had their rescue tasks run
-        let mut rescued_blocks: HashMap<String, HashSet<String>> =
-            hosts.iter().map(|h| (h.clone(), HashSet::new())).collect();
+        let mut rescued_blocks: HashMap<String, HashSet<String>> = HashMap::with_capacity(host_count);
+        for h in hosts {
+            rescued_blocks.insert(h.clone(), HashSet::new());
+        }
 
         for task in tasks {
             // Determine which hosts should run this task based on block state
@@ -666,13 +672,70 @@ impl Executor {
     }
 
     /// Run tasks in free strategy (each host runs independently)
+    ///
+    /// OPTIMIZATION: Extract config values once instead of cloning config per host
     async fn run_free(
         &self,
         hosts: &[String],
         tasks: &[Task],
     ) -> ExecutorResult<HashMap<String, HostResult>> {
-        let tasks = Arc::new(tasks.to_vec());
-        let results = Arc::new(Mutex::new(HashMap::new()));
+        // OPTIMIZATION: Fast path for single host
+        if hosts.len() == 1 {
+            let host = &hosts[0];
+            let _permit = self.semaphore.acquire().await.unwrap();
+
+            let mut host_result = HostResult {
+                host: host.clone(),
+                stats: ExecutionStats::default(),
+                failed: false,
+                unreachable: false,
+            };
+
+            for task in tasks {
+                if host_result.failed || host_result.unreachable {
+                    break;
+                }
+
+                let ctx = ExecutionContext::new(host.clone())
+                    .with_check_mode(self.config.check_mode)
+                    .with_diff_mode(self.config.diff_mode);
+
+                let task_result = task
+                    .execute(
+                        &ctx,
+                        &self.runtime,
+                        &self.handlers,
+                        &self.notified_handlers,
+                        &self.parallelization_manager,
+                    )
+                    .await;
+
+                match task_result {
+                    Ok(result) => {
+                        update_stats(&mut host_result.stats, &result);
+                        if result.status == TaskStatus::Failed {
+                            host_result.failed = true;
+                        }
+                    }
+                    Err(_) => {
+                        host_result.failed = true;
+                        host_result.stats.failed += 1;
+                    }
+                }
+            }
+
+            let mut results = HashMap::with_capacity(1);
+            results.insert(host.clone(), host_result);
+            return Ok(results);
+        }
+
+        // OPTIMIZATION: Pre-extract config values to avoid cloning entire config per host
+        let check_mode = self.config.check_mode;
+        let diff_mode = self.config.diff_mode;
+
+        // Avoid cloning entire task list - use Arc slice instead
+        let tasks: Arc<[Task]> = tasks.iter().cloned().collect::<Vec<_>>().into();
+        let results = Arc::new(Mutex::new(HashMap::with_capacity(hosts.len())));
 
         let handles: Vec<_> = hosts
             .iter()
@@ -682,7 +745,6 @@ impl Executor {
                 let results = Arc::clone(&results);
                 let semaphore = Arc::clone(&self.semaphore);
                 let runtime = Arc::clone(&self.runtime);
-                let config = self.config.clone();
                 let handlers = Arc::clone(&self.handlers);
                 let notified = Arc::clone(&self.notified_handlers);
                 let parallelization_local = Arc::clone(&self.parallelization_manager);
@@ -703,8 +765,8 @@ impl Executor {
                         }
 
                         let ctx = ExecutionContext::new(host.clone())
-                            .with_check_mode(config.check_mode)
-                            .with_diff_mode(config.diff_mode);
+                            .with_check_mode(check_mode)
+                            .with_diff_mode(diff_mode);
 
                         let task_result = task
                             .execute(&ctx, &runtime, &handlers, &notified, &parallelization_local)
@@ -852,6 +914,9 @@ impl Executor {
     }
 
     /// Run a single task on multiple hosts in parallel
+    ///
+    /// OPTIMIZATION: Fast path for single host and small host counts (< 10)
+    /// to avoid Arc clone overhead and tokio::spawn overhead for small workloads.
     async fn run_task_on_hosts(
         &self,
         hosts: &[String],
@@ -859,17 +924,63 @@ impl Executor {
     ) -> ExecutorResult<HashMap<String, TaskResult>> {
         debug!("Running task '{}' on {} hosts", task.name, hosts.len());
 
-        let results = Arc::new(Mutex::new(HashMap::new()));
+        // OPTIMIZATION: Fast path for single host - avoid Arc overhead and tokio::spawn
+        if hosts.len() == 1 {
+            let host = &hosts[0];
+            let _permit = self.semaphore.acquire().await.unwrap();
+
+            let ctx = ExecutionContext::new(host.clone())
+                .with_check_mode(self.config.check_mode)
+                .with_diff_mode(self.config.diff_mode);
+
+            let result = task
+                .execute(
+                    &ctx,
+                    &self.runtime,
+                    &self.handlers,
+                    &self.notified_handlers,
+                    &self.parallelization_manager,
+                )
+                .await;
+
+            let mut results = HashMap::with_capacity(1);
+            match result {
+                Ok(task_result) => {
+                    results.insert(host.clone(), task_result);
+                }
+                Err(e) => {
+                    error!("Task failed on host {}: {}", host, e);
+                    results.insert(
+                        host.clone(),
+                        TaskResult {
+                            status: TaskStatus::Failed,
+                            changed: false,
+                            msg: Some(e.to_string()),
+                            result: None,
+                            diff: None,
+                        },
+                    );
+                }
+            }
+            return Ok(results);
+        }
+
+        // OPTIMIZATION: Pre-extract config values to avoid cloning entire config per host
+        let check_mode = self.config.check_mode;
+        let diff_mode = self.config.diff_mode;
+
+        // OPTIMIZATION: For small host counts, share task via Arc instead of cloning per host
+        let task_arc = Arc::new(task.clone());
+        let results = Arc::new(Mutex::new(HashMap::with_capacity(hosts.len())));
 
         let handles: Vec<_> = hosts
             .iter()
             .map(|host| {
                 let host = host.clone();
-                let task = task.clone();
+                let task = Arc::clone(&task_arc);
                 let results = Arc::clone(&results);
                 let semaphore = Arc::clone(&self.semaphore);
                 let runtime = Arc::clone(&self.runtime);
-                let config = self.config.clone();
                 let handlers = Arc::clone(&self.handlers);
                 let notified = Arc::clone(&self.notified_handlers);
                 let parallelization = Arc::clone(&self.parallelization_manager);
@@ -878,8 +989,8 @@ impl Executor {
                     let _permit = semaphore.acquire().await.unwrap();
 
                     let ctx = ExecutionContext::new(host.clone())
-                        .with_check_mode(config.check_mode)
-                        .with_diff_mode(config.diff_mode);
+                        .with_check_mode(check_mode)
+                        .with_diff_mode(diff_mode);
 
                     let result = task
                         .execute(&ctx, &runtime, &handlers, &notified, &parallelization)

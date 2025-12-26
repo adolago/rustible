@@ -1,0 +1,242 @@
+# Benchmark 06: Many Small Tasks
+# Tests: Task execution overhead with 50+ individual tasks
+# Purpose: Measures per-task overhead in both Ansible and Rustible
+---
+- name: Many tasks benchmark - 50+ sequential tasks
+  hosts: all
+  gather_facts: false
+  vars:
+    bench_dir: /tmp/bench_many_tasks
+  tasks:
+    # Setup
+    - name: "Task 01: Create benchmark directory"
+      file:
+        path: "{{ bench_dir }}"
+        state: directory
+        mode: '0755'
+
+    # 50 small tasks
+    - name: "Task 02: Echo 1"
+      command: echo "Task 02"
+      changed_when: false
+
+    - name: "Task 03: Echo 2"
+      command: echo "Task 03"
+      changed_when: false
+
+    - name: "Task 04: Echo 3"
+      command: echo "Task 04"
+      changed_when: false
+
+    - name: "Task 05: Echo 4"
+      command: echo "Task 05"
+      changed_when: false
+
+    - name: "Task 06: Echo 5"
+      command: echo "Task 06"
+      changed_when: false
+
+    - name: "Task 07: Echo 6"
+      command: echo "Task 07"
+      changed_when: false
+
+    - name: "Task 08: Echo 7"
+      command: echo "Task 08"
+      changed_when: false
+
+    - name: "Task 09: Echo 8"
+      command: echo "Task 09"
+      changed_when: false
+
+    - name: "Task 10: Echo 9"
+      command: echo "Task 10"
+      changed_when: false
+
+    - name: "Task 11: Create file 1"
+      copy:
+        content: "File 1\n"
+        dest: "{{ bench_dir }}/file01.txt"
+        mode: '0644'
+
+    - name: "Task 12: Create file 2"
+      copy:
+        content: "File 2\n"
+        dest: "{{ bench_dir }}/file02.txt"
+        mode: '0644'
+
+    - name: "Task 13: Create file 3"
+      copy:
+        content: "File 3\n"
+        dest: "{{ bench_dir }}/file03.txt"
+        mode: '0644'
+
+    - name: "Task 14: Create file 4"
+      copy:
+        content: "File 4\n"
+        dest: "{{ bench_dir }}/file04.txt"
+        mode: '0644'
+
+    - name: "Task 15: Create file 5"
+      copy:
+        content: "File 5\n"
+        dest: "{{ bench_dir }}/file05.txt"
+        mode: '0644'
+
+    - name: "Task 16: Hostname check"
+      command: hostname
+      changed_when: false
+
+    - name: "Task 17: Date check"
+      command: date
+      changed_when: false
+
+    - name: "Task 18: Whoami check"
+      command: whoami
+      changed_when: false
+
+    - name: "Task 19: PWD check"
+      command: pwd
+      changed_when: false
+
+    - name: "Task 20: Uname check"
+      command: uname -r
+      changed_when: false
+
+    - name: "Task 21: Echo with var"
+      command: "echo Host={{ inventory_hostname }}"
+      changed_when: false
+
+    - name: "Task 22: Echo with var 2"
+      command: "echo Dir={{ bench_dir }}"
+      changed_when: false
+
+    - name: "Task 23: List files"
+      command: "ls {{ bench_dir }}"
+      changed_when: false
+
+    - name: "Task 24: Count files"
+      shell: "ls {{ bench_dir }} | wc -l"
+      changed_when: false
+
+    - name: "Task 25: Cat file"
+      command: "cat {{ bench_dir }}/file01.txt"
+      changed_when: false
+
+    - name: "Task 26: Stat file"
+      stat:
+        path: "{{ bench_dir }}/file01.txt"
+
+    - name: "Task 27: Stat file 2"
+      stat:
+        path: "{{ bench_dir }}/file02.txt"
+
+    - name: "Task 28: Stat file 3"
+      stat:
+        path: "{{ bench_dir }}/file03.txt"
+
+    - name: "Task 29: Stat file 4"
+      stat:
+        path: "{{ bench_dir }}/file04.txt"
+
+    - name: "Task 30: Stat file 5"
+      stat:
+        path: "{{ bench_dir }}/file05.txt"
+
+    - name: "Task 31: Echo 31"
+      command: echo "Task 31"
+      changed_when: false
+
+    - name: "Task 32: Echo 32"
+      command: echo "Task 32"
+      changed_when: false
+
+    - name: "Task 33: Echo 33"
+      command: echo "Task 33"
+      changed_when: false
+
+    - name: "Task 34: Echo 34"
+      command: echo "Task 34"
+      changed_when: false
+
+    - name: "Task 35: Echo 35"
+      command: echo "Task 35"
+      changed_when: false
+
+    - name: "Task 36: Echo 36"
+      command: echo "Task 36"
+      changed_when: false
+
+    - name: "Task 37: Echo 37"
+      command: echo "Task 37"
+      changed_when: false
+
+    - name: "Task 38: Echo 38"
+      command: echo "Task 38"
+      changed_when: false
+
+    - name: "Task 39: Echo 39"
+      command: echo "Task 39"
+      changed_when: false
+
+    - name: "Task 40: Echo 40"
+      command: echo "Task 40"
+      changed_when: false
+
+    - name: "Task 41: Append to file"
+      copy:
+        content: "Updated content 1\n"
+        dest: "{{ bench_dir }}/file01.txt"
+        mode: '0644'
+
+    - name: "Task 42: Append to file 2"
+      copy:
+        content: "Updated content 2\n"
+        dest: "{{ bench_dir }}/file02.txt"
+        mode: '0644'
+
+    - name: "Task 43: Create subdir"
+      file:
+        path: "{{ bench_dir }}/subdir1"
+        state: directory
+        mode: '0755'
+
+    - name: "Task 44: Create subdir 2"
+      file:
+        path: "{{ bench_dir }}/subdir2"
+        state: directory
+        mode: '0755'
+
+    - name: "Task 45: Create file in subdir"
+      copy:
+        content: "Subdir file\n"
+        dest: "{{ bench_dir }}/subdir1/sub.txt"
+        mode: '0644'
+
+    - name: "Task 46: Tree listing"
+      shell: "find {{ bench_dir }} -type f | wc -l"
+      changed_when: false
+
+    - name: "Task 47: Echo 47"
+      command: echo "Task 47"
+      changed_when: false
+
+    - name: "Task 48: Echo 48"
+      command: echo "Task 48"
+      changed_when: false
+
+    - name: "Task 49: Echo 49"
+      command: echo "Task 49"
+      changed_when: false
+
+    - name: "Task 50: Echo 50"
+      command: echo "Task 50"
+      changed_when: false
+
+    - name: "Task 51: Final stat"
+      stat:
+        path: "{{ bench_dir }}"
+
+    - name: "Task 52: Cleanup"
+      file:
+        path: "{{ bench_dir }}"
+        state: absent

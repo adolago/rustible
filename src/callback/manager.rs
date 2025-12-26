@@ -505,6 +505,12 @@ impl CallbackManager {
             .collect()
     }
 
+    /// OPTIMIZATION: Get count of enabled plugins without full allocation
+    fn enabled_plugin_count(&self) -> usize {
+        let plugins = self.plugins.read();
+        plugins.values().filter(|e| e.enabled).count()
+    }
+
     // ========================================================================
     // Event Dispatch - ExecutionCallback Methods
     // ========================================================================
@@ -513,6 +519,8 @@ impl CallbackManager {
     ///
     /// Plugins are called in priority order. Errors are captured but don't
     /// stop dispatch to remaining plugins.
+    ///
+    /// OPTIMIZATION: Fast path for single plugin avoids tokio::spawn overhead
     pub async fn on_playbook_start(&self, name: &str) -> DispatchResult {
         if *self.paused.read() {
             return DispatchResult::default();
@@ -520,6 +528,7 @@ impl CallbackManager {
 
         let mut result = DispatchResult::default();
         let plugins = self.get_ordered_plugins();
+        let enabled_count = plugins.iter().filter(|(_, _, e)| *e).count();
 
         for (plugin_name, plugin, enabled) in plugins {
             if !enabled {
@@ -529,25 +538,32 @@ impl CallbackManager {
 
             trace!(plugin = %plugin_name, "Dispatching on_playbook_start");
 
-            let dispatch_result = {
-                let plugin = Arc::clone(&plugin);
-                let name = name.to_string();
-                tokio::spawn(async move {
-                    plugin.on_playbook_start(&name).await;
-                })
-                .await
-            };
+            // OPTIMIZATION: Direct call for single plugin, spawn for multiple
+            // This avoids tokio::spawn overhead for the common single-plugin case
+            if enabled_count == 1 {
+                plugin.on_playbook_start(name).await;
+                result.success_count += 1;
+            } else {
+                let dispatch_result = {
+                    let plugin = Arc::clone(&plugin);
+                    let name = name.to_string();
+                    tokio::spawn(async move {
+                        plugin.on_playbook_start(&name).await;
+                    })
+                    .await
+                };
 
-            match dispatch_result {
-                Ok(()) => result.success_count += 1,
-                Err(e) => {
-                    let err = PluginError {
-                        plugin_name: plugin_name.clone(),
-                        event: "on_playbook_start".to_string(),
-                        message: e.to_string(),
-                    };
-                    error!(%err, "Plugin error");
-                    result.errors.push(err);
+                match dispatch_result {
+                    Ok(()) => result.success_count += 1,
+                    Err(e) => {
+                        let err = PluginError {
+                            plugin_name: plugin_name.clone(),
+                            event: "on_playbook_start".to_string(),
+                            message: e.to_string(),
+                        };
+                        error!(%err, "Plugin error");
+                        result.errors.push(err);
+                    }
                 }
             }
         }
@@ -686,6 +702,8 @@ impl CallbackManager {
     }
 
     /// Dispatches `on_task_start` event to all enabled plugins.
+    ///
+    /// OPTIMIZATION: Fast path for single plugin avoids tokio::spawn overhead
     pub async fn on_task_start(&self, name: &str, host: &str) -> DispatchResult {
         if *self.paused.read() {
             return DispatchResult::default();
@@ -693,6 +711,7 @@ impl CallbackManager {
 
         let mut result = DispatchResult::default();
         let plugins = self.get_ordered_plugins();
+        let enabled_count = plugins.iter().filter(|(_, _, e)| *e).count();
 
         for (plugin_name, plugin, enabled) in plugins {
             if !enabled {
@@ -702,26 +721,32 @@ impl CallbackManager {
 
             trace!(plugin = %plugin_name, "Dispatching on_task_start");
 
-            let dispatch_result = {
-                let plugin = Arc::clone(&plugin);
-                let name = name.to_string();
-                let host = host.to_string();
-                tokio::spawn(async move {
-                    plugin.on_task_start(&name, &host).await;
-                })
-                .await
-            };
+            // OPTIMIZATION: Direct call for single plugin, spawn for multiple
+            if enabled_count == 1 {
+                plugin.on_task_start(name, host).await;
+                result.success_count += 1;
+            } else {
+                let dispatch_result = {
+                    let plugin = Arc::clone(&plugin);
+                    let name = name.to_string();
+                    let host = host.to_string();
+                    tokio::spawn(async move {
+                        plugin.on_task_start(&name, &host).await;
+                    })
+                    .await
+                };
 
-            match dispatch_result {
-                Ok(()) => result.success_count += 1,
-                Err(e) => {
-                    let err = PluginError {
-                        plugin_name: plugin_name.clone(),
-                        event: "on_task_start".to_string(),
-                        message: e.to_string(),
-                    };
-                    error!(%err, "Plugin error");
-                    result.errors.push(err);
+                match dispatch_result {
+                    Ok(()) => result.success_count += 1,
+                    Err(e) => {
+                        let err = PluginError {
+                            plugin_name: plugin_name.clone(),
+                            event: "on_task_start".to_string(),
+                            message: e.to_string(),
+                        };
+                        error!(%err, "Plugin error");
+                        result.errors.push(err);
+                    }
                 }
             }
         }
@@ -730,6 +755,8 @@ impl CallbackManager {
     }
 
     /// Dispatches `on_task_complete` event to all enabled plugins.
+    ///
+    /// OPTIMIZATION: Fast path for single plugin avoids tokio::spawn and clone overhead
     pub async fn on_task_complete(&self, exec_result: &ExecutionResult) -> DispatchResult {
         if *self.paused.read() {
             return DispatchResult::default();
@@ -737,6 +764,7 @@ impl CallbackManager {
 
         let mut result = DispatchResult::default();
         let plugins = self.get_ordered_plugins();
+        let enabled_count = plugins.iter().filter(|(_, _, e)| *e).count();
 
         for (plugin_name, plugin, enabled) in plugins {
             if !enabled {
@@ -746,25 +774,31 @@ impl CallbackManager {
 
             trace!(plugin = %plugin_name, task = %exec_result.task_name, "Dispatching on_task_complete");
 
-            let dispatch_result = {
-                let plugin = Arc::clone(&plugin);
-                let exec_result = exec_result.clone();
-                tokio::spawn(async move {
-                    plugin.on_task_complete(&exec_result).await;
-                })
-                .await
-            };
+            // OPTIMIZATION: Direct call for single plugin, spawn for multiple
+            if enabled_count == 1 {
+                plugin.on_task_complete(exec_result).await;
+                result.success_count += 1;
+            } else {
+                let dispatch_result = {
+                    let plugin = Arc::clone(&plugin);
+                    let exec_result = exec_result.clone();
+                    tokio::spawn(async move {
+                        plugin.on_task_complete(&exec_result).await;
+                    })
+                    .await
+                };
 
-            match dispatch_result {
-                Ok(()) => result.success_count += 1,
-                Err(e) => {
-                    let err = PluginError {
-                        plugin_name: plugin_name.clone(),
-                        event: "on_task_complete".to_string(),
-                        message: e.to_string(),
-                    };
-                    error!(%err, "Plugin error");
-                    result.errors.push(err);
+                match dispatch_result {
+                    Ok(()) => result.success_count += 1,
+                    Err(e) => {
+                        let err = PluginError {
+                            plugin_name: plugin_name.clone(),
+                            event: "on_task_complete".to_string(),
+                            message: e.to_string(),
+                        };
+                        error!(%err, "Plugin error");
+                        result.errors.push(err);
+                    }
                 }
             }
         }

@@ -282,17 +282,17 @@ async fn test_russh_execute_batch() {
     };
 
     // Test batch execution with multiple commands
-    let commands: Vec<String> = vec![
-        "echo cmd1".to_string(),
-        "echo cmd2".to_string(),
-        "hostname".to_string(),
-        "date +%s".to_string(),
-        "whoami".to_string(),
+    let commands: &[&str] = &[
+        "echo cmd1",
+        "echo cmd2",
+        "hostname",
+        "date +%s",
+        "whoami",
     ];
 
     println!("  Executing {} commands in parallel...", commands.len());
     let start = Instant::now();
-    let results = conn.execute_batch(&commands, None).await;
+    let results = conn.execute_batch(commands, None).await;
     let batch_time = start.elapsed();
 
     println!("  Batch execution completed in {:?}", batch_time);
