@@ -734,7 +734,51 @@ impl RunArgs {
             .cloned()
             .unwrap_or_default();
 
-        // Ansible execution order: pre_tasks -> roles -> tasks -> post_tasks
+        // Check if gather_facts is enabled (defaults to true)
+        let gather_facts = play
+            .get("gather_facts")
+            .and_then(|g| g.as_bool())
+            .unwrap_or(true);
+
+        // Ansible execution order: gather_facts -> pre_tasks -> roles -> tasks -> post_tasks
+
+        // 0. Gather facts if enabled
+        if gather_facts {
+            ctx.output.task_header("Gathering Facts");
+
+            // Execute the facts module using rustible's native implementation
+            use rustible::modules::{facts::FactsModule, Module, ModuleContext};
+            let facts_module = FactsModule;
+            let params = std::collections::HashMap::new();
+            let module_ctx = ModuleContext::default();
+
+            match facts_module.execute(&params, &module_ctx) {
+                Ok(output) => {
+                    // Extract ansible_facts and add them to vars with ansible_ prefix
+                    if let Some(facts) = output.data.get("ansible_facts") {
+                        if let Some(facts_obj) = facts.as_object() {
+                            for (key, value) in facts_obj {
+                                // Convert JSON value to YAML value
+                                if let Ok(yaml_val) = serde_yaml::to_value(value) {
+                                    vars.insert(format!("ansible_{}", key), yaml_val);
+                                }
+                            }
+                        }
+                    }
+                    for host in &hosts {
+                        ctx.output.task_result(host, TaskStatus::Ok, None);
+                        stats.lock().await.record(host, TaskStatus::Ok);
+                    }
+                }
+                Err(e) => {
+                    for host in &hosts {
+                        ctx.output.task_result(host, TaskStatus::Failed, Some(&e.to_string()));
+                        stats.lock().await.record(host, TaskStatus::Failed);
+                    }
+                    return Err(anyhow::anyhow!("Failed to gather facts: {}", e));
+                }
+            }
+        }
 
         // 1. Execute pre_tasks
         for task in &pre_tasks {
