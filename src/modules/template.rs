@@ -1,6 +1,6 @@
-//! Template module - Render templates with Tera
+//! Template module - Render templates with Minijinja (Jinja2 compatible)
 //!
-//! This module renders Tera templates (similar to Jinja2) and copies the result
+//! This module renders Jinja2 templates and copies the result
 //! to a destination file. Supports both local and remote execution via async connections.
 
 use super::{
@@ -8,13 +8,13 @@ use super::{
     ModuleResult, ParamExt,
 };
 use crate::connection::TransferOptions;
+use minijinja::value::Kwargs;
+use minijinja::{Environment, Error, Value};
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
-use tera::{Context as TeraContext, Tera};
 use tokio::runtime::Handle;
 
 /// Escape a string for use in shell commands
@@ -29,120 +29,110 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Global Tera instance with pre-registered filters
-static BASE_TERA: Lazy<Tera> = Lazy::new(|| {
-    let mut tera = Tera::default();
+/// Global Minijinja environment with pre-registered filters
+static TEMPLATE_ENV: Lazy<Environment<'static>> = Lazy::new(|| {
+    let mut env = Environment::new();
 
-    // Add custom filters similar to Ansible/Jinja2
-    tera.register_filter(
+    // Add custom filters similar to Ansible/Jinja2 (Tera compatibility)
+
+    // Default filter compatibility: handle empty strings
+    env.add_filter(
         "default",
-        |value: &tera::Value, args: &HashMap<String, tera::Value>| {
-            if value.is_null() || (value.is_string() && value.as_str().unwrap().is_empty()) {
-                if let Some(default) = args.get("value") {
-                    return Ok(default.clone());
+        |value: Value, kwargs: Kwargs| -> Result<Value, Error> {
+            let is_empty = value.is_undefined()
+                || value.is_none()
+                || (value.as_str().map(|s| s.is_empty()).unwrap_or(false));
+            if is_empty {
+                if let Ok(default) = kwargs.get::<Value>("value") {
+                    return Ok(default);
                 }
             }
-            Ok(value.clone())
+            Ok(value)
         },
     );
 
-    tera.register_filter(
-        "upper",
-        |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
-            tera::Value::String(s) => Ok(tera::Value::String(s.to_uppercase())),
-            _ => Ok(value.clone()),
-        },
-    );
+    // Upper/Lower/Trim are built-in in minijinja
 
-    tera.register_filter(
-        "lower",
-        |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
-            tera::Value::String(s) => Ok(tera::Value::String(s.to_lowercase())),
-            _ => Ok(value.clone()),
-        },
-    );
-
-    tera.register_filter(
-        "trim",
-        |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
-            tera::Value::String(s) => Ok(tera::Value::String(s.trim().to_string())),
-            _ => Ok(value.clone()),
-        },
-    );
-
-    tera.register_filter(
+    // Replace filter with 'from'/'to' compatibility
+    env.add_filter(
         "replace",
-        |value: &tera::Value, args: &HashMap<String, tera::Value>| match value {
-            tera::Value::String(s) => {
-                let from = args.get("from").and_then(|v| v.as_str()).unwrap_or("");
-                let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("");
-                Ok(tera::Value::String(s.replace(from, to)))
-            }
-            _ => Ok(value.clone()),
+        |value: String, kwargs: Kwargs| -> Result<Value, Error> {
+            // Minijinja replace uses old, new, count.
+            // Tera uses from, to.
+            let from = kwargs
+                .get::<&str>("from")
+                .or_else(|_| kwargs.get::<&str>("old"))
+                .unwrap_or("");
+
+            let to = kwargs
+                .get::<&str>("to")
+                .or_else(|_| kwargs.get::<&str>("new"))
+                .unwrap_or("");
+
+            Ok(Value::from(value.replace(from, to)))
         },
     );
 
-    tera.register_filter(
+    // Join filter with 'sep' compatibility
+    env.add_filter(
         "join",
-        |value: &tera::Value, args: &HashMap<String, tera::Value>| match value {
-            tera::Value::Array(arr) => {
-                let sep = args.get("sep").and_then(|v| v.as_str()).unwrap_or(",");
-                let joined: Vec<String> = arr
-                    .iter()
-                    .map(|v| match v {
-                        tera::Value::String(s) => s.clone(),
-                        _ => v.to_string(),
-                    })
-                    .collect();
-                Ok(tera::Value::String(joined.join(sep)))
+        |value: Value, kwargs: Kwargs| -> Result<Value, Error> {
+            let sep = kwargs.get::<&str>("sep").unwrap_or(",");
+
+            if let Ok(iter) = value.try_iter() {
+                let items: Vec<String> = iter.map(|v| v.to_string()).collect();
+                Ok(Value::from(items.join(sep)))
+            } else {
+                Ok(value)
             }
-            _ => Ok(value.clone()),
         },
     );
 
-    tera
+    env
 });
 
 /// Module for rendering templates
 pub struct TemplateModule;
 
 impl TemplateModule {
-    fn build_tera_context(
+    fn build_context(
         context: &ModuleContext,
         extra_vars: Option<&serde_json::Value>,
-    ) -> TeraContext {
-        let mut tera_ctx = TeraContext::new();
+    ) -> serde_json::Value {
+        let mut ctx_map = serde_json::Map::new();
 
         // Add variables
         for (key, value) in &context.vars {
-            tera_ctx.insert(key, value);
+            ctx_map.insert(key.clone(), value.clone());
         }
 
         // Add facts
-        tera_ctx.insert("ansible_facts", &context.facts);
+        ctx_map.insert(
+            "ansible_facts".to_string(),
+            serde_json::json!(&context.facts),
+        );
         for (key, value) in &context.facts {
-            tera_ctx.insert(key, value);
+            ctx_map.insert(key.clone(), value.clone());
         }
 
         // Add extra variables if provided
         if let Some(serde_json::Value::Object(vars)) = extra_vars {
             for (key, value) in vars {
-                tera_ctx.insert(key, value);
+                ctx_map.insert(key.clone(), value.clone());
             }
         }
 
-        tera_ctx
+        serde_json::Value::Object(ctx_map)
     }
 
-    fn render_template(template_content: &str, tera_ctx: &TeraContext) -> ModuleResult<String> {
-        // Clone the base Tera instance to reuse registered filters
-        // This is significantly faster than creating a new instance and registering filters each time
-        let mut tera = BASE_TERA.clone();
-
-        tera.add_raw_template("template", template_content)
-            .map_err(|e| ModuleError::TemplateError(format!("Failed to parse template: {}", e)))?;
-
-        tera.render("template", tera_ctx)
+    fn render_template(
+        template_content: &str,
+        context: &serde_json::Value,
+    ) -> ModuleResult<String> {
+        // Use the shared environment without cloning it
+        // minijinja::Environment is thread-safe and designed to be shared
+        TEMPLATE_ENV
+            .render_str(template_content, context)
             .map_err(|e| ModuleError::TemplateError(format!("Failed to render template: {}", e)))
     }
 
@@ -182,6 +172,7 @@ impl TemplateModule {
     }
 
     /// Execute template rendering locally (when no connection is present)
+    #[allow(clippy::too_many_arguments)]
     fn execute_local(
         _params: &ModuleParams,
         context: &ModuleContext,
@@ -313,7 +304,7 @@ impl Module for TemplateModule {
     }
 
     fn description(&self) -> &'static str {
-        "Render Tera/Jinja2 templates to a destination"
+        "Render Jinja2 templates to a destination (using Minijinja)"
     }
 
     fn classification(&self) -> ModuleClassification {
@@ -363,8 +354,8 @@ impl Module for TemplateModule {
         let _src_path = Path::new(&src_name);
 
         // Build context and render
-        let tera_ctx = Self::build_tera_context(context, extra_vars);
-        let rendered = Self::render_template(&template_content, &tera_ctx)?;
+        let ctx = Self::build_context(context, extra_vars);
+        let rendered = Self::render_template(&template_content, &ctx)?;
 
         // Check if we have a connection for remote execution
         if let Some(ref conn) = context.connection {
@@ -556,8 +547,8 @@ impl Module for TemplateModule {
                 ));
             }
         };
-        let tera_ctx = Self::build_tera_context(context, extra_vars);
-        let rendered = Self::render_template(&template_content, &tera_ctx)?;
+        let ctx = Self::build_context(context, extra_vars);
+        let rendered = Self::render_template(&template_content, &ctx)?;
 
         // Check if we have a connection for remote diff
         if let Some(ref conn) = context.connection {
