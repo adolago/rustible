@@ -166,26 +166,52 @@ impl StatModule {
         let mut file = std::fs::File::open(path)
             .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to open file: {}", e)))?;
 
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to read file: {}", e)))?;
+        // Use 64KB buffer for streaming to prevent memory exhaustion
+        const BUFFER_SIZE: usize = 64 * 1024;
+        let mut buffer = [0u8; BUFFER_SIZE];
 
         match algorithm.to_lowercase().as_str() {
             "md5" => {
-                let digest = md5::compute(&buffer);
+                let mut context = md5::Context::new();
+                loop {
+                    let bytes_read = file.read(&mut buffer).map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to read file: {}", e))
+                    })?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    context.consume(&buffer[..bytes_read]);
+                }
+                let digest = context.compute();
                 Ok(format!("{:x}", digest))
             }
             "sha1" => {
                 use sha1::Digest;
                 let mut hasher = sha1::Sha1::new();
-                hasher.update(&buffer);
+                loop {
+                    let bytes_read = file.read(&mut buffer).map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to read file: {}", e))
+                    })?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    hasher.update(&buffer[..bytes_read]);
+                }
                 let result = hasher.finalize();
                 Ok(format!("{:x}", result))
             }
             "sha256" => {
                 use sha2::{Digest, Sha256};
                 let mut hasher = Sha256::new();
-                hasher.update(&buffer);
+                loop {
+                    let bytes_read = file.read(&mut buffer).map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to read file: {}", e))
+                    })?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    hasher.update(&buffer[..bytes_read]);
+                }
                 let result = hasher.finalize();
                 Ok(format!("{:x}", result))
             }
