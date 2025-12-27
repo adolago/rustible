@@ -7,7 +7,7 @@
 # ============================================================================
 # Stage 1: Build environment with cargo-chef for dependency caching
 # ============================================================================
-FROM rust:1.85-slim-bookworm AS chef
+FROM rust:latest AS chef
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
