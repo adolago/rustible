@@ -80,9 +80,9 @@ regex = "1.10"
 glob = "0.3"
 globset = "0.4"
 walkdir = "2.4"
-shellexpand = "3.1"
+shellexpand = "=3.1.0"  # Pin to avoid dirs 6.x which requires Rust 1.88+
 shell-words = "1.1"
-which = "6.0"
+which = "5.0"  # Pin to avoid home 0.5.12 which requires Rust 1.88+
 uuid = { version = "1.6", features = ["v4", "serde"] }
 semver = "1.0"
 
@@ -99,6 +99,7 @@ dialoguer = "0.11"
 # Configuration
 config = "0.14"
 dirs = "5.0"
+home = "=0.5.9"  # Pin to avoid MSRV bump in 0.5.11+ (requires Rust 1.81+)
 
 # Encryption for vault functionality
 aes-gcm = "0.10"
