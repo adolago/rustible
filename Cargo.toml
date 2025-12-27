@@ -202,7 +202,7 @@ assert_cmd = "2.0"
 predicates = "3.1"
 pretty_assertions = "1.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
-wiremock = "0.6"
+wiremock = "=0.6.2"  # Pin to avoid edition 2024 features in 0.6.3+ (requires Rust 1.85+)
 proptest = "1.4"
 async-ssh2-tokio = "0.12"
 serial_test = "3.1"
