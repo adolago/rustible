@@ -113,6 +113,7 @@ impl RunArgs {
         if inventory_path.is_none() {
             ctx.output
                 .warning("No inventory specified, using localhost");
+            ctx.output.hint("Use -i <inventory_file> to specify an inventory");
         }
 
         // Validate limit pattern if specified
@@ -540,7 +541,7 @@ impl RunArgs {
                     .and_then(|s| s.as_str())
                     .unwrap_or("started");
                 let templated_state = Self::template_string(state, vars);
-                format!("will {} service: {}", templated_state, templated_name)
+                format!("will ensure service {} is {}", templated_name, templated_state)
             }
             "copy" => {
                 let src = args
@@ -1477,7 +1478,7 @@ mod tests {
         let service_value = serde_yaml::Value::Mapping(args);
 
         let desc = run_args.get_action_description("service", Some(&service_value), &vars);
-        assert_eq!(desc, "will started service: nginx");
+        assert_eq!(desc, "will ensure service nginx is started");
     }
 
     #[test]

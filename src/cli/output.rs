@@ -398,6 +398,24 @@ impl OutputFormatter {
         }
     }
 
+    /// Print a hint message
+    pub fn hint(&self, message: &str) {
+        if self.json_mode {
+            let hint = serde_json::json!({
+                "type": "hint",
+                "message": message
+            });
+            eprintln!("{}", serde_json::to_string(&hint).unwrap());
+            return;
+        }
+
+        if self.use_color {
+            eprintln!("{} {}", "HINT:".cyan().bold(), message);
+        } else {
+            eprintln!("HINT: {}", message);
+        }
+    }
+
     /// Print an info message (respects verbosity)
     pub fn info(&self, message: &str) {
         if self.verbosity < 1 {
