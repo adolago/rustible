@@ -748,17 +748,18 @@ mod pipeline_tests {
         let pred = predictor.predict(condition).await;
         assert!(pred.confidence < 0.5);
 
-        // Record mostly true outcomes
-        for _ in 0..15 {
+        // Record mostly true outcomes (21 total samples for confidence > 0.5)
+        for _ in 0..16 {
             predictor.record_outcome(condition, true).await;
         }
         for _ in 0..5 {
             predictor.record_outcome(condition, false).await;
         }
 
-        // Should now predict likely (75% true)
+        // Should now predict likely (~76% true with 21 samples)
         let pred = predictor.predict(condition).await;
         assert!(pred.likelihood > 0.7);
+        // With 21 samples: confidence = 1.0 - (1.0 / (1.0 + 21/20)) ≈ 0.512
         assert!(pred.confidence > 0.5);
     }
 
