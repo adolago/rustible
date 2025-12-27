@@ -4,105 +4,128 @@
 
 ---
 
-## 📚 Documentation Index
+## Documentation Structure
 
-### Performance & Benchmarks
-
-- **[performance.md](./performance.md)** - Comprehensive performance analysis
-  - Connection pooling benchmarks (11x speedup)
-  - Module execution times
-  - Parallel execution scaling
-  - Memory profiling
-  - SSH backend comparison (russh vs ssh2)
-  - Ansible vs Rustible comparison
-
-- **[performance-summary.md](./performance-summary.md)** - Quick reference
-  - Key metrics at a glance
-  - ASCII performance graphs
-  - Performance by use case
-  - Best practices
-  - Quick reference tables
-
-### Architecture & Design
-
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - System architecture overview
-  - Core components
-  - Module system
-  - Connection layer
-  - Execution strategies
-  - Performance optimizations
-
-### Module Documentation
-
-- **[modules/](./modules/)** - Individual module documentation
-  - [debug.md](./modules/debug.md) - Debug module
-
-### Additional Resources
-
-See also:
-- **[../ROADMAP.md](../ROADMAP.md)** - Development roadmap and milestones
-- **[../benches/README.md](../benches/README.md)** - Benchmark suite documentation
-- **[../benches/ssh_comparison/](../benches/ssh_comparison/)** - SSH library comparison
+```
+docs/
+  architecture/     - System design and architecture decisions
+  guides/           - User guides and tutorials
+  reference/        - API and module reference
+  development/      - Developer documentation
+  archive/          - Historical reports and implementation notes
+```
 
 ---
 
-## 🚀 Quick Links
+## Quick Navigation
 
-### Performance Highlights
+### Getting Started
 
-| Metric | Value | Source |
-|--------|-------|--------|
-| Connection pooling speedup | **11x faster** | [performance.md](./performance.md#connection-pooling-performance) |
-| Overall execution speedup | **5.3x faster** | [performance.md](./performance.md#ansible-vs-rustible) |
-| Parallel scaling | **2x better** | [performance.md](./performance.md#parallel-execution-scaling) |
-| Memory efficiency | **3.7x less** | [performance.md](./performance.md#memory-profiling) |
+- **[guides/quick-start.md](./guides/quick-start.md)** - Get up and running
+- **[guides/cli-reference.md](./guides/cli-reference.md)** - Command-line interface
+- **[guides/migration-from-ansible.md](./guides/migration-from-ansible.md)** - Migration guide
 
-### Key Sections
+### User Guides
 
-- [Benchmark Methodology](./performance.md#benchmark-methodology)
-- [Connection Pooling Performance](./performance.md#connection-pooling-performance)
-- [Module Execution Times](./performance.md#module-execution-times)
-- [Parallel Execution Scaling](./performance.md#parallel-execution-scaling)
-- [Memory Profiling](./performance.md#memory-profiling)
-- [SSH Backend Comparison](./performance.md#ssh-backend-comparison)
-- [Ansible vs Rustible](./performance.md#ansible-vs-rustible)
-- [Optimization Recommendations](./performance.md#optimization-recommendations)
+- **[guides/](./guides/)** - Complete user documentation
+  - [01-introduction.md](./guides/01-introduction.md) - Introduction to Rustible
+  - [02-playbooks.md](./guides/02-playbooks.md) - Working with playbooks
+  - [best-practices.md](./guides/best-practices.md) - Best practices
+  - [performance-tuning.md](./guides/performance-tuning.md) - Performance tuning
+  - [troubleshooting.md](./guides/troubleshooting.md) - Troubleshooting guide
+  - [container-guide.md](./guides/container-guide.md) - Docker/container usage
+
+### Reference
+
+- **[reference/](./reference/)** - Technical reference
+  - [variables.md](./reference/variables.md) - Variable system
+  - [inventory.md](./reference/inventory.md) - Inventory management
+  - [performance.md](./reference/performance.md) - Performance benchmarks
+  - [modules/](./reference/modules/) - Module documentation
+  - [callbacks.md](./reference/callbacks.md) - Callback plugins
+  - [modules.md](./reference/modules.md) - Module API reference
+
+### Architecture
+
+- **[architecture/](./architecture/)** - System design
+  - [ARCHITECTURE.md](./architecture/ARCHITECTURE.md) - Main architecture overview
+  - [0001-architecture-overview.md](./architecture/0001-architecture-overview.md) - ADR: Architecture
+  - [0002-module-system-design.md](./architecture/0002-module-system-design.md) - ADR: Modules
+  - [0003-callback-plugin-architecture.md](./architecture/0003-callback-plugin-architecture.md) - ADR: Callbacks
+  - [REGISTRY_ARCHITECTURE.md](./architecture/REGISTRY_ARCHITECTURE.md) - Registry design
+  - [distributed-execution.md](./architecture/distributed-execution.md) - Distributed execution
+  - [terraform-integration.md](./architecture/terraform-integration.md) - Terraform integration
+  - [web-ui.md](./architecture/web-ui.md) - Web UI design
+
+### Development
+
+- **[development/](./development/)** - Developer resources
+  - [CONTRIBUTING.md](./development/CONTRIBUTING.md) - Contribution guide
+  - [custom-modules.md](./development/custom-modules.md) - Writing custom modules
+  - [callback-plugins.md](./development/callback-plugins.md) - Callback plugin development
+  - [connection-plugins.md](./development/connection-plugins.md) - Connection plugin development
+
+### Planning
+
+- **[ROADMAP.md](./ROADMAP.md)** - Development roadmap and milestones
 
 ---
 
-## 📊 Performance Summary
+## Performance Highlights
 
-### At a Glance
+| Metric | Value | Details |
+|--------|-------|---------|
+| Connection pooling speedup | **11x faster** | [reference/performance.md](./reference/performance.md) |
+| Overall execution speedup | **5.3x faster** | vs Ansible |
+| Parallel scaling | **2x better** | Multi-host operations |
+| Memory efficiency | **3.7x less** | Memory usage |
 
 ```
 Rustible vs Ansible (5 hosts, 10 tasks each)
 
 Execution Time:
-Ansible:  ██████████████████████████████ 47.3s
-Rustible: █████ 8.9s (5.3x faster)
+Ansible:  ========================== 47.3s
+Rustible: ===== 8.9s (5.3x faster)
 
 Memory Usage:
-Ansible:  ████████████████ 156 MB
-Rustible: ████ 42 MB (3.7x less)
-
-Connection Setup:
-Ansible:  ██████████████████ 18.7s
-Rustible: █ 1.6s (11.7x faster via pooling)
+Ansible:  ================ 156 MB
+Rustible: ==== 42 MB (3.7x less)
 ```
-
-### Performance by Use Case
-
-| Use Case | Hosts | Ansible | Rustible | Speedup |
-|----------|-------|---------|----------|---------|
-| Small deployment | 5 | 42s | 8s | **5.3x** |
-| Medium deployment | 50 | 6m 30s | 1m 15s | **5.2x** |
-| Large fleet | 500 | 45m | 9m | **5.0x** |
-
-See [performance-summary.md](./performance-summary.md) for visual graphs and detailed breakdowns.
 
 ---
 
-## 🎯 Getting Started
+## Architecture Overview
+
+```
+                      Rustible Architecture
+
+  Playbook Parser  -->  Inventory Parser  -->  Variables Context
+         |                    |                       |
+         +--------------------+-----------------------+
+                              |
+                         Executor (async/await)
+                              |
+         +--------------------+-----------------------+
+         |                    |                       |
+    Linear Strategy    Free Strategy     HostPinned Strategy
+         |                    |                       |
+         +--------------------+-----------------------+
+                              |
+                       Connection Pool (11x speedup)
+                              |
+         +--------------------+-----------------------+
+         |                    |                       |
+    SSH (russh)       Docker (bollard)         Local (tokio)
+                              |
+                       Module Registry
+              (command, copy, template, package, ...)
+```
+
+See [architecture/ARCHITECTURE.md](./architecture/ARCHITECTURE.md) for detailed documentation.
+
+---
+
+## Getting Started
 
 ### Prerequisites
 
@@ -124,278 +147,24 @@ cargo build --release --features full
 ./target/release/rustible playbook examples/webservers.yml -i inventory/hosts.yml
 ```
 
-### Performance Testing
-
-```bash
-# Run performance regression tests
-cargo test --test performance_tests --release
-
-# Run SSH backend benchmarks
-export SSH_BENCH_HOST="your-test-host"
-cargo bench --bench russh_benchmark
-
-# Run parallel stress tests
-export RUSTIBLE_TEST_PARALLEL_ENABLED=1
-cargo test --test parallel_stress_tests -- --nocapture
-```
+See [guides/quick-start.md](./guides/quick-start.md) for complete instructions.
 
 ---
 
-## 🔬 Reproducing Benchmarks
+## Archive
 
-### Benchmark Environment
+Historical documentation, sprint reports, and implementation notes are preserved in:
 
-Our benchmarks use:
-- **Hardware:** Proxmox VE homelab cluster
-- **Network:** Gigabit LAN (0.5ms latency)
-- **Test targets:** 10+ Ubuntu/Debian VMs
-- **SSH:** Ed25519 key authentication
-
-### Running Benchmarks
-
-#### 1. Connection Pooling
-```bash
-cargo test --test ssh_benchmark --features "russh,ssh2-backend" -- --nocapture
-```
-
-#### 2. Module Execution
-```bash
-cargo bench --bench execution_benchmark
-```
-
-#### 3. Parallel Scaling
-```bash
-export RUSTIBLE_TEST_PARALLEL_ENABLED=1
-export RUSTIBLE_TEST_SCALE_HOSTS="host1,host2,host3,..."
-cargo test --test parallel_stress_tests -- --nocapture
-```
-
-#### 4. Memory Profiling
-```bash
-cargo build --release
-valgrind --tool=massif ./target/release/rustible playbook test.yml
-```
-
-See [performance.md](./performance.md#reproducing-benchmarks) for detailed instructions.
+- **[archive/](./archive/)** - Old reports, security audits, coverage analysis
 
 ---
 
-## 📖 Documentation Guide
+## Contributing
 
-### For Users
-
-1. Start with **[performance-summary.md](./performance-summary.md)** for quick overview
-2. Read **[ARCHITECTURE.md](./ARCHITECTURE.md)** to understand the system
-3. Check **[../ROADMAP.md](../ROADMAP.md)** for features and timeline
-
-### For Developers
-
-1. Review **[ARCHITECTURE.md](./ARCHITECTURE.md)** for system design
-2. Study **[performance.md](./performance.md)** for optimization techniques
-3. Explore **[../benches/](../benches/)** for benchmark implementation
-4. See **[../tests/](../tests/)** for test coverage
-
-### For Performance Analysis
-
-1. **[performance.md](./performance.md)** - Comprehensive data and methodology
-2. **[performance-summary.md](./performance-summary.md)** - Quick reference
-3. **[../benches/ssh_comparison/](../benches/ssh_comparison/)** - SSH library comparison
-4. **[../benches/README.md](../benches/README.md)** - Benchmark suite guide
-
----
-
-## 🏗️ Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Rustible Architecture                   │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   Playbook   │  │  Inventory   │  │  Variables   │     │
-│  │    Parser    │  │    Parser    │  │   Context    │     │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
-│         │                  │                  │              │
-│         └──────────────────┴──────────────────┘              │
-│                            │                                 │
-│                    ┌───────▼──────┐                          │
-│                    │   Executor   │                          │
-│                    │  (async/await)│                         │
-│                    └───────┬──────┘                          │
-│                            │                                 │
-│         ┌──────────────────┼──────────────────┐             │
-│         │                  │                  │              │
-│  ┌──────▼──────┐  ┌────────▼────────┐  ┌─────▼──────┐     │
-│  │   Linear    │  │      Free       │  │HostPinned  │     │
-│  │  Strategy   │  │    Strategy     │  │  Strategy  │     │
-│  └──────┬──────┘  └────────┬────────┘  └─────┬──────┘     │
-│         │                  │                  │              │
-│         └──────────────────┴──────────────────┘              │
-│                            │                                 │
-│                    ┌───────▼──────┐                          │
-│                    │ Connection   │ ← 11x speedup            │
-│                    │     Pool     │                          │
-│                    └───────┬──────┘                          │
-│                            │                                 │
-│         ┌──────────────────┼──────────────────┐             │
-│         │                  │                  │              │
-│  ┌──────▼──────┐  ┌────────▼────────┐  ┌─────▼──────┐     │
-│  │    SSH      │  │    Docker       │  │   Local    │     │
-│  │  (russh)    │  │   (bollard)     │  │  (tokio)   │     │
-│  └─────────────┘  └─────────────────┘  └────────────┘     │
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │              Module Registry                       │    │
-│  │  ┌─────────┬─────────┬─────────┬─────────┐       │    │
-│  │  │ command │  copy   │template │ package │  ...  │    │
-│  │  └─────────┴─────────┴─────────┴─────────┘       │    │
-│  └────────────────────────────────────────────────────┘    │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed component descriptions.
-
----
-
-## 🎓 Key Concepts
-
-### Connection Pooling
-
-Rustible maintains persistent SSH connections, avoiding the overhead of reconnecting for each task:
-
-```
-Traditional (Ansible):
-Task 1: Connect → Execute → Disconnect (570ms)
-Task 2: Connect → Execute → Disconnect (570ms)
-Task 3: Connect → Execute → Disconnect (570ms)
-
-Rustible with Pooling:
-Initial: Connect (500ms)
-Task 1: Execute (45ms)
-Task 2: Execute (45ms)
-Task 3: Execute (45ms)
-Final: Disconnect (deferred)
-
-Speedup: 11x faster
-```
-
-### Execution Strategies
-
-- **Linear:** Ansible-compatible, tasks complete on all hosts before next task
-- **Free:** Maximum performance, hosts proceed independently
-- **HostPinned:** Dedicated workers, best for stateful workflows
-
-### Native Async Architecture
-
-Rustible uses Rust's async/await with tokio runtime:
-- **Green threads:** Thousands of concurrent tasks
-- **Zero-copy:** Minimal memory allocation
-- **Non-blocking I/O:** True parallelism
-
----
-
-## 🔧 Optimization Techniques
-
-### 1. Connection Pooling (11x)
-- Reuse SSH connections across tasks
-- Configurable pool size and timeouts
-
-### 2. Compiled Modules (40-70x)
-- Native Rust code, no interpreter overhead
-- Optimized with LTO and codegen-units=1
-
-### 3. Native Async (2x parallel)
-- Tokio runtime for efficient concurrency
-- No fork() overhead like multiprocessing
-
-### 4. Zero-Copy Architecture
-- Reference passing instead of cloning
-- Efficient memory management
-
-### 5. russh Backend (1.5-2x)
-- Pure Rust, no C dependencies
-- Native async integration
-- Better parallel scaling
-
----
-
-## 📈 Performance Metrics
-
-### Connection Pooling Benchmark
-
-```
-50 tasks, 1 host
-
-Without Pool:
-Total time:     245.3 seconds
-Tasks/second:   0.20
-Per-task avg:   4.91 seconds
-
-With Pool:
-Total time:     22.1 seconds
-Tasks/second:   2.26
-Per-task avg:   0.44 seconds
-
-Improvement:    11.1x faster
-```
-
-### Module Execution Performance
-
-```
-Command Module (N=100):
-Mean:     12.3ms
-Median:   11.8ms
-P95:      15.2ms
-P99:      18.7ms
-Min:      9.4ms
-Max:      23.1ms
-
-Template Module (N=100):
-Mean:     28.4ms
-Median:   27.1ms
-P95:      35.7ms
-P99:      42.8ms
-```
-
-### Memory Scaling
-
-```
-Inventory Size → Memory Usage
-
-10 hosts:     24.3 MB   (2.43 MB/host)
-100 hosts:    67.8 MB   (678 KB/host)
-1000 hosts:   412.5 MB  (412 KB/host)
-5000 hosts:   1.8 GB    (360 KB/host)
-
-Formula: 18 MB + (hosts × 400 KB)
-```
-
----
-
-## 🤝 Contributing
-
-We welcome performance improvements and benchmark contributions!
-
-### Adding Benchmarks
-
-1. Create benchmark in `benches/`
-2. Follow criterion.rs patterns
-3. Document methodology
-4. Update this documentation
-
-See [../CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
-
----
-
-## 📞 Support & Resources
-
-- **GitHub:** [github.com/rustible/rustible](https://github.com/rustible/rustible)
-- **Issues:** [github.com/rustible/rustible/issues](https://github.com/rustible/rustible/issues)
-- **Discussions:** [github.com/rustible/rustible/discussions](https://github.com/rustible/rustible/discussions)
+See [development/CONTRIBUTING.md](./development/CONTRIBUTING.md) for guidelines.
 
 ---
 
 **Rustible** - Ansible compatibility with Rust performance
 
-*Last updated: 2025-12-25*
+*Last updated: 2025-12-27*

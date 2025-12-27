@@ -106,8 +106,7 @@ Rustible parses the same YAML structures that Ansible uses:
 While Rustible aims for full compatibility, some advanced features are still in development:
 
 - **Ansible Galaxy CLI**: Use `ansible-galaxy` to install collections, then run with Rustible
-- **Callback Plugins**: Custom Python callbacks not yet supported
-- **Some Connection Types**: WinRM and Kubernetes connections are planned
+- **Custom Python Plugins**: Custom Python callbacks not yet supported (native Rust callbacks available)
 
 #### Philosophy
 
@@ -135,10 +134,19 @@ This approach allows teams to adopt Rustible incrementally without rewriting the
 
 ### Connection Types
 
-- **SSH**: Secure remote execution with connection pooling
+- **SSH**: Secure remote execution with connection pooling (pure Rust via `russh` or libssh2)
 - **Local**: Direct local system execution without network overhead
 - **Docker**: Execute tasks inside Docker containers
-- **Kubernetes**: (Planned) Execute tasks in Kubernetes pods
+- **Kubernetes**: Execute tasks in Kubernetes pods (requires `kubernetes` feature)
+- **WinRM**: Windows Remote Management support (requires `winrm` feature)
+
+### Connection Resilience Features
+
+- **Circuit Breaker**: Automatic failure detection and recovery
+- **Retry Logic**: Exponential backoff with configurable policies
+- **Jump Host/Bastion**: Multi-hop SSH connections
+- **SSH Agent Forwarding**: Key forwarding support
+- **Health Monitoring**: Connection health checks and diagnostics
 
 ### Execution Strategies
 
@@ -167,6 +175,26 @@ cargo install --path .
 ```bash
 cargo install rustible
 ```
+
+### Feature Flags
+
+Rustible uses Cargo feature flags to enable optional functionality:
+
+```toml
+[dependencies]
+rustible = { version = "0.1", features = ["docker", "kubernetes"] }
+```
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `russh` | Pure Rust SSH implementation (recommended) | Yes |
+| `ssh2-backend` | libssh2-based SSH backend | No |
+| `docker` | Docker container and compose modules | No |
+| `kubernetes` | Kubernetes resource modules and connection | No |
+| `winrm` | Windows Remote Management connection | No |
+| `aws` | AWS cloud modules (EC2, S3) | No |
+| `azure` | Azure cloud modules (VMs, Resource Groups) | No |
+| `gcp` | Google Cloud modules (Compute Engine) | No |
 
 ## Quick Start
 
@@ -329,28 +357,205 @@ skipped = "cyan"
 
 ## Built-in Modules
 
-Rustible includes commonly-used modules:
+Rustible includes a comprehensive set of native modules organized by category:
+
+### Core Modules
 
 | Module | Description |
 |--------|-------------|
 | `command` | Execute commands |
 | `shell` | Execute shell commands |
-| `copy` | Copy files to remote |
-| `template` | Template and copy files |
-| `file` | Manage file properties |
-| `lineinfile` | Manage lines in files |
-| `package` | Manage packages (apt/yum/dnf) |
-| `service` | Manage services |
-| `user` | Manage users |
-| `group` | Manage groups |
-| `apt` | Manage apt packages |
-| `yum` | Manage yum packages |
-| `git` | Clone git repositories |
 | `debug` | Print debug messages |
 | `set_fact` | Set host facts |
+| `assert` | Assert conditions |
 | `pause` | Pause execution |
 | `wait_for` | Wait for conditions |
-| `assert` | Assert conditions |
+| `include_vars` | Include variables from files |
+| `stat` | Get file statistics |
+
+### File Management
+
+| Module | Description |
+|--------|-------------|
+| `copy` | Copy files to remote |
+| `template` | Template and copy files (Jinja2) |
+| `file` | Manage file properties |
+| `lineinfile` | Manage lines in files |
+| `blockinfile` | Manage blocks in files |
+| `archive` | Create compressed archives |
+| `unarchive` | Extract compressed archives |
+
+### Package Management
+
+| Module | Description |
+|--------|-------------|
+| `package` | Universal package manager (auto-detects apt/yum/dnf) |
+| `apt` | Debian/Ubuntu package management |
+| `yum` | RHEL/CentOS package management |
+| `dnf` | Fedora/RHEL 8+ package management |
+| `pip` | Python package management |
+
+### System Administration
+
+| Module | Description |
+|--------|-------------|
+| `service` | Manage services |
+| `systemd_unit` | Manage systemd units |
+| `user` | Manage users |
+| `group` | Manage groups |
+| `cron` | Manage cron jobs |
+| `mount` | Manage filesystem mounts |
+| `hostname` | Manage system hostname |
+| `sysctl` | Manage kernel parameters |
+| `timezone` | Manage system timezone |
+
+### Security Modules
+
+| Module | Description |
+|--------|-------------|
+| `authorized_key` | Manage SSH authorized keys |
+| `known_hosts` | Manage SSH known hosts |
+| `ufw` | Ubuntu firewall management |
+| `firewalld` | FirewallD management |
+| `selinux` | SELinux configuration |
+
+### Network Modules
+
+| Module | Description |
+|--------|-------------|
+| `uri` | HTTP/HTTPS requests |
+| `git` | Clone git repositories |
+
+### Network Device Configuration
+
+| Module | Description |
+|--------|-------------|
+| `ios_config` | Cisco IOS/IOS-XE configuration |
+| `nxos_config` | Cisco NX-OS configuration |
+| `junos_config` | Juniper Junos configuration |
+| `eos_config` | Arista EOS configuration |
+
+### Docker Modules (requires `docker` feature)
+
+| Module | Description |
+|--------|-------------|
+| `docker_container` | Manage containers |
+| `docker_image` | Manage images |
+| `docker_network` | Manage networks |
+| `docker_volume` | Manage volumes |
+| `docker_compose` | Docker Compose projects |
+
+### Kubernetes Modules (requires `kubernetes` feature)
+
+| Module | Description |
+|--------|-------------|
+| `k8s_deployment` | Manage Deployments |
+| `k8s_service` | Manage Services |
+| `k8s_configmap` | Manage ConfigMaps |
+| `k8s_secret` | Manage Secrets |
+| `k8s_namespace` | Manage Namespaces |
+
+### Windows Modules
+
+| Module | Description |
+|--------|-------------|
+| `win_copy` | Copy files to Windows |
+| `win_service` | Manage Windows services |
+| `win_package` | Chocolatey/MSI packages |
+| `win_user` | Manage Windows users |
+| `win_feature` | Windows Features |
+
+### Cloud Modules (require respective feature flags)
+
+| Module | Feature | Description |
+|--------|---------|-------------|
+| `aws_ec2_instance` | `aws` | AWS EC2 instances |
+| `aws_s3` | `aws` | AWS S3 buckets |
+| `azure_vm` | `azure` | Azure Virtual Machines |
+| `azure_resource_group` | `azure` | Azure Resource Groups |
+| `gcp_compute_instance` | `gcp` | GCP Compute Engine |
+| `gcp_compute_network` | `gcp` | GCP Networks |
+
+**Python Fallback**: Any module not listed above automatically falls back to Ansible's Python execution via AnsiballZ-style bundling.
+
+## Callback Plugins
+
+Rustible includes a rich set of native callback plugins for customizing output:
+
+### Core Output
+| Plugin | Description |
+|--------|-------------|
+| `default` | Standard Ansible-like output with colors |
+| `minimal` | Shows only failures and final recap (ideal for CI/CD) |
+| `null` | Silent callback - no output |
+| `oneline` | Compact single-line output for log files |
+| `summary` | Summary-only output at playbook end |
+
+### Visual
+| Plugin | Description |
+|--------|-------------|
+| `progress` | Visual progress bars |
+| `diff` | Shows before/after diffs for changed files |
+| `dense` | Compact output for large inventories |
+| `tree` | Hierarchical directory structure |
+
+### Timing & Analysis
+| Plugin | Description |
+|--------|-------------|
+| `timer` | Execution timing with summary |
+| `profile_tasks` | Detailed task profiling with recommendations |
+| `stats` | Comprehensive statistics collection |
+| `context` | Task context with variables/conditions |
+| `counter` | Task counting and tracking |
+
+### Filtering
+| Plugin | Description |
+|--------|-------------|
+| `skippy` | Minimizes skipped task output |
+| `selective` | Filters by status, host, or patterns |
+| `actionable` | Only shows changed/failed tasks |
+| `full_skip` | Detailed skip analysis |
+
+### Logging & Integration
+| Plugin | Description |
+|--------|-------------|
+| `json` | JSON-formatted output |
+| `yaml` | YAML-formatted output |
+| `junit` | JUnit XML for CI/CD integration |
+| `logfile` | File-based logging |
+| `syslog` | System syslog integration |
+| `slack` | Slack notifications |
+| `splunk` | Splunk integration |
+| `logstash` | Logstash integration |
+| `mail` | Email notifications |
+
+## Lookup Plugins
+
+Built-in lookup plugins for retrieving data from external sources:
+
+| Plugin | Description |
+|--------|-------------|
+| `file` | Read file contents |
+| `env` | Read environment variables |
+| `password` | Generate random passwords |
+| `pipe` | Execute commands and capture output |
+| `url` | Fetch content from HTTP/HTTPS URLs |
+
+## Dynamic Inventory Plugins
+
+Support for dynamic inventory from cloud providers:
+
+| Plugin | Description |
+|--------|-------------|
+| `aws_ec2` | AWS EC2 instances inventory |
+| `azure` | Azure Virtual Machines inventory |
+| `gcp` | Google Cloud Compute Engine inventory |
+
+Static inventory formats supported:
+- YAML format
+- INI format
+- JSON format
+- Dynamic scripts (executable inventory)
 
 ## Library Usage
 
@@ -476,33 +681,51 @@ rustible gpu-bootstrap.yml -i inventory.yml -f 50
 ```
 rustible/
 ├── src/
-│   ├── lib.rs           # Library root
-│   ├── main.rs          # CLI entry point
-│   ├── cli/             # CLI implementation
-│   ├── config.rs        # Configuration handling
-│   ├── connection/      # Connection implementations
-│   │   ├── ssh.rs       # SSH connections
-│   │   ├── local.rs     # Local execution
-│   │   └── docker.rs    # Docker connections
-│   ├── error.rs         # Error types
-│   ├── executor/        # Playbook execution
-│   ├── facts.rs         # Fact gathering
-│   ├── handlers.rs      # Handler management
-│   ├── inventory/       # Inventory handling
-│   ├── modules/         # Built-in modules
-│   ├── parser/          # YAML parsing
-│   ├── playbook.rs      # Playbook structures
-│   ├── roles.rs         # Role handling
-│   ├── strategy.rs      # Execution strategies
-│   ├── tasks.rs         # Task definitions
-│   ├── template.rs      # Template engine
-│   ├── traits.rs        # Core traits
-│   ├── vars/            # Variable handling
-│   └── vault.rs         # Vault encryption
-├── docs/
-│   └── ARCHITECTURE.md  # Architecture documentation
-├── tests/               # Integration tests
-├── benches/             # Benchmarks
+│   ├── lib.rs              # Library root
+│   ├── main.rs             # CLI entry point
+│   ├── cli/                # CLI implementation
+│   ├── config.rs           # Configuration handling
+│   ├── connection/         # Connection implementations
+│   │   ├── russh.rs        # Pure Rust SSH (default)
+│   │   ├── ssh.rs          # libssh2 backend
+│   │   ├── local.rs        # Local execution
+│   │   ├── docker.rs       # Docker containers
+│   │   ├── kubernetes.rs   # Kubernetes pods
+│   │   ├── winrm.rs        # Windows Remote Management
+│   │   ├── circuit_breaker.rs  # Connection resilience
+│   │   ├── jump_host.rs    # Bastion/jump host support
+│   │   └── health.rs       # Health monitoring
+│   ├── callback/           # Callback plugin system
+│   │   ├── plugins/        # 25+ output plugins
+│   │   └── manager.rs      # Callback orchestration
+│   ├── error.rs            # Error types
+│   ├── executor/           # Playbook execution
+│   ├── facts.rs            # Fact gathering
+│   ├── handlers.rs         # Handler management
+│   ├── inventory/          # Inventory handling
+│   │   ├── plugins/        # Dynamic inventory plugins
+│   │   └── ...
+│   ├── lookup/             # Lookup plugins
+│   ├── modules/            # Built-in modules
+│   │   ├── cloud/          # AWS, Azure, GCP modules
+│   │   ├── docker/         # Docker modules
+│   │   ├── k8s/            # Kubernetes modules
+│   │   ├── network/        # Network device modules
+│   │   ├── windows/        # Windows modules
+│   │   └── ...             # Core modules
+│   ├── parser/             # YAML parsing
+│   ├── playbook.rs         # Playbook structures
+│   ├── roles.rs            # Role handling
+│   ├── strategy.rs         # Execution strategies
+│   ├── tasks.rs            # Task definitions
+│   ├── template.rs         # Template engine (minijinja)
+│   ├── traits.rs           # Core traits
+│   ├── vars/               # Variable handling
+│   └── vault.rs            # Vault encryption (AES-256-GCM)
+├── docs/                   # Documentation
+├── tests/                  # Integration tests
+├── benches/                # Benchmarks
+├── examples/               # Example playbooks
 ├── Cargo.toml
 └── README.md
 ```
@@ -570,20 +793,34 @@ See `tests/infrastructure/README.md` for detailed setup instructions.
 
 ## Roadmap
 
+### Completed Features
 - [x] Core playbook execution
-- [x] SSH connections with pooling
+- [x] SSH connections with pooling (pure Rust via russh)
 - [x] Local execution
 - [x] Docker connections
-- [x] Template engine (Jinja2-compatible)
-- [x] Vault encryption
+- [x] Kubernetes connections (feature-gated)
+- [x] WinRM connections (feature-gated)
+- [x] Template engine (Jinja2-compatible via minijinja)
+- [x] Vault encryption (AES-256-GCM)
 - [x] Role support
 - [x] Handler notifications
-- [ ] Kubernetes connections
-- [ ] WinRM connections
-- [ ] Dynamic inventory plugins
-- [ ] Callback plugins
-- [ ] Ansible Galaxy support
+- [x] Dynamic inventory plugins (AWS EC2, Azure, GCP)
+- [x] Callback plugins (25+ native plugins)
+- [x] Lookup plugins (file, env, password, pipe, url)
+- [x] Network device modules (Cisco IOS/NX-OS, Juniper, Arista)
+- [x] Docker modules (container, image, network, volume, compose)
+- [x] Kubernetes modules (deployment, service, configmap, secret, namespace)
+- [x] Windows modules (copy, service, package, user, feature)
+- [x] Cloud modules (AWS, Azure, GCP - feature-gated)
+- [x] Circuit breaker and retry patterns
+- [x] Jump host/bastion support
+- [x] SSH agent forwarding
+
+### Planned Features
+- [ ] Ansible Galaxy support (CLI integration)
 - [ ] Web UI
+- [ ] Custom Python plugin support
+- [ ] Database modules (PostgreSQL, MySQL - pending sqlx integration)
 
 ## License
 

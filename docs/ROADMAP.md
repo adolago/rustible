@@ -34,86 +34,234 @@ A comprehensive roadmap for Rustible development, outlining current features, pl
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Playbook parsing | Complete | YAML playbooks with plays, tasks, handlers |
-| Inventory management | Complete | YAML, INI, JSON formats; dynamic scripts |
-| Task execution | Complete | Sequential and parallel task execution |
-| Variable resolution | Complete | Full variable precedence chain |
-| Template engine | Complete | Jinja2-compatible via MiniJinja |
-| Handlers | Complete | Including `listen` for multiple triggers |
-| Blocks | Complete | `block`, `rescue`, `always` error handling |
-| Roles | Complete | Full role structure support |
-| Tags | Complete | Task filtering with `--tags`/`--skip-tags` |
+| Playbook parsing | :white_check_mark: Complete | YAML playbooks with plays, tasks, handlers |
+| Inventory management | :white_check_mark: Complete | YAML, INI, JSON formats; dynamic scripts |
+| Task execution | :white_check_mark: Complete | Sequential and parallel task execution |
+| Variable resolution | :white_check_mark: Complete | Full variable precedence chain |
+| Template engine | :white_check_mark: Complete | Jinja2-compatible via MiniJinja |
+| Handlers | :white_check_mark: Complete | Including `listen` for multiple triggers |
+| Blocks | :white_check_mark: Complete | `block`, `rescue`, `always` error handling |
+| Roles | :white_check_mark: Complete | Full role structure support |
+| Tags | :white_check_mark: Complete | Task filtering with `--tags`/`--skip-tags` |
+| Fact gathering | :white_check_mark: Complete | gather_facts/setup module support |
 
 ### Connection Types
 
 | Connection | Status | Description |
 |------------|--------|-------------|
-| SSH (russh) | Complete | Pure Rust SSH with connection pooling (11x faster) |
-| SSH (ssh2) | Complete | libssh2 wrapper (legacy option) |
-| Local | Complete | Direct localhost execution |
-| Docker | Complete | Container execution via Bollard |
-| Kubernetes | Planned | Pod execution via kube-rs |
+| SSH (russh) | :white_check_mark: Complete | Pure Rust SSH with connection pooling (11x faster) |
+| SSH (ssh2) | :white_check_mark: Complete | libssh2 wrapper (legacy option) |
+| Local | :white_check_mark: Complete | Direct localhost execution |
+| Docker | :white_check_mark: Complete | Container execution via Bollard |
+| Kubernetes | :white_check_mark: Complete | Pod execution via kube-rs (feature-gated) |
+| WinRM | :construction: In Progress | Windows remote management (feature-gated) |
+| Jump Host | :white_check_mark: Complete | Bastion/jump host support |
+| SSH Agent | :white_check_mark: Complete | SSH agent forwarding |
 
-### Native Modules (31 total)
+### Native Modules (50+ total)
 
 **File Operations:**
-- `file` - File/directory management
-- `copy` - Copy files to remote
-- `template` - Jinja2 template rendering
-- `lineinfile` - Line manipulation in files
-- `blockinfile` - Block manipulation in files
-- `stat` - File statistics
-- `archive` - Archive creation/extraction
+- :white_check_mark: `file` - File/directory management
+- :white_check_mark: `copy` - Copy files to remote
+- :white_check_mark: `template` - Jinja2 template rendering
+- :white_check_mark: `lineinfile` - Line manipulation in files
+- :white_check_mark: `blockinfile` - Block manipulation in files
+- :white_check_mark: `stat` - File statistics
+- :white_check_mark: `archive` - Archive creation
+- :white_check_mark: `unarchive` - Archive extraction
 
 **Command Execution:**
-- `command` - Execute commands (no shell)
-- `shell` - Execute shell commands
+- :white_check_mark: `command` - Execute commands (no shell)
+- :white_check_mark: `shell` - Execute shell commands
 
 **Package Management:**
-- `package` - Generic package manager abstraction
-- `apt` - Debian/Ubuntu package management
-- `yum` - RHEL/CentOS package management
-- `dnf` - Fedora/RHEL 8+ package management
-- `pip` - Python package management
+- :white_check_mark: `package` - Generic package manager abstraction
+- :white_check_mark: `apt` - Debian/Ubuntu package management
+- :white_check_mark: `yum` - RHEL/CentOS package management
+- :white_check_mark: `dnf` - Fedora/RHEL 8+ package management
+- :white_check_mark: `pip` - Python package management
 
 **System Management:**
-- `service` - Service control (systemd/init)
-- `systemd_unit` - Systemd unit file management
-- `user` - User account management
-- `group` - Group management
-- `hostname` - Hostname configuration
-- `sysctl` - Kernel parameter management
-- `mount` - Filesystem mounting
-- `cron` - Cron job management
+- :white_check_mark: `service` - Service control (systemd/init)
+- :white_check_mark: `systemd_unit` - Systemd unit file management
+- :white_check_mark: `user` - User account management
+- :white_check_mark: `group` - Group management
+- :white_check_mark: `hostname` - Hostname configuration
+- :white_check_mark: `sysctl` - Kernel parameter management
+- :white_check_mark: `mount` - Filesystem mounting
+- :white_check_mark: `cron` - Cron job management
+- :white_check_mark: `timezone` - Timezone configuration
+- :white_check_mark: `selinux` - SELinux configuration
+
+**Security Modules:**
+- :white_check_mark: `authorized_key` - SSH authorized keys management
+- :white_check_mark: `known_hosts` - SSH known hosts management
+- :white_check_mark: `ufw` - UFW firewall management
+- :white_check_mark: `firewalld` - Firewalld management
 
 **Utility Modules:**
-- `debug` - Debug message output
-- `set_fact` - Set host facts
-- `assert` - Condition assertions
-- `include_vars` - Include variable files
-- `facts` - Fact gathering
-- `uri` - HTTP/HTTPS requests
-- `git` - Git repository management
+- :white_check_mark: `debug` - Debug message output
+- :white_check_mark: `set_fact` - Set host facts
+- :white_check_mark: `assert` - Condition assertions
+- :white_check_mark: `include_vars` - Include variable files
+- :white_check_mark: `facts` / `gather_facts` - Fact gathering
+- :white_check_mark: `uri` - HTTP/HTTPS requests
+- :white_check_mark: `git` - Git repository management
+- :white_check_mark: `wait_for` - Wait for conditions (port, file, regex)
+- :white_check_mark: `pause` - Pause execution with prompt
+
+**Docker Modules:**
+- :white_check_mark: `docker_container` - Container management
+- :white_check_mark: `docker_image` - Image management
+- :white_check_mark: `docker_network` - Network management
+- :white_check_mark: `docker_volume` - Volume management
+- :white_check_mark: `docker_compose` - Docker Compose support
+
+**Kubernetes Modules:**
+- :white_check_mark: `k8s_deployment` - Deployment management
+- :white_check_mark: `k8s_service` - Service management
+- :white_check_mark: `k8s_configmap` - ConfigMap management
+- :white_check_mark: `k8s_secret` - Secret management
+- :white_check_mark: `k8s_namespace` - Namespace management
+
+**Cloud Modules:**
+- :white_check_mark: `aws_ec2` - AWS EC2 instances
+- :white_check_mark: `aws_s3` - AWS S3 storage
+- :white_check_mark: `azure_vm` - Azure virtual machines
+- :white_check_mark: `gcp_compute` - GCP Compute Engine
+
+**Network Device Modules:**
+- :white_check_mark: `ios_config` - Cisco IOS configuration
+- :white_check_mark: `eos_config` - Arista EOS configuration
+- :white_check_mark: `junos_config` - Juniper Junos configuration
+- :white_check_mark: `nxos_config` - Cisco NX-OS configuration
+
+**Windows Modules (feature-gated):**
+- :white_check_mark: `win_copy` - Windows file copy
+- :white_check_mark: `win_feature` - Windows features
+- :white_check_mark: `win_service` - Windows services
+- :white_check_mark: `win_package` - Windows packages
+- :white_check_mark: `win_user` - Windows user management
 
 **Fallback:**
-- `python` - Ansible Python module fallback (FQCN support)
+- :white_check_mark: `python` - Ansible Python module fallback (FQCN support)
 
 ### Execution Strategies
 
 | Strategy | Status | Description |
 |----------|--------|-------------|
-| Linear | Complete | Task-by-task across all hosts (Ansible default) |
-| Free | Complete | Maximum parallelism, hosts run independently |
-| HostPinned | Complete | Dedicated worker per host (connection affinity) |
+| Linear | :white_check_mark: Complete | Task-by-task across all hosts (Ansible default) |
+| Free | :white_check_mark: Complete | Maximum parallelism, hosts run independently |
+| HostPinned | :white_check_mark: Complete | Dedicated worker per host (connection affinity) |
+
+### Advanced Execution Features
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Parallelization hints | :white_check_mark: Complete | Module-level concurrency control |
+| Batch processing | :white_check_mark: Complete | Reduces loop overhead (87x improvement) |
+| Work stealing scheduler | :white_check_mark: Complete | Optimal load balancing |
+| Async task execution | :white_check_mark: Complete | Timeout and polling support |
+| Throttle control | :white_check_mark: Complete | Rate limits and concurrency control |
+| Fact pipeline | :white_check_mark: Complete | Optimized fact gathering |
+| Condition evaluation | :white_check_mark: Complete | when/changed_when/failed_when |
+| Dependency graph | :white_check_mark: Complete | DAG-based task ordering |
+
+### Callback Plugins (30+ total)
+
+**Core Output:**
+- :white_check_mark: `default` - Standard Ansible-like output with colors
+- :white_check_mark: `minimal` - Shows only failures and final recap
+- :white_check_mark: `null` - Silent callback (no output)
+- :white_check_mark: `oneline` - Compact single-line output
+- :white_check_mark: `summary` - Summary-only output at playbook end
+
+**Visual:**
+- :white_check_mark: `progress` - Visual progress bars
+- :white_check_mark: `diff` - Before/after diffs for changed files
+- :white_check_mark: `dense` - Compact output for large inventories
+- :white_check_mark: `tree` - Hierarchical directory structure
+
+**Timing & Analysis:**
+- :white_check_mark: `timer` - Execution timing with summary
+- :white_check_mark: `context` - Task context with variables/conditions
+- :white_check_mark: `stats` - Comprehensive statistics collection
+- :white_check_mark: `counter` - Task counting and tracking
+- :white_check_mark: `profile_tasks` - Task profiling with recommendations
+
+**Filtering:**
+- :white_check_mark: `skippy` - Minimizes skipped task output
+- :white_check_mark: `selective` - Filters output by status/host/patterns
+- :white_check_mark: `actionable` - Only changed/failed tasks
+- :white_check_mark: `full_skip` - Detailed skip analysis
+
+**Logging:**
+- :white_check_mark: `json` - JSON-formatted output
+- :white_check_mark: `yaml` - YAML-formatted output
+- :white_check_mark: `logfile` - File-based logging
+- :white_check_mark: `syslog` - System syslog integration
+- :white_check_mark: `debug` - Debug output for development
+
+**Integration:**
+- :white_check_mark: `notification` - External notifications (Slack, Email, Webhooks)
+- :white_check_mark: `junit` - JUnit XML output for CI/CD
+- :white_check_mark: `mail` - Email notifications
+- :white_check_mark: `forked` - Parallel execution output
+- :white_check_mark: `slack` - Slack notifications
+- :white_check_mark: `logstash` - Logstash integration
+- :white_check_mark: `splunk` - Splunk integration
+
+### Lookup Plugins
+
+| Plugin | Status | Description |
+|--------|--------|-------------|
+| `file` | :white_check_mark: Complete | Read file contents |
+| `env` | :white_check_mark: Complete | Environment variables |
+| `password` | :white_check_mark: Complete | Generate random passwords |
+| `pipe` | :white_check_mark: Complete | Execute commands and capture output |
+| `url` | :white_check_mark: Complete | Fetch content from HTTP/HTTPS URLs |
+
+### Dynamic Inventory Plugins
+
+| Plugin | Status | Description |
+|--------|--------|-------------|
+| `aws_ec2` | :white_check_mark: Complete | AWS EC2 instances |
+| `azure` | :white_check_mark: Complete | Azure virtual machines |
+| `gcp` | :white_check_mark: Complete | GCP Compute Engine |
+| Constructed inventory | :white_check_mark: Complete | Dynamic group construction |
+| Inventory caching | :white_check_mark: Complete | Cache inventory results |
+
+### Galaxy Support
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Collection installation | :white_check_mark: Complete | Install from Galaxy or tarballs |
+| Role installation | :white_check_mark: Complete | Install from Galaxy or Git |
+| Requirements parsing | :white_check_mark: Complete | Process requirements.yml |
+| Local caching | :white_check_mark: Complete | Cache with integrity verification |
+| Offline mode | :white_check_mark: Complete | Fall back to cached artifacts |
+| Version constraints | :white_check_mark: Complete | Semantic version matching |
 
 ### Security Features
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Vault encryption | Complete | AES-256-GCM with Argon2id key derivation |
-| Privilege escalation | Complete | `become`, `become_user`, `become_method` |
-| SSH key authentication | Complete | RSA, Ed25519, ECDSA keys |
-| Host key checking | Complete | Configurable strict/accept modes |
+| Vault encryption | :white_check_mark: Complete | AES-256-GCM with Argon2id key derivation |
+| Privilege escalation | :white_check_mark: Complete | `become`, `become_user`, `become_method` |
+| SSH key authentication | :white_check_mark: Complete | RSA, Ed25519, ECDSA keys |
+| Host key checking | :white_check_mark: Complete | Configurable strict/accept modes |
+| Circuit breaker | :white_check_mark: Complete | Connection resilience pattern |
+| Network security | :white_check_mark: Complete | Host key pinning, TLS validation |
+| Audit logging | :white_check_mark: Complete | Encryption audit trail |
+
+### Connection Resilience
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Connection pooling | :white_check_mark: Complete | Reuse SSH connections |
+| Retry logic | :white_check_mark: Complete | Exponential backoff |
+| Health monitoring | :white_check_mark: Complete | Connection health checks |
+| Graceful degradation | :white_check_mark: Complete | Degradation strategies |
 
 ### Performance Metrics (v0.1)
 
@@ -121,6 +269,7 @@ A comprehensive roadmap for Rustible development, outlining current features, pl
 - **Simple playbook (10 hosts)**: 5.8x improvement
 - **File copy (100 files)**: 5.6x improvement
 - **Template rendering**: 5.3x improvement
+- **Loop operations**: 87x improvement with batch processing
 - **Test coverage**: ~3,246 tests (99.1% pass rate)
 
 ---
@@ -128,37 +277,17 @@ A comprehensive roadmap for Rustible development, outlining current features, pl
 ## v0.2 - Planned Features
 
 **Target**: Q1 2026
-**Focus**: Stability, execution preview, parallelization intelligence
+**Focus**: Stability, execution preview, enhanced testing
 
 ### Critical Path (Stabilization)
 
 | Task | Priority | Description |
 |------|----------|-------------|
 | Fix remaining tests | Critical | Achieve 100% test pass rate |
-| Ansible boolean compat | High | Fix 4 failing boolean tests |
-| Block parsing | High | Fix 9 block parsing edge cases |
-| Python/FQCN edge cases | High | Fix 10 FQCN resolution issues |
-| CLI edge cases | Medium | Fix 3 CLI handling issues |
-
-### ParallelizationHint Enforcement
-
-Intelligent per-module concurrency control:
-
-```rust
-pub enum ParallelizationHint {
-    FullyParallel,                           // Default - maximum parallelism
-    HostExclusive,                           // apt/yum - one per host at a time
-    RateLimited { requests_per_second: u32 }, // API calls - throttled
-    GlobalExclusive,                          // Cluster-wide operations - serialized
-}
-```
-
-| Module | Hint | Rationale |
-|--------|------|-----------|
-| file, copy, template | FullyParallel | No conflicts |
-| apt, yum, dnf | HostExclusive | Package lock contention |
-| uri (API calls) | RateLimited | API rate limits |
-| cluster operations | GlobalExclusive | Data consistency |
+| Ansible boolean compat | High | Fix remaining boolean edge cases |
+| Block parsing | High | Fix block parsing edge cases |
+| Python/FQCN edge cases | High | Fix FQCN resolution issues |
+| CLI edge cases | Medium | Fix CLI handling issues |
 
 ### Execution Plan Preview
 
@@ -194,22 +323,19 @@ module.schema().validate(&task.args)?;
 
 ```
 ~/.rustible/state/
-├── web1.example.com.json
-├── web2.example.com.json
-└── db1.example.com.json
+  web1.example.com.json
+  web2.example.com.json
+  db1.example.com.json
 ```
 
 ### New Modules Planned
 
 | Module | Priority | Description |
 |--------|----------|-------------|
-| `wait_for` | High | Wait for conditions (port, file, regex) |
-| `pause` | High | Pause execution with prompt |
-| `fail` | Medium | Fail with custom message |
-| `meta` | Medium | Meta actions (flush handlers, etc.) |
+| `fail` | High | Fail with custom message |
+| `meta` | High | Meta actions (flush handlers, etc.) |
 | `raw` | Medium | Raw command execution (no Python) |
 | `script` | Medium | Transfer and execute script |
-| `unarchive` | Medium | Extract archives on remote |
 | `synchronize` | Low | rsync wrapper |
 
 ---
@@ -343,20 +469,20 @@ rustible run --agent-mode playbook.yml
 
 | Feature | Status | Target |
 |---------|--------|--------|
-| Playbook syntax | Complete | 100% |
-| Module compatibility | ~85% | 95%+ |
-| Ansible Galaxy | Planned | Full support |
-| Callback plugins | Planned | Python plugin support |
-| Dynamic inventory | Partial | Full plugin system |
-| Lookup plugins | Partial | Full support |
+| Playbook syntax | :white_check_mark: Complete | 100% |
+| Module compatibility | ~90% | 95%+ |
+| Ansible Galaxy | :white_check_mark: Complete | Full support |
+| Callback plugins | :white_check_mark: Complete | Native + Python support |
+| Dynamic inventory | :white_check_mark: Complete | Full plugin system |
+| Lookup plugins | :white_check_mark: Complete | Full support |
 | Filter plugins | Partial | Full Jinja2 filters |
 
 ### Connection Enhancements
 
 | Connection | Status | Target |
 |------------|--------|--------|
-| WinRM | Planned | Windows remote management |
-| Kubernetes | Planned | Pod execution |
+| WinRM | :construction: In Progress | Windows remote management |
+| Kubernetes | :white_check_mark: Complete | Pod execution |
 | Podman | Planned | Rootless containers |
 | AWS SSM | Planned | EC2 Session Manager |
 
@@ -376,16 +502,14 @@ We track community requests and prioritize based on demand and alignment with pr
 
 | Request | Votes | Status | Priority |
 |---------|-------|--------|----------|
-| Ansible Galaxy collection support | - | Planned (v1.0) | High |
-| WinRM connection support | - | Planned (v1.0) | Medium |
+| Podman connection support | - | Planned (v1.0) | Medium |
 | Web UI for playbook management | - | Under consideration | Low |
 | Terraform integration | - | Under consideration | Medium |
 | HashiCorp Vault integration | - | Under consideration | Medium |
 | AWX/Tower API compatibility | - | Under consideration | Low |
 | YAML anchor/alias support | - | Investigating | Medium |
-| Custom callback plugin API | - | Planned (v1.0) | Medium |
 | Parallel role execution | - | Investigating | Medium |
-| Incremental fact gathering | - | Planned (v0.2) | High |
+| Database modules (MySQL/PostgreSQL) | - | Planned (v0.2) | High |
 
 ### Feature Request Template
 
@@ -596,7 +720,7 @@ Brief description of changes.
 |---------|-------------|-------|
 | v0.1.0 | Dec 2025 | MVP - Core functionality |
 | v0.1.x | Jan 2026 | Bug fixes, stability |
-| v0.2.0 | Q1 2026 | Execution preview, parallelization |
+| v0.2.0 | Q1 2026 | Execution preview, schema validation |
 | v0.3.0 | Q2 2026 | State management, drift detection |
 | v0.4.0 | Q3 2026 | Native bindings, performance |
 | v1.0.0 | Q4 2026 | Production ready, full compatibility |
