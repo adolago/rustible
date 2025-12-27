@@ -39,12 +39,12 @@ use rustible::connection::config::{
     ConnectionConfig, HostConfig, RetryConfig, SshConfigParser, DEFAULT_RETRIES,
     DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT,
 };
-#[cfg(feature = "russh")]
-use rustible::connection::RusshConnection;
 use rustible::connection::{
     CommandResult, Connection, ConnectionError, ConnectionResult, ExecuteOptions, FileStat,
     TransferOptions,
 };
+#[cfg(feature = "russh")]
+use rustible::connection::RusshConnection;
 
 // ============================================================================
 // TEST FIXTURES DIRECTORY SETUP
@@ -452,7 +452,10 @@ mod config_parsing {
         assert_eq!(config.hostname, Some("example.com".to_string()));
         assert_eq!(config.port, Some(2222));
         assert_eq!(config.user, Some("admin".to_string()));
-        assert_eq!(config.identity_file, Some("~/.ssh/id_ed25519".to_string()));
+        assert_eq!(
+            config.identity_file,
+            Some("~/.ssh/id_ed25519".to_string())
+        );
         assert_eq!(config.connect_timeout, Some(60));
     }
 
@@ -576,14 +579,8 @@ Host lenient
 
         let hosts = SshConfigParser::parse(config).unwrap();
 
-        assert_eq!(
-            hosts.get("strict").unwrap().strict_host_key_checking,
-            Some(true)
-        );
-        assert_eq!(
-            hosts.get("lenient").unwrap().strict_host_key_checking,
-            Some(false)
-        );
+        assert_eq!(hosts.get("strict").unwrap().strict_host_key_checking, Some(true));
+        assert_eq!(hosts.get("lenient").unwrap().strict_host_key_checking, Some(false));
     }
 
     #[test]
@@ -688,8 +685,10 @@ mod auth_config {
     #[test]
     fn test_auth_config_identity_files() {
         let mut config = ConnectionConfig::default();
-        config.defaults.identity_files =
-            vec!["~/.ssh/id_ed25519".to_string(), "~/.ssh/id_rsa".to_string()];
+        config.defaults.identity_files = vec![
+            "~/.ssh/id_ed25519".to_string(),
+            "~/.ssh/id_rsa".to_string(),
+        ];
 
         assert_eq!(config.defaults.identity_files.len(), 2);
         assert!(config.defaults.identity_files[0].contains("ed25519"));
@@ -1199,6 +1198,7 @@ mod mock_connection {
 // INTEGRATION TEST STUBS (REQUIRE REAL SSH INFRASTRUCTURE)
 // ============================================================================
 
+#[cfg(feature = "russh")]
 mod integration_tests {
     use super::*;
 
@@ -1218,25 +1218,17 @@ mod integration_tests {
 
         let (host, port, user) = get_ssh_test_config().expect("SSH test config required");
 
-        #[cfg(feature = "russh")]
-        {
-            let conn =
-                RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
-                    .await
-                    .expect("Failed to connect to SSH server");
+        let conn = RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
+            .await
+            .expect("Failed to connect to SSH server");
 
-            assert!(conn.is_alive().await);
-            conn.close().await.unwrap();
-        }
-
-        #[cfg(not(feature = "russh"))]
-        eprintln!("Would connect to {}@{}:{}", user, host, port);
+        assert!(conn.is_alive().await);
+        conn.close().await.unwrap();
     }
 
     /// Test executing a command on a real SSH server
     #[tokio::test]
     #[ignore = "Requires real SSH infrastructure - set RUSTIBLE_SSH_TEST_HOST env var"]
-    #[cfg(feature = "russh")]
     async fn test_russh_execute() {
         if !has_ssh_infrastructure() {
             eprintln!("Skipping: No SSH infrastructure available");
@@ -1270,41 +1262,30 @@ mod integration_tests {
         }
 
         let (host, port, user) = get_ssh_test_config().expect("SSH test config required");
-        #[cfg(feature = "russh")]
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
-        #[cfg(feature = "russh")]
-        {
-            let conn =
-                RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
-                    .await
-                    .expect("Failed to connect");
+        let conn = RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
+            .await
+            .expect("Failed to connect");
 
-            // Create a local file to upload
-            let local_file = temp_dir.path().join("upload_test.txt");
-            std::fs::write(&local_file, b"Upload test content").unwrap();
+        // Create a local file to upload
+        let local_file = temp_dir.path().join("upload_test.txt");
+        std::fs::write(&local_file, b"Upload test content").unwrap();
 
-            let remote_path = PathBuf::from("/tmp/rustible_upload_test.txt");
+        let remote_path = PathBuf::from("/tmp/rustible_upload_test.txt");
 
-            conn.upload(&local_file, &remote_path, None).await.unwrap();
+        conn.upload(&local_file, &remote_path, None).await.unwrap();
 
-            // Verify file exists on remote
-            assert!(conn.path_exists(&remote_path).await.unwrap());
+        // Verify file exists on remote
+        assert!(conn.path_exists(&remote_path).await.unwrap());
 
-            // Clean up
-            conn.execute("rm /tmp/rustible_upload_test.txt", None)
-                .await
-                .unwrap();
-            conn.close().await.unwrap();
-        }
-
-        #[cfg(not(feature = "russh"))]
-        eprintln!("Would upload file to {}@{}:{}", user, host, port);
+        // Clean up
+        conn.execute("rm /tmp/rustible_upload_test.txt", None).await.unwrap();
+        conn.close().await.unwrap();
     }
 
     /// Test downloading a file via SFTP from a real SSH server
     #[tokio::test]
-    #[cfg(feature = "russh")]
     #[ignore = "Requires real SSH infrastructure - set RUSTIBLE_SSH_TEST_HOST env var"]
     async fn test_russh_download() {
         if !has_ssh_infrastructure() {
@@ -1320,12 +1301,9 @@ mod integration_tests {
             .expect("Failed to connect");
 
         // Create a remote file to download
-        conn.execute(
-            "echo 'Download test content' > /tmp/rustible_download_test.txt",
-            None,
-        )
-        .await
-        .unwrap();
+        conn.execute("echo 'Download test content' > /tmp/rustible_download_test.txt", None)
+            .await
+            .unwrap();
 
         let remote_path = PathBuf::from("/tmp/rustible_download_test.txt");
         let local_path = temp_dir.path().join("downloaded.txt");
@@ -1337,9 +1315,7 @@ mod integration_tests {
         assert!(content.contains("Download test content"));
 
         // Clean up
-        conn.execute("rm /tmp/rustible_download_test.txt", None)
-            .await
-            .unwrap();
+        conn.execute("rm /tmp/rustible_download_test.txt", None).await.unwrap();
         conn.close().await.unwrap();
     }
 
@@ -1354,49 +1330,35 @@ mod integration_tests {
 
         let (host, port, user) = get_ssh_test_config().expect("SSH test config required");
 
-        #[cfg(feature = "russh")]
-        {
-            let conn =
-                RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
-                    .await
-                    .expect("Failed to connect");
+        let conn = RusshConnection::connect(&host, port, &user, None, &ConnectionConfig::default())
+            .await
+            .expect("Failed to connect");
 
-            // Test upload_content
-            let content = b"SFTP test content";
-            let remote_path = PathBuf::from("/tmp/rustible_sftp_test.txt");
+        // Test upload_content
+        let content = b"SFTP test content";
+        let remote_path = PathBuf::from("/tmp/rustible_sftp_test.txt");
 
-            conn.upload_content(content, &remote_path, None)
-                .await
-                .unwrap();
+        conn.upload_content(content, &remote_path, None).await.unwrap();
 
-            // Test path_exists
-            assert!(conn.path_exists(&remote_path).await.unwrap());
+        // Test path_exists
+        assert!(conn.path_exists(&remote_path).await.unwrap());
 
-            // Test stat
-            let stat = conn.stat(&remote_path).await.unwrap();
-            assert!(stat.is_file);
-            assert_eq!(stat.size, content.len() as u64);
+        // Test stat
+        let stat = conn.stat(&remote_path).await.unwrap();
+        assert!(stat.is_file);
+        assert_eq!(stat.size, content.len() as u64);
 
-            // Test download_content
-            let downloaded = conn.download_content(&remote_path).await.unwrap();
-            assert_eq!(downloaded, content);
+        // Test download_content
+        let downloaded = conn.download_content(&remote_path).await.unwrap();
+        assert_eq!(downloaded, content);
 
-            // Test is_directory
-            assert!(!conn.is_directory(&remote_path).await.unwrap());
-            assert!(conn.is_directory(&PathBuf::from("/tmp")).await.unwrap());
+        // Test is_directory
+        assert!(!conn.is_directory(&remote_path).await.unwrap());
+        assert!(conn.is_directory(&PathBuf::from("/tmp")).await.unwrap());
 
-            // Clean up
-            conn.execute("rm /tmp/rustible_sftp_test.txt", None)
-                .await
-                .unwrap();
-            conn.close().await.unwrap();
-        }
-
-        #[cfg(not(feature = "russh"))]
-        eprintln!(
-            "Would perform SFTP operations on {}@{}:{}",
-            user, host, port
-        );
+        // Clean up
+        conn.execute("rm /tmp/rustible_sftp_test.txt", None).await.unwrap();
+        conn.close().await.unwrap();
     }
 
     /// Test SSH connection with key authentication
@@ -1516,8 +1478,9 @@ mod ci_safe_tests {
 
         for i in 0..20 {
             let conn_clone = conn.clone();
-            let handle =
-                tokio::spawn(async move { conn_clone.execute(&format!("cmd_{}", i), None).await });
+            let handle = tokio::spawn(async move {
+                conn_clone.execute(&format!("cmd_{}", i), None).await
+            });
             handles.push(handle);
         }
 
