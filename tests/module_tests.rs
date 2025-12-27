@@ -3951,12 +3951,13 @@ fn test_error_invalid_file_state() {
 }
 
 #[test]
-fn test_error_template_missing_variable() {
+fn test_error_template_invalid_syntax() {
     let temp = TempDir::new().unwrap();
     let src = temp.path().join("template.j2");
     let dest = temp.path().join("output.txt");
 
-    fs::write(&src, "{{ undefined_variable }}").unwrap();
+    // Invalid template syntax - unclosed tag causes parse error
+    fs::write(&src, "{{ unclosed_variable").unwrap();
 
     let module = TemplateModule;
     let mut params = HashMap::new();
@@ -3970,6 +3971,32 @@ fn test_error_template_missing_variable() {
     let result = module.execute(&params, &context);
 
     assert!(result.is_err());
+}
+
+#[test]
+fn test_template_undefined_variable_renders_empty() {
+    // In Jinja2/Ansible compatible mode, undefined variables render as empty strings
+    let temp = TempDir::new().unwrap();
+    let src = temp.path().join("template.j2");
+    let dest = temp.path().join("output.txt");
+
+    fs::write(&src, "Hello {{ undefined_variable }}!").unwrap();
+
+    let module = TemplateModule;
+    let mut params = HashMap::new();
+    params.insert("src".to_string(), serde_json::json!(src.to_str().unwrap()));
+    params.insert(
+        "dest".to_string(),
+        serde_json::json!(dest.to_str().unwrap()),
+    );
+
+    let context = ModuleContext::default();
+    let result = module.execute(&params, &context).unwrap();
+
+    // Undefined variables render as empty string (Ansible-compatible behavior)
+    assert!(result.changed);
+    let content = fs::read_to_string(&dest).unwrap();
+    assert_eq!(content, "Hello !");
 }
 
 #[test]
