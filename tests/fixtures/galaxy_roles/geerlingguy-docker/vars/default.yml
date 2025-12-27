@@ -1,0 +1,30 @@
+# Default variables for Docker role
+---
+docker_dependencies:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-compose-plugin
+
+docker_package_state: present
+docker_service_state: started
+docker_service_enabled: true
+docker_install_compose: true
+
+docker_apt_gpg_key: https://download.docker.com/linux/ubuntu/gpg
+docker_apt_gpg_key_id: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+docker_apt_repository: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+
+docker_daemon_options:
+  storage-driver: overlay2
+  log-driver: json-file
+  log-opts:
+    max-size: "10m"
+    max-file: "3"

@@ -1,0 +1,14 @@
+---
+# Nginx Role Variables
+# These values override defaults for specific environments
+
+# Override package name for different distributions
+# nginx_package_name: nginx-full  # For Debian with extra modules
+
+# Custom worker settings for high-traffic servers
+# nginx_worker_processes: 4
+# nginx_worker_connections: 4096
+
+# Production SSL settings
+# nginx_ssl_enabled: true
+# nginx_ssl_dhparam: true

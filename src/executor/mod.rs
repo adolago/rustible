@@ -59,6 +59,55 @@ pub mod runtime;
 /// Task execution and result handling.
 pub mod task;
 
+// Enhancement modules for advanced execution features
+/// Async task execution with timeout and polling support.
+pub mod async_task;
+
+/// Async runtime optimization and configuration.
+pub mod async_runtime;
+
+/// Batch processing for loop operations (reduces Ansible's 87x loop overhead).
+pub mod batch_processor;
+
+/// Condition evaluation for when/changed_when/failed_when.
+pub mod condition;
+
+/// Dependency graph and DAG-based task ordering.
+pub mod dependency;
+
+/// Fact pipeline for optimized fact gathering.
+pub mod fact_pipeline;
+
+/// Host-pinned execution strategy with dedicated workers.
+pub mod host_pinned;
+
+/// Execution pipeline optimizations.
+pub mod pipeline;
+
+/// Register variable management for task results.
+pub mod register;
+
+/// Task throttling with rate limits and concurrency control.
+pub mod throttle;
+
+/// Work-stealing scheduler for optimal load balancing.
+pub mod work_stealing;
+
+// Re-exports for commonly used types from enhancement modules
+pub use async_runtime::{RuntimeConfig, RuntimeMetrics, SpawnOptions, TaskSpawner};
+pub use async_task::{AsyncConfig, AsyncJobInfo, AsyncJobStatus, AsyncTaskManager};
+pub use batch_processor::{BatchConfig, BatchProcessor, BatchResult, BatchStrategy};
+pub use condition::{Condition, ConditionContext, ConditionEvaluator};
+pub use dependency::{
+    DependencyError, DependencyGraph as AdvancedDependencyGraph, DependencyKind, DependencyNode,
+};
+pub use fact_pipeline::{FactPipeline, FactPipelineConfig, FactResult};
+pub use host_pinned::{HostPinnedConfig, HostPinnedExecutor, HostPinnedPool};
+pub use pipeline::{ExecutionPipeline, PipelineConfig, TaskOptimizationHints};
+pub use register::{FailedTaskInfo, LoopResults, RegisteredResultExt};
+pub use throttle::{ThrottleConfig, ThrottleManager, ThrottleStats};
+pub use work_stealing::{WorkItem, WorkStealingConfig, WorkStealingScheduler, WorkStealingStats};
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -118,6 +167,14 @@ pub enum ExecutorError {
     /// A general runtime error occurred.
     #[error("Runtime error: {0}")]
     RuntimeError(String),
+
+    /// A task execution timed out.
+    #[error("Task timeout: {0}")]
+    Timeout(String),
+
+    /// Other miscellaneous errors.
+    #[error("{0}")]
+    Other(String),
 }
 
 /// Result type for executor operations.
@@ -255,7 +312,7 @@ pub enum ExecutionStrategy {
 /// stats.changed = 3;
 /// println!("OK: {}, Changed: {}", stats.ok, stats.changed);
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionStats {
     /// Number of tasks that succeeded without changes.
     pub ok: usize,

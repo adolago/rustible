@@ -9,14 +9,18 @@
 //! - State parsing
 
 pub mod apt_tests;
+pub mod authorized_key_tests;
 pub mod command_tests;
 pub mod dnf_tests;
+pub mod firewalld_tests;
 pub mod git_tests;
 pub mod group_tests;
+pub mod known_hosts_tests;
 pub mod package_tests;
 pub mod pip_tests;
 pub mod service_tests;
 pub mod shell_tests;
 pub mod stat_tests;
+pub mod ufw_tests;
 pub mod user_tests;
 pub mod yum_tests;

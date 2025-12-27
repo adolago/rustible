@@ -1,0 +1,48 @@
+# MIME types for nginx
+# Managed by Rustible
+
+types {
+    text/html                             html htm shtml;
+    text/css                              css;
+    text/xml                              xml;
+    text/plain                            txt;
+    text/javascript                       js mjs;
+
+    application/json                      json;
+    application/javascript                js;
+    application/xml                       xml;
+    application/rss+xml                   rss;
+    application/atom+xml                  atom;
+    application/pdf                       pdf;
+    application/zip                       zip;
+    application/gzip                      gz;
+    application/x-tar                     tar;
+    application/x-rar-compressed          rar;
+    application/x-7z-compressed           7z;
+
+    image/gif                             gif;
+    image/jpeg                            jpeg jpg;
+    image/png                             png;
+    image/svg+xml                         svg svgz;
+    image/webp                            webp;
+    image/x-icon                          ico;
+    image/avif                            avif;
+
+    audio/mpeg                            mp3;
+    audio/ogg                             ogg;
+    audio/wav                             wav;
+    audio/webm                            weba;
+
+    video/mp4                             mp4;
+    video/mpeg                            mpeg mpg;
+    video/ogg                             ogv;
+    video/webm                            webm;
+
+    font/woff                             woff;
+    font/woff2                            woff2;
+    font/ttf                              ttf;
+    font/otf                              otf;
+
+    application/wasm                      wasm;
+    application/manifest+json             webmanifest;
+}

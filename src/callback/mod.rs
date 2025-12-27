@@ -100,7 +100,11 @@
 //!
 //! [`ExecutionCallback`]: crate::traits::ExecutionCallback
 
+pub mod config;
+pub mod factory;
+pub mod manager;
 pub mod plugins;
+pub mod types;
 
 // ============================================================================
 // Plugin Re-exports (Flat access for convenience)

@@ -1,0 +1,19 @@
+# PostgreSQL Client Authentication Configuration File
+# Managed by Rustible - postgresql role
+# DO NOT EDIT MANUALLY
+#
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+
+# "local" is for Unix domain socket connections only
+{% for entry in postgresql_hba_entries %}
+{% if entry.type == 'local' %}
+{{ entry.type }}   {{ entry.database | default('all') }}             {{ entry.user | default('all') }}                                     {{ entry.method | default('peer') }}
+{% else %}
+{{ entry.type }}    {{ entry.database | default('all') }}             {{ entry.user | default('all') }}             {{ entry.address }}              {{ entry.method | default('scram-sha-256') }}
+{% endif %}
+{% endfor %}
+
+{% if postgresql_replication_enabled %}
+# Replication connections
+host    replication     {{ postgresql_replication_user }}        0.0.0.0/0               scram-sha-256
+{% endif %}

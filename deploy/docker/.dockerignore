@@ -1,0 +1,65 @@
+# Rustible Docker Build Ignore File
+# Reduces build context size for faster builds
+
+# Build artifacts
+target/
+*.rs.bk
+*.pdb
+
+# Git
+.git/
+.gitignore
+.github/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Documentation (not needed in image)
+docs/
+*.md
+!README.md
+
+# Test fixtures (keep benches/ - required for cargo-chef in Dockerfile)
+tests/
+fuzz/
+# benches/ - DO NOT EXCLUDE: Required by Dockerfile planner stage
+
+# CI/CD and tooling
+.gitlab-ci.yml
+.travis.yml
+Makefile
+justfile
+
+# Local configuration
+.env
+.env.*
+*.local
+
+# Cache and temporary files
+.tmp/
+.cache/
+.swarm/
+.hive-mind/
+.claude/
+.claude-flow/
+memory/
+
+# Container build files
+Dockerfile*
+docker-compose*.yml
+deploy/
+
+# Coordination files
+coordination/
+.mcp.json
+claude-flow
+
+# Misc
+LICENSE
+ROADMAP.md
+*.yml
+!Cargo.toml

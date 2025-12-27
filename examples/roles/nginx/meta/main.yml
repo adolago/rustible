@@ -1,0 +1,41 @@
+---
+# Nginx Role Metadata
+galaxy_info:
+  role_name: nginx
+  namespace: rustible
+  author: rustible
+  description: Production-ready nginx web server installation and configuration
+  company: Rustible Project
+  license: MIT
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+        - noble
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+
+  galaxy_tags:
+    - nginx
+    - web
+    - webserver
+    - proxy
+    - reverseproxy
+    - ssl
+    - tls
+    - http
+    - https
+
+dependencies: []
+# Optional dependencies:
+# - role: baseline
+# - role: security

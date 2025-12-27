@@ -1,0 +1,167 @@
+---
+# PostgreSQL Role Tasks
+# Comprehensive PostgreSQL database server installation and configuration
+
+- name: Include OS-specific variables
+  include_vars: "{{ item }}"
+  with_first_found:
+    - "{{ ansible_distribution | lower }}.yml"
+    - "{{ ansible_os_family | lower }}.yml"
+    - default.yml
+  ignore_errors: true
+
+- name: Install PostgreSQL prerequisites
+  package:
+    name: "{{ postgresql_prerequisites }}"
+    state: present
+
+- name: Add PostgreSQL repository key (Debian/Ubuntu)
+  shell: |
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg
+  args:
+    creates: /usr/share/keyrings/postgresql-keyring.gpg
+  when:
+    - ansible_os_family == 'Debian'
+    - postgresql_use_official_repo | default(false)
+
+- name: Add PostgreSQL repository (Debian/Ubuntu)
+  copy:
+    content: |
+      deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] https://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main
+    dest: /etc/apt/sources.list.d/pgdg.list
+    mode: '0644'
+  when:
+    - ansible_os_family == 'Debian'
+    - postgresql_use_official_repo | default(false)
+  register: postgresql_repo_added
+
+- name: Update apt cache after adding repository
+  apt:
+    update_cache: true
+  when: postgresql_repo_added.changed
+
+- name: Install PostgreSQL packages
+  package:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ postgresql_packages }}"
+
+- name: Ensure PostgreSQL data directory exists
+  file:
+    path: "{{ postgresql_data_dir }}"
+    state: directory
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: '0700'
+
+- name: Initialize PostgreSQL database cluster
+  command: "{{ postgresql_bin_dir }}/initdb -D {{ postgresql_data_dir }}"
+  args:
+    creates: "{{ postgresql_data_dir }}/PG_VERSION"
+  become: true
+  become_user: "{{ postgresql_user }}"
+  when: postgresql_init_cluster | default(true)
+
+- name: Configure PostgreSQL
+  template:
+    src: postgresql.conf.j2
+    dest: "{{ postgresql_config_dir }}/postgresql.conf"
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: '0644'
+  notify: restart postgresql
+
+- name: Configure client authentication (pg_hba.conf)
+  template:
+    src: pg_hba.conf.j2
+    dest: "{{ postgresql_config_dir }}/pg_hba.conf"
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: '0640'
+  notify: reload postgresql
+
+- name: Configure ident map (pg_ident.conf)
+  template:
+    src: pg_ident.conf.j2
+    dest: "{{ postgresql_config_dir }}/pg_ident.conf"
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: '0640'
+  notify: reload postgresql
+  when: postgresql_ident_entries | length > 0
+
+- name: Ensure PostgreSQL service is started and enabled
+  service:
+    name: "{{ postgresql_service_name }}"
+    state: "{{ postgresql_service_state }}"
+    enabled: "{{ postgresql_service_enabled }}"
+
+- name: Wait for PostgreSQL to become available
+  shell: |
+    {{ postgresql_bin_dir }}/pg_isready -h {{ postgresql_listen_addresses | first }} -p {{ postgresql_port }}
+  register: postgresql_ready
+  until: postgresql_ready.rc == 0
+  retries: 30
+  delay: 2
+  changed_when: false
+  when: postgresql_service_state == 'started'
+
+- name: Create PostgreSQL users
+  shell: |
+    sudo -u {{ postgresql_user }} psql -c "CREATE USER {{ item.name }} WITH PASSWORD '{{ item.password }}' {{ item.options | default('') }};"
+  loop: "{{ postgresql_users }}"
+  when: postgresql_users is defined
+  register: user_creation
+  failed_when:
+    - user_creation.rc != 0
+    - "'already exists' not in user_creation.stderr"
+  changed_when: "'already exists' not in user_creation.stderr"
+  no_log: true
+
+- name: Create PostgreSQL databases
+  shell: |
+    sudo -u {{ postgresql_user }} createdb {{ item.name }} --owner={{ item.owner | default(postgresql_user) }} --encoding={{ item.encoding | default('UTF8') }}
+  loop: "{{ postgresql_databases }}"
+  when: postgresql_databases is defined
+  register: db_creation
+  failed_when:
+    - db_creation.rc != 0
+    - "'already exists' not in db_creation.stderr"
+  changed_when: "'already exists' not in db_creation.stderr"
+
+- name: Grant database privileges
+  shell: |
+    sudo -u {{ postgresql_user }} psql -d {{ item.database }} -c "GRANT {{ item.privileges | default('ALL PRIVILEGES') }} ON {{ item.object | default('ALL TABLES IN SCHEMA public') }} TO {{ item.user }};"
+  loop: "{{ postgresql_privileges }}"
+  when: postgresql_privileges is defined
+  changed_when: false
+
+- name: Install PostgreSQL extensions
+  shell: |
+    sudo -u {{ postgresql_user }} psql -d {{ item.database }} -c "CREATE EXTENSION IF NOT EXISTS {{ item.extension }};"
+  loop: "{{ postgresql_extensions }}"
+  when: postgresql_extensions is defined
+  changed_when: false
+
+- name: Configure PostgreSQL backup cron job
+  cron:
+    name: "PostgreSQL daily backup"
+    minute: "{{ postgresql_backup_minute }}"
+    hour: "{{ postgresql_backup_hour }}"
+    user: "{{ postgresql_user }}"
+    job: "{{ postgresql_bin_dir }}/pg_dumpall | gzip > {{ postgresql_backup_dir }}/pg_backup_$(date +\\%Y\\%m\\%d).sql.gz"
+  when: postgresql_backup_enabled | default(false)
+
+- name: Create backup directory
+  file:
+    path: "{{ postgresql_backup_dir }}"
+    state: directory
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: '0750'
+  when: postgresql_backup_enabled | default(false)
+
+- name: Configure firewall for PostgreSQL
+  command: ufw allow {{ postgresql_port }}/tcp
+  when: postgresql_configure_firewall | default(false)
+  changed_when: false

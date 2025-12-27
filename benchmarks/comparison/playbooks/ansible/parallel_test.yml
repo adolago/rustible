@@ -1,0 +1,28 @@
+# Ansible Parallel Execution Benchmark Playbook
+# Used for benchmarking parallel task execution across hosts
+---
+- name: Parallel Execution Benchmark Test
+  hosts: all
+  gather_facts: false
+  strategy: free  # Allow tasks to run in parallel
+  vars:
+    iterations: 10
+
+  tasks:
+    - name: Parallel command execution {{ item }}
+      ansible.builtin.command: echo "iteration {{ item }}"
+      changed_when: false
+      loop: "{{ range(1, iterations + 1) | list }}"
+
+    - name: Parallel file operations
+      ansible.builtin.file:
+        path: "/tmp/bench_test_{{ item }}"
+        state: touch
+        mode: '0644'
+      loop: "{{ range(1, 6) | list }}"
+
+    - name: Cleanup parallel files
+      ansible.builtin.file:
+        path: "/tmp/bench_test_{{ item }}"
+        state: absent
+      loop: "{{ range(1, 6) | list }}"

@@ -1,0 +1,107 @@
+# Simulated geerlingguy.mysql role patterns
+---
+- name: Include OS-specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+
+- name: Define mysql_packages
+  set_fact:
+    mysql_packages: "{{ __mysql_packages | list }}"
+  when: mysql_packages is not defined
+
+# Check if MySQL is already installed
+- name: Check if MySQL packages are installed
+  package:
+    name: "{{ mysql_packages }}"
+    state: present
+  check_mode: true
+  register: mysql_check
+  changed_when: false
+
+- name: Set mysql_installed fact
+  set_fact:
+    mysql_installed: "{{ not mysql_check.changed }}"
+
+# Debian/Ubuntu specific installation
+- name: Install MySQL packages (Debian)
+  apt:
+    name: "{{ mysql_packages }}"
+    state: present
+    cache_valid_time: 86400
+  when: ansible_os_family == "Debian"
+  register: mysql_install_packages
+
+# RedHat specific installation
+- name: Install MySQL packages (RedHat)
+  yum:
+    name: "{{ mysql_packages }}"
+    state: present
+    enablerepo: "{{ mysql_enablerepo | default(omit) }}"
+  when: ansible_os_family == "RedHat"
+  register: mysql_install_packages
+
+- name: Ensure MySQL is started and enabled
+  service:
+    name: "{{ mysql_daemon }}"
+    state: started
+    enabled: true
+
+# Secure installation
+- name: Check if root password is set
+  command: >
+    mysql -u root -e "SELECT 1"
+  register: root_password_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Set MySQL root password for first time
+  mysql_user:
+    name: root
+    password: "{{ mysql_root_password }}"
+    priv: "*.*:ALL,GRANT"
+    host_all: true
+  when: root_password_check.rc == 0
+
+- name: Copy .my.cnf file with root credentials
+  template:
+    src: my.cnf.j2
+    dest: "{{ mysql_user_home }}/.my.cnf"
+    owner: root
+    group: root
+    mode: '0600'
+  when: mysql_root_password is defined
+
+- name: Remove anonymous MySQL users
+  mysql_user:
+    name: ''
+    host_all: true
+    state: absent
+  when: mysql_remove_anonymous_users | bool
+
+- name: Remove MySQL test database
+  mysql_db:
+    name: test
+    state: absent
+  when: mysql_remove_test_db | bool
+
+# Database and user management
+- name: Ensure MySQL databases are present
+  mysql_db:
+    name: "{{ item.name }}"
+    collation: "{{ item.collation | default('utf8mb4_unicode_ci') }}"
+    encoding: "{{ item.encoding | default('utf8mb4') }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ mysql_databases }}"
+  when: mysql_databases is defined
+
+- name: Ensure MySQL users are present
+  mysql_user:
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    priv: "{{ item.priv | default('*.*:USAGE') }}"
+    host: "{{ item.host | default('localhost') }}"
+    state: "{{ item.state | default('present') }}"
+    append_privs: "{{ item.append_privs | default(false) }}"
+  loop: "{{ mysql_users }}"
+  when: mysql_users is defined
+  no_log: true

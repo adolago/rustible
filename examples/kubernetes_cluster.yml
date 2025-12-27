@@ -1,0 +1,402 @@
+---
+# Kubernetes Cluster Setup Playbook
+# Sets up a Kubernetes cluster with kubeadm
+#
+# Usage:
+#   rustible examples/kubernetes_cluster.yml -i examples/inventory.yml
+#
+# Requirements:
+#   - Ubuntu 20.04+ or Debian 11+ target hosts
+#   - Minimum 2 CPU cores and 2GB RAM per node
+#   - Root or sudo access
+#   - Network connectivity between nodes
+
+# ==========================
+# Play 1: Common Setup (All Nodes)
+# ==========================
+- name: Prepare all Kubernetes nodes
+  hosts: k8s_cluster
+  become: true
+  gather_facts: true
+
+  vars:
+    # Kubernetes version
+    kubernetes_version: "1.29"
+    kubernetes_apt_key: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
+    kubernetes_apt_repo: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/"
+
+    # Container runtime
+    containerd_version: "1.7.*"
+
+    # Network configuration
+    pod_network_cidr: "10.244.0.0/16"
+    service_cidr: "10.96.0.0/12"
+
+    # Node requirements
+    min_memory_mb: 1800
+    min_cpus: 2
+
+  pre_tasks:
+    - name: Validate system requirements
+      assert:
+        that:
+          - ansible_memtotal_mb >= min_memory_mb
+          - ansible_processor_vcpus >= min_cpus
+        fail_msg: |
+          System does not meet minimum requirements:
+          - Memory: {{ ansible_memtotal_mb }}MB (required: {{ min_memory_mb }}MB)
+          - CPUs: {{ ansible_processor_vcpus }} (required: {{ min_cpus }})
+        success_msg: "System requirements validated"
+      tags:
+        - validation
+
+  tasks:
+    # ========================
+    # System Prerequisites
+    # ========================
+    - name: Disable swap
+      shell: |
+        swapoff -a
+        sed -i '/swap/d' /etc/fstab
+      args:
+        removes: /swapfile
+      tags:
+        - prerequisites
+
+    - name: Load required kernel modules
+      copy:
+        content: |
+          overlay
+          br_netfilter
+        dest: /etc/modules-load.d/k8s.conf
+        mode: "0644"
+      tags:
+        - prerequisites
+
+    - name: Load kernel modules immediately
+      shell: |
+        modprobe overlay
+        modprobe br_netfilter
+      changed_when: false
+      tags:
+        - prerequisites
+
+    - name: Configure sysctl for Kubernetes
+      copy:
+        content: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+        dest: /etc/sysctl.d/k8s.conf
+        mode: "0644"
+      notify: Apply sysctl
+      tags:
+        - prerequisites
+
+    - name: Apply sysctl changes
+      command: sysctl --system
+      changed_when: false
+      tags:
+        - prerequisites
+
+    # ========================
+    # Container Runtime (containerd)
+    # ========================
+    - name: Install containerd dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+        update_cache: true
+      tags:
+        - containerd
+        - packages
+
+    - name: Install containerd
+      apt:
+        name: containerd
+        state: present
+      tags:
+        - containerd
+        - packages
+
+    - name: Create containerd configuration directory
+      file:
+        path: /etc/containerd
+        state: directory
+        mode: "0755"
+      tags:
+        - containerd
+        - config
+
+    - name: Generate default containerd configuration
+      shell: containerd config default > /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+      notify: Restart containerd
+      tags:
+        - containerd
+        - config
+
+    - name: Configure containerd to use systemd cgroup
+      lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        line: '            SystemdCgroup = true'
+      notify: Restart containerd
+      tags:
+        - containerd
+        - config
+
+    - name: Start and enable containerd
+      service:
+        name: containerd
+        state: started
+        enabled: true
+      tags:
+        - containerd
+        - service
+
+    # ========================
+    # Kubernetes Installation
+    # ========================
+    - name: Create keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+      tags:
+        - kubernetes
+        - packages
+
+    - name: Download Kubernetes apt key
+      shell: |
+        curl -fsSL {{ kubernetes_apt_key }} | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      tags:
+        - kubernetes
+        - packages
+
+    - name: Add Kubernetes apt repository
+      copy:
+        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] {{ kubernetes_apt_repo }} /"
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        mode: "0644"
+      tags:
+        - kubernetes
+        - packages
+
+    - name: Update apt cache after adding Kubernetes repo
+      apt:
+        update_cache: true
+      tags:
+        - kubernetes
+        - packages
+
+    - name: Install Kubernetes components
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+      tags:
+        - kubernetes
+        - packages
+
+    - name: Hold Kubernetes packages at current version
+      shell: apt-mark hold kubelet kubeadm kubectl
+      changed_when: false
+      tags:
+        - kubernetes
+        - packages
+
+    - name: Enable kubelet service
+      service:
+        name: kubelet
+        enabled: true
+      tags:
+        - kubernetes
+        - service
+
+    # ========================
+    # Hostname Configuration
+    # ========================
+    - name: Set hostname in /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1'
+        line: "127.0.1.1 {{ inventory_hostname }}"
+      tags:
+        - networking
+
+  handlers:
+    - name: Apply sysctl
+      command: sysctl --system
+
+    - name: Restart containerd
+      service:
+        name: containerd
+        state: restarted
+
+# ==========================
+# Play 2: Control Plane Setup
+# ==========================
+- name: Initialize Kubernetes control plane
+  hosts: k8s_masters
+  become: true
+  gather_facts: true
+
+  vars:
+    pod_network_cidr: "10.244.0.0/16"
+    control_plane_endpoint: "{{ ansible_default_ipv4.address }}"
+
+  tasks:
+    - name: Check if cluster is already initialized
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: kubeadm_init_check
+      tags:
+        - control-plane
+
+    - name: Initialize Kubernetes cluster
+      shell: |
+        kubeadm init \
+          --pod-network-cidr={{ pod_network_cidr }} \
+          --apiserver-advertise-address={{ control_plane_endpoint }} \
+          --node-name={{ inventory_hostname }}
+      when: not kubeadm_init_check.stat.exists
+      register: kubeadm_init
+      tags:
+        - control-plane
+
+    - name: Create .kube directory for root
+      file:
+        path: /root/.kube
+        state: directory
+        mode: "0755"
+      tags:
+        - control-plane
+
+    - name: Copy admin.conf to root's .kube
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: true
+        mode: "0600"
+      tags:
+        - control-plane
+
+    - name: Install Flannel CNI
+      shell: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      when: kubeadm_init is changed
+      tags:
+        - control-plane
+        - networking
+
+    - name: Generate join command for workers
+      shell: kubeadm token create --print-join-command
+      register: join_command
+      changed_when: false
+      tags:
+        - control-plane
+
+    - name: Store join command as fact
+      set_fact:
+        kubernetes_join_command: "{{ join_command.stdout }}"
+      tags:
+        - control-plane
+
+    - name: Display join command
+      debug:
+        msg: |
+          Worker nodes can join using:
+          {{ kubernetes_join_command }}
+      tags:
+        - control-plane
+
+# ==========================
+# Play 3: Worker Node Join
+# ==========================
+- name: Join worker nodes to cluster
+  hosts: k8s_workers
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Check if node is already joined
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+      tags:
+        - worker
+
+    - name: Get join command from master
+      set_fact:
+        kubernetes_join_command: "{{ hostvars[groups['k8s_masters'][0]]['kubernetes_join_command'] }}"
+      when: not kubelet_conf.stat.exists
+      tags:
+        - worker
+
+    - name: Join worker to cluster
+      shell: "{{ kubernetes_join_command }}"
+      when:
+        - not kubelet_conf.stat.exists
+        - kubernetes_join_command is defined
+      tags:
+        - worker
+
+# ==========================
+# Play 4: Verification
+# ==========================
+- name: Verify Kubernetes cluster
+  hosts: k8s_masters
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for all nodes to be ready
+      shell: kubectl get nodes --no-headers | grep -v Ready | wc -l
+      register: not_ready_nodes
+      until: not_ready_nodes.stdout | int == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+      tags:
+        - verification
+
+    - name: Get cluster node status
+      shell: kubectl get nodes -o wide
+      register: node_status
+      changed_when: false
+      tags:
+        - verification
+
+    - name: Display cluster status
+      debug:
+        msg: |
+          Kubernetes Cluster Status
+          ==========================
+          {{ node_status.stdout }}
+      tags:
+        - verification
+
+    - name: Get cluster component status
+      shell: kubectl get componentstatuses 2>/dev/null || kubectl get --raw='/readyz?verbose'
+      register: component_status
+      changed_when: false
+      ignore_errors: true
+      tags:
+        - verification
+
+    - name: Display component status
+      debug:
+        msg: "{{ component_status.stdout }}"
+      when: component_status.stdout is defined
+      tags:
+        - verification

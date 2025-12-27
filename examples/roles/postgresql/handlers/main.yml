@@ -1,0 +1,23 @@
+---
+# PostgreSQL Role Handlers
+
+- name: reload postgresql
+  service:
+    name: "{{ postgresql_service_name }}"
+    state: reloaded
+  when: postgresql_service_state == 'started'
+
+- name: restart postgresql
+  service:
+    name: "{{ postgresql_service_name }}"
+    state: restarted
+
+- name: stop postgresql
+  service:
+    name: "{{ postgresql_service_name }}"
+    state: stopped
+
+- name: start postgresql
+  service:
+    name: "{{ postgresql_service_name }}"
+    state: started

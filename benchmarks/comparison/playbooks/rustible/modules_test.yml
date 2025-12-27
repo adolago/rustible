@@ -1,0 +1,70 @@
+# Rustible Module Execution Benchmark Playbook
+# Used for benchmarking various module execution performance
+---
+- name: Module Execution Benchmark Test
+  hosts: all
+  gather_facts: false
+  vars:
+    test_dir: /tmp/rustible_bench_test
+    test_file: /tmp/rustible_bench_test/test.txt
+
+  tasks:
+    # File module tests
+    - name: Create test directory
+      file:
+        path: "{{ test_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Copy module test
+    - name: Copy content to file
+      copy:
+        content: |
+          This is a test file created by Rustible.
+          Testing module execution performance.
+        dest: "{{ test_file }}"
+        mode: '0644'
+
+    # Stat module test
+    - name: Get file stats
+      stat:
+        path: "{{ test_file }}"
+      register: file_stat
+
+    # Template-like copy with content
+    - name: Template test with variables
+      copy:
+        content: |
+          # Generated configuration
+          test_value=benchmark
+          test_count=100
+          test_enabled=true
+        dest: "{{ test_dir }}/config.txt"
+        mode: '0644'
+
+    # Lineinfile module test
+    - name: Add line to file
+      lineinfile:
+        path: "{{ test_dir }}/config.txt"
+        line: "benchmark_line=added"
+        state: present
+
+    # Command module tests (sequential)
+    - name: Run echo command
+      command: echo "test output 1"
+
+    - name: Run date command
+      command: date +%s
+
+    - name: Run uname command
+      command: uname -a
+
+    # Shell module test
+    - name: Run shell command with pipes
+      shell: echo "hello world" | tr 'a-z' 'A-Z'
+
+    # Cleanup
+    - name: Remove test directory
+      file:
+        path: "{{ test_dir }}"
+        state: absent

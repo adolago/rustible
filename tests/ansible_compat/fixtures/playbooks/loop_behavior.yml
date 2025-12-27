@@ -1,0 +1,111 @@
+# Loop Behavior Test Playbook
+# Tests Ansible loop constructs and loop variables
+---
+- name: Test Loop Behavior
+  hosts: all
+  gather_facts: false
+
+  vars:
+    packages:
+      - nginx
+      - postgresql
+      - redis
+    users:
+      - name: alice
+        role: admin
+      - name: bob
+        role: user
+      - name: charlie
+        role: guest
+    dict_data:
+      key1: value1
+      key2: value2
+      key3: value3
+
+  tasks:
+    # Simple loop
+    - name: Test simple loop with list
+      debug:
+        msg: "Package: {{ item }}"
+      loop: "{{ packages }}"
+      register: simple_loop_result
+
+    # Loop with index variables
+    - name: Test loop with ansible_loop variables
+      debug:
+        msg: "Index: {{ ansible_loop.index }}, Index0: {{ ansible_loop.index0 }}, First: {{ ansible_loop.first }}, Last: {{ ansible_loop.last }}"
+      loop:
+        - first
+        - middle
+        - last
+      register: loop_vars_result
+
+    # Loop with dict
+    - name: Test loop with dict items
+      debug:
+        msg: "User {{ item.name }} has role {{ item.role }}"
+      loop: "{{ users }}"
+      register: dict_loop_result
+
+    # Loop with custom loop_var
+    - name: Test loop_control with custom loop_var
+      debug:
+        msg: "Processing package: {{ pkg }}"
+      loop: "{{ packages }}"
+      loop_control:
+        loop_var: pkg
+      register: custom_var_result
+
+    # Loop with label
+    - name: Test loop_control with label
+      debug:
+        msg: "User details: {{ item }}"
+      loop: "{{ users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: label_result
+
+    # Loop with index_var
+    - name: Test loop_control with index_var
+      debug:
+        msg: "Index {{ my_idx }}: {{ item }}"
+      loop: "{{ packages }}"
+      loop_control:
+        index_var: my_idx
+      register: index_var_result
+
+    # Nested loop (with_nested equivalent)
+    - name: Test nested loop pattern
+      debug:
+        msg: "Outer: {{ item.0 }}, Inner: {{ item.1 }}"
+      loop: "{{ ['a', 'b'] | product(['1', '2']) | list }}"
+      register: nested_loop_result
+
+    # Loop with conditional
+    - name: Test loop with when per item
+      debug:
+        msg: "Admin user: {{ item.name }}"
+      loop: "{{ users }}"
+      when: item.role == 'admin'
+      register: conditional_loop_result
+
+- name: Test Loop Registration
+  hosts: all
+  gather_facts: false
+  vars:
+    items_to_process:
+      - item1
+      - item2
+      - item3
+
+  tasks:
+    - name: Process items and register
+      debug:
+        msg: "Processing {{ item }}"
+      loop: "{{ items_to_process }}"
+      register: loop_register
+
+    - name: Access registered loop results
+      debug:
+        msg: "Total results: {{ loop_register.results | length }}"
+      register: access_results

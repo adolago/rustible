@@ -1,0 +1,52 @@
+# Rustible Parallel Execution Benchmark Playbook
+# Used for benchmarking parallel task execution across hosts
+# Rustible uses async execution by default for better parallelism
+---
+- name: Parallel Execution Benchmark Test
+  hosts: all
+  gather_facts: false
+  strategy: free
+  vars:
+    iterations: 10
+
+  tasks:
+    - name: Parallel command execution 1
+      command: echo "iteration 1"
+
+    - name: Parallel command execution 2
+      command: echo "iteration 2"
+
+    - name: Parallel command execution 3
+      command: echo "iteration 3"
+
+    - name: Parallel command execution 4
+      command: echo "iteration 4"
+
+    - name: Parallel command execution 5
+      command: echo "iteration 5"
+
+    - name: Parallel command execution 6
+      command: echo "iteration 6"
+
+    - name: Parallel command execution 7
+      command: echo "iteration 7"
+
+    - name: Parallel command execution 8
+      command: echo "iteration 8"
+
+    - name: Parallel command execution 9
+      command: echo "iteration 9"
+
+    - name: Parallel command execution 10
+      command: echo "iteration 10"
+
+    - name: Create parallel test files
+      shell: |
+        touch /tmp/bench_test_1
+        touch /tmp/bench_test_2
+        touch /tmp/bench_test_3
+        touch /tmp/bench_test_4
+        touch /tmp/bench_test_5
+
+    - name: Cleanup parallel files
+      shell: rm -f /tmp/bench_test_*

@@ -33,8 +33,11 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 pub mod facts;
+pub mod module_result;
 pub mod playbook;
 pub mod role;
+pub mod template;
+pub mod tiered_facts;
 pub mod variable;
 
 pub use facts::FactCache;

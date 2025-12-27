@@ -1,0 +1,164 @@
+# Common Pattern: Complex Variable Precedence
+# Tests vars, vars_files, include_vars, set_fact, registered vars
+---
+- name: Variable Precedence Testing
+  hosts: all
+  gather_facts: true
+
+  # Level 1: Play vars (lower priority than vars_files)
+  vars:
+    base_config:
+      app_name: myapp
+      debug: false
+      log_level: info
+    priority_test: "play_vars"
+
+  # Level 2: vars_files (higher priority than play vars)
+  vars_files:
+    - vars/common.yml
+    - "vars/{{ ansible_os_family | lower }}.yml"
+    - "vars/{{ environment | default('development') }}.yml"
+
+  # Level 3: vars_prompt (interactive)
+  vars_prompt:
+    - name: admin_password
+      prompt: "Enter admin password"
+      private: true
+      default: "{{ lookup('env', 'ADMIN_PASSWORD') | default('changeme', true) }}"
+
+  pre_tasks:
+    # Level 4: include_vars (dynamic loading)
+    - name: Load environment-specific overrides
+      include_vars:
+        file: "vars/overrides/{{ inventory_hostname }}.yml"
+      ignore_errors: true
+
+    - name: Load secrets from vault
+      include_vars:
+        file: "vars/vault/secrets.yml"
+      no_log: true
+      when: use_vault | default(false) | bool
+
+  tasks:
+    # Level 5: set_fact (runtime precedence)
+    - name: Set computed variables
+      set_fact:
+        computed_config:
+          full_name: "{{ base_config.app_name }}-{{ environment | default('dev') }}"
+          combined_flags: "{{ base_config | combine(env_overrides | default({})) }}"
+
+    - name: Demonstrate variable merging
+      set_fact:
+        merged_config: "{{ defaults | combine(base_config) | combine(env_config | default({}), recursive=true) }}"
+      vars:
+        defaults:
+          timeout: 30
+          retries: 3
+
+    # Level 6: Registered variables
+    - name: Get current configuration
+      command: cat /etc/app/config.yml
+      register: current_config
+      changed_when: false
+      failed_when: false
+
+    - name: Parse current config
+      set_fact:
+        parsed_config: "{{ current_config.stdout | from_yaml }}"
+      when: current_config.rc == 0
+
+    # Demonstrate variable scoping
+    - name: Block with local vars
+      block:
+        - name: Task with block vars
+          debug:
+            msg: "Block var: {{ block_var }}, Outer var: {{ outer_var | default('not set') }}"
+
+        - name: Nested set_fact
+          set_fact:
+            nested_fact: "from block"
+      vars:
+        block_var: "block_scope"
+
+    - name: Access facts from block
+      debug:
+        msg: "Nested fact is accessible: {{ nested_fact | default('not set') }}"
+
+    # Complex filter chains
+    - name: Complex variable transformation
+      set_fact:
+        processed_hosts: >-
+          {{ groups['all']
+             | map('extract', hostvars, ['ansible_host'])
+             | select('defined')
+             | list }}
+
+        filtered_config: >-
+          {{ base_config
+             | dict2items
+             | selectattr('value', 'defined')
+             | selectattr('value', 'ne', none)
+             | list
+             | items2dict }}
+
+    # Variable file selection patterns
+    - name: Load OS-specific vars with fallback
+      include_vars: "{{ lookup('first_found', params) }}"
+      vars:
+        params:
+          files:
+            - "{{ ansible_distribution }}-{{ ansible_distribution_version }}.yml"
+            - "{{ ansible_distribution }}-{{ ansible_distribution_major_version }}.yml"
+            - "{{ ansible_distribution }}.yml"
+            - "{{ ansible_os_family }}.yml"
+            - default.yml
+          paths:
+            - vars/os
+            - vars
+          skip: true
+
+    # Dynamic variable names
+    - name: Set variable dynamically
+      set_fact:
+        "{{ item.key }}": "{{ item.value }}"
+      loop: "{{ dynamic_vars | dict2items }}"
+      when: dynamic_vars is defined
+
+    # Hostvars access patterns
+    - name: Access other host variables
+      debug:
+        msg: >
+          Database host: {{ hostvars[groups['databases'][0]]['db_host'] | default('not set') }}
+          App port: {{ hostvars[groups['webservers'][0]]['app_port'] | default(8080) }}
+      when:
+        - groups['databases'] is defined
+        - groups['databases'] | length > 0
+
+    # Magic variables demonstration
+    - name: Show magic variables
+      debug:
+        msg:
+          inventory_hostname: "{{ inventory_hostname }}"
+          inventory_hostname_short: "{{ inventory_hostname_short }}"
+          group_names: "{{ group_names }}"
+          ansible_play_hosts: "{{ ansible_play_hosts | length }} hosts"
+          ansible_play_batch: "{{ ansible_play_batch | length }} in batch"
+          play_hosts: "{{ play_hosts | length }} total"
+
+    # Loop variable access
+    - name: Demonstrate loop variables
+      debug:
+        msg: "Index: {{ loop_index }}, Item: {{ current_item }}"
+      vars:
+        loop_index: "{{ ansible_loop.index }}"
+        current_item: "{{ item }}"
+      loop: "{{ ['a', 'b', 'c'] }}"
+      loop_control:
+        loop_var: item
+        index_var: loop_idx
+
+  post_tasks:
+    - name: Show final configuration
+      debug:
+        var: merged_config
+        verbosity: 1

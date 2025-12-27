@@ -1,0 +1,428 @@
+---
+# User Management Playbook
+# Manages users, groups, SSH keys, and sudo access
+#
+# Usage:
+#   rustible examples/user_management.yml -i examples/inventory.yml
+#
+# Requirements:
+#   - Linux target hosts (Debian/Ubuntu or RHEL/CentOS)
+#   - Root or sudo access
+#   - SSH connectivity
+
+- name: User Management
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # Define groups to create
+    user_groups:
+      - name: developers
+        gid: 2000
+      - name: operations
+        gid: 2001
+      - name: admins
+        gid: 2002
+      - name: readonly
+        gid: 2003
+
+    # Define users to manage
+    users:
+      # Admin user with sudo access
+      - username: admin
+        comment: "System Administrator"
+        uid: 1100
+        groups:
+          - admins
+          - sudo
+        shell: /bin/bash
+        state: present
+        create_home: true
+        password_locked: false
+        sudo_nopasswd: true
+        ssh_keys:
+          - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample1234567890 admin@example.com"
+
+      # Developer user
+      - username: developer
+        comment: "Development User"
+        uid: 1101
+        groups:
+          - developers
+        shell: /bin/bash
+        state: present
+        create_home: true
+        password_locked: false
+        sudo_nopasswd: false
+        ssh_keys:
+          - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample0987654321 developer@example.com"
+
+      # Operations user
+      - username: ops
+        comment: "Operations User"
+        uid: 1102
+        groups:
+          - operations
+          - sudo
+        shell: /bin/bash
+        state: present
+        create_home: true
+        password_locked: false
+        sudo_nopasswd: false
+        ssh_keys:
+          - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOpsKey12345 ops@example.com"
+
+      # Service account (no login)
+      - username: appservice
+        comment: "Application Service Account"
+        uid: 1200
+        groups:
+          - developers
+        shell: /usr/sbin/nologin
+        state: present
+        create_home: true
+        password_locked: true
+        system_account: true
+
+      # Read-only user (no sudo)
+      - username: readonly
+        comment: "Read Only User"
+        uid: 1103
+        groups:
+          - readonly
+        shell: /bin/bash
+        state: present
+        create_home: true
+        password_locked: false
+        sudo_nopasswd: false
+        ssh_keys: []
+
+      # Example: User to remove
+      # - username: olduser
+      #   state: absent
+      #   remove_home: true
+
+    # Sudo configuration
+    sudoers_files:
+      - name: admins
+        content: "%admins ALL=(ALL) NOPASSWD: ALL"
+      - name: developers
+        content: "%developers ALL=(ALL) NOPASSWD: /usr/bin/docker, /usr/bin/docker-compose"
+      - name: operations
+        content: "%operations ALL=(ALL) ALL"
+
+    # Default settings
+    default_shell: /bin/bash
+    home_base_dir: /home
+    skeleton_dir: /etc/skel
+
+  pre_tasks:
+    - name: Display user management info
+      debug:
+        msg: |
+          User Management Playbook
+          ========================
+          Groups to manage: {{ user_groups | length }}
+          Users to manage: {{ users | length }}
+      tags:
+        - info
+
+  tasks:
+    # ========================
+    # Group Management
+    # ========================
+    - name: Create user groups
+      group:
+        name: "{{ item.name }}"
+        gid: "{{ item.gid | default(omit) }}"
+        state: present
+      loop: "{{ user_groups }}"
+      tags:
+        - groups
+
+    - name: Ensure sudo group exists (Debian)
+      group:
+        name: sudo
+        state: present
+      when: ansible_os_family == "Debian"
+      tags:
+        - groups
+
+    - name: Ensure wheel group exists (RHEL)
+      group:
+        name: wheel
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags:
+        - groups
+
+    # ========================
+    # User Management
+    # ========================
+    - name: Create/update users
+      user:
+        name: "{{ item.username }}"
+        comment: "{{ item.comment | default('') }}"
+        uid: "{{ item.uid | default(omit) }}"
+        groups: "{{ item.groups | default([]) }}"
+        shell: "{{ item.shell | default(default_shell) }}"
+        create_home: "{{ item.create_home | default(true) }}"
+        home: "{{ item.home | default(home_base_dir + '/' + item.username) }}"
+        state: "{{ item.state | default('present') }}"
+        remove: "{{ item.remove_home | default(false) }}"
+        system: "{{ item.system_account | default(false) }}"
+      loop: "{{ users }}"
+      when: item.state | default('present') == 'present'
+      tags:
+        - users
+
+    - name: Remove users marked for deletion
+      user:
+        name: "{{ item.username }}"
+        state: absent
+        remove: "{{ item.remove_home | default(false) }}"
+      loop: "{{ users }}"
+      when: item.state | default('present') == 'absent'
+      tags:
+        - users
+
+    # ========================
+    # SSH Key Management
+    # ========================
+    - name: Create .ssh directories
+      file:
+        path: "{{ home_base_dir }}/{{ item.username }}/.ssh"
+        state: directory
+        owner: "{{ item.username }}"
+        group: "{{ item.username }}"
+        mode: "0700"
+      loop: "{{ users }}"
+      when:
+        - item.state | default('present') == 'present'
+        - item.ssh_keys is defined
+        - item.ssh_keys | length > 0
+      tags:
+        - ssh-keys
+
+    - name: Deploy SSH authorized keys
+      copy:
+        content: |
+          # Managed by Rustible - Do not edit manually
+          {% for key in item.ssh_keys %}
+          {{ key }}
+          {% endfor %}
+        dest: "{{ home_base_dir }}/{{ item.username }}/.ssh/authorized_keys"
+        owner: "{{ item.username }}"
+        group: "{{ item.username }}"
+        mode: "0600"
+      loop: "{{ users }}"
+      when:
+        - item.state | default('present') == 'present'
+        - item.ssh_keys is defined
+        - item.ssh_keys | length > 0
+      tags:
+        - ssh-keys
+
+    # ========================
+    # Password Management
+    # ========================
+    - name: Lock password for service accounts
+      user:
+        name: "{{ item.username }}"
+        password_lock: true
+      loop: "{{ users }}"
+      when:
+        - item.state | default('present') == 'present'
+        - item.password_locked | default(false)
+      tags:
+        - passwords
+
+    # ========================
+    # Sudo Configuration
+    # ========================
+    - name: Ensure sudoers.d directory exists
+      file:
+        path: /etc/sudoers.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      tags:
+        - sudo
+
+    - name: Configure sudoers files
+      copy:
+        content: |
+          # Managed by Rustible - Do not edit manually
+          {{ item.content }}
+        dest: "/etc/sudoers.d/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+      loop: "{{ sudoers_files }}"
+      tags:
+        - sudo
+
+    - name: Configure individual user sudo (nopasswd)
+      copy:
+        content: |
+          # Managed by Rustible - Do not edit manually
+          {{ item.username }} ALL=(ALL) NOPASSWD: ALL
+        dest: "/etc/sudoers.d/user-{{ item.username }}"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+      loop: "{{ users }}"
+      when:
+        - item.state | default('present') == 'present'
+        - item.sudo_nopasswd | default(false)
+      tags:
+        - sudo
+
+    - name: Remove sudo config for removed users
+      file:
+        path: "/etc/sudoers.d/user-{{ item.username }}"
+        state: absent
+      loop: "{{ users }}"
+      when: item.state | default('present') == 'absent'
+      tags:
+        - sudo
+
+    # ========================
+    # Home Directory Setup
+    # ========================
+    - name: Create standard directories in home
+      file:
+        path: "{{ home_base_dir }}/{{ item.0.username }}/{{ item.1 }}"
+        state: directory
+        owner: "{{ item.0.username }}"
+        group: "{{ item.0.username }}"
+        mode: "0755"
+      loop: "{{ users | product(['bin', 'tmp', '.config']) | list }}"
+      when:
+        - item.0.state | default('present') == 'present'
+        - item.0.create_home | default(true)
+        - not item.0.system_account | default(false)
+      tags:
+        - home
+
+    - name: Deploy user bashrc
+      copy:
+        content: |
+          # ~/.bashrc - Managed by Rustible
+
+          # If not running interactively, don't do anything
+          case $- in
+              *i*) ;;
+                *) return;;
+          esac
+
+          # History settings
+          HISTCONTROL=ignoreboth
+          HISTSIZE=10000
+          HISTFILESIZE=20000
+          shopt -s histappend
+
+          # Check window size after each command
+          shopt -s checkwinsize
+
+          # Set default editor
+          export EDITOR=vim
+          export VISUAL=vim
+
+          # Custom prompt
+          PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+
+          # Aliases
+          alias ls='ls --color=auto'
+          alias ll='ls -alF'
+          alias la='ls -A'
+          alias l='ls -CF'
+          alias grep='grep --color=auto'
+
+          # Add user bin to PATH
+          export PATH="$HOME/bin:$PATH"
+
+          # Load custom configurations
+          if [ -d ~/.bashrc.d ]; then
+              for f in ~/.bashrc.d/*.sh; do
+                  [ -r "$f" ] && source "$f"
+              done
+          fi
+        dest: "{{ home_base_dir }}/{{ item.username }}/.bashrc"
+        owner: "{{ item.username }}"
+        group: "{{ item.username }}"
+        mode: "0644"
+      loop: "{{ users }}"
+      when:
+        - item.state | default('present') == 'present'
+        - item.create_home | default(true)
+        - not item.system_account | default(false)
+      tags:
+        - home
+
+    # ========================
+    # Resource Limits
+    # ========================
+    - name: Configure user resource limits
+      copy:
+        content: |
+          # User resource limits - Managed by Rustible
+
+          # Soft and hard limits for all users
+          *               soft    nofile          65536
+          *               hard    nofile          65536
+          *               soft    nproc           4096
+          *               hard    nproc           8192
+
+          # Admin users get higher limits
+          @admins         soft    nofile          131072
+          @admins         hard    nofile          131072
+          @admins         soft    nproc           16384
+          @admins         hard    nproc           32768
+        dest: /etc/security/limits.d/99-users.conf
+        owner: root
+        group: root
+        mode: "0644"
+      tags:
+        - limits
+
+  post_tasks:
+    - name: Verify user creation
+      shell: |
+        echo "=== Users Created ==="
+        for user in {{ users | selectattr('state', 'undefined') | map(attribute='username') | join(' ') }} {{ users | selectattr('state', 'defined') | selectattr('state', 'equalto', 'present') | map(attribute='username') | join(' ') }}; do
+          if id "$user" &>/dev/null; then
+            echo "OK: $user"
+          else
+            echo "MISSING: $user"
+          fi
+        done
+      register: user_verify
+      changed_when: false
+      tags:
+        - verification
+
+    - name: Display verification results
+      debug:
+        msg: "{{ user_verify.stdout_lines }}"
+      tags:
+        - verification
+
+    - name: Display user management summary
+      debug:
+        msg: |
+          User Management Complete!
+          =========================
+          Groups created: {{ user_groups | map(attribute='name') | join(', ') }}
+          Users managed: {{ users | map(attribute='username') | join(', ') }}
+
+          Next steps:
+          1. Set passwords for users: passwd <username>
+          2. Distribute SSH keys to users
+          3. Test login for each user
+      tags:
+        - always

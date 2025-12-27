@@ -221,7 +221,6 @@ impl DispatchResult {
 // ============================================================================
 
 /// Internal registration entry for a plugin.
-#[derive(Debug)]
 struct PluginEntry {
     /// The callback plugin
     plugin: Arc<dyn ExecutionCallback>,
@@ -229,6 +228,16 @@ struct PluginEntry {
     priority: PluginPriority,
     /// Whether this plugin is enabled
     enabled: bool,
+}
+
+impl std::fmt::Debug for PluginEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PluginEntry")
+            .field("plugin", &"<ExecutionCallback>")
+            .field("priority", &self.priority)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 impl PluginEntry {
@@ -984,7 +993,7 @@ mod tests {
 
         assert!(
             manager
-                .register("test", Arc::clone(&plugin), PluginPriority::NORMAL)
+                .register("test", plugin.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
                 .await
         );
         assert_eq!(manager.plugin_count(), 1);
@@ -997,7 +1006,7 @@ mod tests {
         let plugin = Arc::new(TestPlugin::new());
 
         manager
-            .register("test", Arc::clone(&plugin), PluginPriority::NORMAL)
+            .register("test", plugin.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
         assert!(manager.has_plugin("test"));
 
@@ -1013,7 +1022,7 @@ mod tests {
         let plugin = Arc::new(TestPlugin::new());
 
         manager
-            .register("test", Arc::clone(&plugin), PluginPriority::NORMAL)
+            .register("test", plugin.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
 
         let result = manager.on_playbook_start("test_playbook").await;
@@ -1032,13 +1041,13 @@ mod tests {
 
         // Register in non-priority order
         manager
-            .register("low", Arc::clone(&low), PluginPriority::CLEANUP)
+            .register("low", low.clone() as Arc<dyn ExecutionCallback>, PluginPriority::CLEANUP)
             .await;
         manager
-            .register("high", Arc::clone(&high), PluginPriority::STDOUT)
+            .register("high", high.clone() as Arc<dyn ExecutionCallback>, PluginPriority::STDOUT)
             .await;
         manager
-            .register("normal", Arc::clone(&normal), PluginPriority::NORMAL)
+            .register("normal", normal.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
 
         let ordered = manager.get_ordered_plugins();
@@ -1053,7 +1062,7 @@ mod tests {
         let plugin = Arc::new(TestPlugin::new());
 
         manager
-            .register("test", Arc::clone(&plugin), PluginPriority::NORMAL)
+            .register("test", plugin.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
         assert!(manager.is_plugin_enabled("test"));
 
@@ -1080,7 +1089,7 @@ mod tests {
         let plugin = Arc::new(TestPlugin::new());
 
         manager
-            .register("test", Arc::clone(&plugin), PluginPriority::NORMAL)
+            .register("test", plugin.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
 
         manager.pause();
@@ -1107,13 +1116,13 @@ mod tests {
         let plugin3 = Arc::new(TestPlugin::new());
 
         manager
-            .register("p1", Arc::clone(&plugin1), PluginPriority::NORMAL)
+            .register("p1", plugin1.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
         manager
-            .register("p2", Arc::clone(&plugin2), PluginPriority::NORMAL)
+            .register("p2", plugin2.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
         manager
-            .register("p3", Arc::clone(&plugin3), PluginPriority::NORMAL)
+            .register("p3", plugin3.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
 
         let result = manager.on_playbook_start("test").await;
@@ -1129,7 +1138,7 @@ mod tests {
         let plugin = Arc::new(TestPlugin::new());
 
         manager
-            .register("test", Arc::clone(&plugin), PluginPriority::NORMAL)
+            .register("test", plugin.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
 
         let mut handles = Vec::new();
@@ -1154,7 +1163,7 @@ mod tests {
         let plugin = Arc::new(TestPlugin::new());
 
         manager
-            .register("test", Arc::clone(&plugin), PluginPriority::NORMAL)
+            .register("test", plugin.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
             .await;
 
         let result = ExecutionResult {
@@ -1179,12 +1188,12 @@ mod tests {
 
         assert!(
             manager
-                .register("test", Arc::clone(&plugin1), PluginPriority::STDOUT)
+                .register("test", plugin1.clone() as Arc<dyn ExecutionCallback>, PluginPriority::STDOUT)
                 .await
         ); // New
         assert!(
             !manager
-                .register("test", Arc::clone(&plugin2), PluginPriority::NORMAL)
+                .register("test", plugin2.clone() as Arc<dyn ExecutionCallback>, PluginPriority::NORMAL)
                 .await
         ); // Replacement
 

@@ -1,0 +1,38 @@
+---
+# PostgreSQL Role Metadata
+galaxy_info:
+  role_name: postgresql
+  namespace: rustible
+  author: rustible
+  description: Production-ready PostgreSQL database server installation and configuration
+  company: Rustible Project
+  license: MIT
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+        - noble
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+
+  galaxy_tags:
+    - postgresql
+    - postgres
+    - database
+    - sql
+    - rdbms
+    - db
+
+dependencies: []
+# Optional dependencies:
+# - role: baseline
+# - role: security

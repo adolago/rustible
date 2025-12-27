@@ -1,0 +1,146 @@
+# Common Pattern: Dynamic Inventory and Group Manipulation
+# Tests complex inventory patterns, group_by, and add_host
+---
+- name: Dynamic Host Classification
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Group hosts by OS family
+      group_by:
+        key: "os_{{ ansible_os_family | lower }}"
+
+    - name: Group hosts by distribution
+      group_by:
+        key: "distro_{{ ansible_distribution | lower | replace(' ', '_') }}"
+
+    - name: Group hosts by major version
+      group_by:
+        key: "{{ ansible_distribution | lower }}_{{ ansible_distribution_major_version }}"
+
+    - name: Group hosts by environment tag
+      group_by:
+        key: "env_{{ environment_tag | default('unknown') }}"
+      when: environment_tag is defined
+
+    - name: Group hosts by role tag
+      group_by:
+        key: "role_{{ item }}"
+      loop: "{{ host_roles | default([]) }}"
+      when: host_roles is defined
+
+
+- name: Verify grouped hosts
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Show Debian hosts
+      debug:
+        msg: "Debian hosts: {{ groups.get('os_debian', []) | join(', ') }}"
+
+    - name: Show RedHat hosts
+      debug:
+        msg: "RedHat hosts: {{ groups.get('os_redhat', []) | join(', ') }}"
+
+    - name: Show Ubuntu 22 hosts
+      debug:
+        msg: "Ubuntu 22 hosts: {{ groups.get('ubuntu_22', []) | join(', ') }}"
+
+
+- name: Dynamic Service Discovery
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    consul_url: "{{ lookup('env', 'CONSUL_HTTP_ADDR') | default('http://localhost:8500') }}"
+
+  tasks:
+    - name: Discover services from Consul
+      uri:
+        url: "{{ consul_url }}/v1/catalog/services"
+        method: GET
+        return_content: true
+      register: consul_services
+      when: use_consul_discovery | default(false) | bool
+      ignore_errors: true
+
+    - name: Add discovered web servers
+      add_host:
+        name: "{{ item.Address }}"
+        groups:
+          - discovered_webservers
+          - all_webservers
+        ansible_host: "{{ item.Address }}"
+        ansible_port: "{{ item.Port | default(22) }}"
+        service_port: "{{ item.ServicePort }}"
+      loop: "{{ consul_web_services | default([]) }}"
+      when: consul_services is defined and consul_services is not failed
+
+    - name: Add static fallback hosts if discovery fails
+      add_host:
+        name: "{{ item }}"
+        groups:
+          - fallback_webservers
+          - all_webservers
+        ansible_host: "{{ item }}"
+      loop: "{{ fallback_servers | default([]) }}"
+      when:
+        - (consul_services is not defined) or (consul_services is failed)
+        - fallback_servers is defined
+
+
+- name: Configure Discovered Servers
+  hosts: all_webservers
+  gather_facts: true
+
+  tasks:
+    - name: Show discovered host info
+      debug:
+        msg: "Configuring {{ inventory_hostname }} ({{ ansible_host }})"
+
+    - name: Apply base configuration
+      include_role:
+        name: base_config
+
+    - name: Apply web server configuration
+      include_role:
+        name: webserver
+      vars:
+        webserver_port: "{{ service_port | default(80) }}"
+
+
+- name: Host Group Manipulation with Facts
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Identify high memory hosts
+      group_by:
+        key: memory_high
+      when: ansible_memtotal_mb > 8192
+
+    - name: Identify low memory hosts
+      group_by:
+        key: memory_low
+      when: ansible_memtotal_mb <= 2048
+
+    - name: Identify SSD hosts
+      group_by:
+        key: storage_ssd
+      when: "'ssd' in (ansible_devices | default({}) | to_json | lower)"
+
+    - name: Create combined performance groups
+      set_fact:
+        host_performance_class: >-
+          {%- if ansible_memtotal_mb > 8192 and ansible_processor_vcpus >= 4 -%}
+          high_performance
+          {%- elif ansible_memtotal_mb < 2048 or ansible_processor_vcpus < 2 -%}
+          low_performance
+          {%- else -%}
+          standard_performance
+          {%- endif -%}
+
+    - name: Group by performance class
+      group_by:
+        key: "perf_{{ host_performance_class }}"

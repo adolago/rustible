@@ -1,0 +1,450 @@
+---
+# Docker Swarm Cluster Setup Playbook
+# Sets up a Docker Swarm cluster with manager and worker nodes
+#
+# Usage:
+#   rustible examples/docker_swarm.yml -i examples/inventory.yml
+#
+# Requirements:
+#   - Ubuntu/Debian or CentOS/RHEL target hosts
+#   - Root or sudo access
+#   - Network connectivity between nodes (ports 2377, 7946, 4789)
+
+# ==========================
+# Play 1: Install Docker on All Nodes
+# ==========================
+- name: Install Docker on all Swarm nodes
+  hosts: swarm_cluster
+  become: true
+  gather_facts: true
+
+  vars:
+    # Docker configuration
+    docker_edition: "ce"
+    docker_version: ""
+    docker_compose_version: "2.24.0"
+
+    # Swarm configuration
+    swarm_advertise_interface: "{{ ansible_default_ipv4.interface }}"
+
+    # Registry configuration
+    docker_insecure_registries: []
+    docker_registry_mirrors: []
+
+  tasks:
+    # ========================
+    # Prerequisites
+    # ========================
+    - name: Install required packages (Debian/Ubuntu)
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+      tags:
+        - prerequisites
+        - packages
+
+    - name: Install required packages (RHEL/CentOS)
+      yum:
+        name:
+          - yum-utils
+          - device-mapper-persistent-data
+          - lvm2
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags:
+        - prerequisites
+        - packages
+
+    # ========================
+    # Docker Installation (Debian/Ubuntu)
+    # ========================
+    - name: Create Docker keyring directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+      when: ansible_os_family == "Debian"
+      tags:
+        - docker
+        - packages
+
+    - name: Add Docker GPG key (Debian/Ubuntu)
+      shell: |
+        curl -fsSL https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+      when: ansible_os_family == "Debian"
+      tags:
+        - docker
+        - packages
+
+    - name: Add Docker repository (Debian/Ubuntu)
+      copy:
+        content: |
+          deb [arch={{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable
+        dest: /etc/apt/sources.list.d/docker.list
+        mode: "0644"
+      when: ansible_os_family == "Debian"
+      tags:
+        - docker
+        - packages
+
+    - name: Install Docker (Debian/Ubuntu)
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+      tags:
+        - docker
+        - packages
+
+    # ========================
+    # Docker Installation (RHEL/CentOS)
+    # ========================
+    - name: Add Docker repository (RHEL/CentOS)
+      shell: yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      args:
+        creates: /etc/yum.repos.d/docker-ce.repo
+      when: ansible_os_family == "RedHat"
+      tags:
+        - docker
+        - packages
+
+    - name: Install Docker (RHEL/CentOS)
+      yum:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags:
+        - docker
+        - packages
+
+    # ========================
+    # Docker Configuration
+    # ========================
+    - name: Create Docker configuration directory
+      file:
+        path: /etc/docker
+        state: directory
+        mode: "0755"
+      tags:
+        - docker
+        - config
+
+    - name: Configure Docker daemon
+      copy:
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "100m",
+              "max-file": "3"
+            },
+            "storage-driver": "overlay2",
+            "live-restore": true,
+            "userland-proxy": false,
+            "default-ulimits": {
+              "nofile": {
+                "Name": "nofile",
+                "Hard": 65536,
+                "Soft": 65536
+              }
+            }
+          }
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+      notify: Restart Docker
+      tags:
+        - docker
+        - config
+
+    - name: Start and enable Docker
+      service:
+        name: docker
+        state: started
+        enabled: true
+      tags:
+        - docker
+        - service
+
+    - name: Add current user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+      when: ansible_user != "root"
+      tags:
+        - docker
+        - config
+
+    # ========================
+    # Firewall Configuration
+    # ========================
+    - name: Open Swarm ports (UFW)
+      shell: |
+        ufw allow 2377/tcp    # Cluster management
+        ufw allow 7946/tcp    # Node communication
+        ufw allow 7946/udp    # Node communication
+        ufw allow 4789/udp    # Overlay network
+      when: ansible_os_family == "Debian"
+      ignore_errors: true
+      tags:
+        - firewall
+
+    - name: Open Swarm ports (firewalld)
+      shell: |
+        firewall-cmd --permanent --add-port=2377/tcp
+        firewall-cmd --permanent --add-port=7946/tcp
+        firewall-cmd --permanent --add-port=7946/udp
+        firewall-cmd --permanent --add-port=4789/udp
+        firewall-cmd --reload
+      when: ansible_os_family == "RedHat"
+      ignore_errors: true
+      tags:
+        - firewall
+
+  handlers:
+    - name: Restart Docker
+      service:
+        name: docker
+        state: restarted
+
+# ==========================
+# Play 2: Initialize Swarm Manager
+# ==========================
+- name: Initialize Docker Swarm manager
+  hosts: swarm_managers[0]
+  become: true
+  gather_facts: true
+
+  vars:
+    swarm_advertise_addr: "{{ ansible_default_ipv4.address }}"
+
+  tasks:
+    - name: Check if Swarm is already initialized
+      shell: docker info --format '{{ '{{' }}.Swarm.LocalNodeState{{ '}}' }}'
+      register: swarm_status
+      changed_when: false
+      tags:
+        - swarm-init
+
+    - name: Initialize Docker Swarm
+      shell: |
+        docker swarm init --advertise-addr {{ swarm_advertise_addr }}
+      when: swarm_status.stdout != "active"
+      register: swarm_init
+      tags:
+        - swarm-init
+
+    - name: Get manager join token
+      shell: docker swarm join-token manager -q
+      register: manager_token
+      changed_when: false
+      tags:
+        - swarm-init
+
+    - name: Get worker join token
+      shell: docker swarm join-token worker -q
+      register: worker_token
+      changed_when: false
+      tags:
+        - swarm-init
+
+    - name: Store tokens as facts
+      set_fact:
+        swarm_manager_token: "{{ manager_token.stdout }}"
+        swarm_worker_token: "{{ worker_token.stdout }}"
+        swarm_manager_addr: "{{ swarm_advertise_addr }}:2377"
+      tags:
+        - swarm-init
+
+    - name: Display Swarm tokens
+      debug:
+        msg: |
+          Docker Swarm Initialized!
+          ==========================
+          Manager Token: {{ swarm_manager_token }}
+          Worker Token: {{ swarm_worker_token }}
+          Manager Address: {{ swarm_manager_addr }}
+      tags:
+        - swarm-init
+
+# ==========================
+# Play 3: Join Additional Managers
+# ==========================
+- name: Join additional Swarm managers
+  hosts: swarm_managers:!swarm_managers[0]
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Check if already in Swarm
+      shell: docker info --format '{{ '{{' }}.Swarm.LocalNodeState{{ '}}' }}'
+      register: swarm_status
+      changed_when: false
+      tags:
+        - swarm-join
+
+    - name: Get join information from primary manager
+      set_fact:
+        swarm_manager_token: "{{ hostvars[groups['swarm_managers'][0]]['swarm_manager_token'] }}"
+        swarm_manager_addr: "{{ hostvars[groups['swarm_managers'][0]]['swarm_manager_addr'] }}"
+      when: swarm_status.stdout != "active"
+      tags:
+        - swarm-join
+
+    - name: Join Swarm as manager
+      shell: |
+        docker swarm join --token {{ swarm_manager_token }} {{ swarm_manager_addr }}
+      when:
+        - swarm_status.stdout != "active"
+        - swarm_manager_token is defined
+      tags:
+        - swarm-join
+
+# ==========================
+# Play 4: Join Worker Nodes
+# ==========================
+- name: Join Swarm worker nodes
+  hosts: swarm_workers
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Check if already in Swarm
+      shell: docker info --format '{{ '{{' }}.Swarm.LocalNodeState{{ '}}' }}'
+      register: swarm_status
+      changed_when: false
+      tags:
+        - swarm-join
+
+    - name: Get join information from primary manager
+      set_fact:
+        swarm_worker_token: "{{ hostvars[groups['swarm_managers'][0]]['swarm_worker_token'] }}"
+        swarm_manager_addr: "{{ hostvars[groups['swarm_managers'][0]]['swarm_manager_addr'] }}"
+      when: swarm_status.stdout != "active"
+      tags:
+        - swarm-join
+
+    - name: Join Swarm as worker
+      shell: |
+        docker swarm join --token {{ swarm_worker_token }} {{ swarm_manager_addr }}
+      when:
+        - swarm_status.stdout != "active"
+        - swarm_worker_token is defined
+      tags:
+        - swarm-join
+
+# ==========================
+# Play 5: Deploy Swarm Services
+# ==========================
+- name: Deploy Swarm management services
+  hosts: swarm_managers[0]
+  become: true
+  gather_facts: false
+
+  vars:
+    deploy_visualizer: true
+    deploy_portainer: true
+
+  tasks:
+    - name: Create overlay network for management
+      shell: |
+        docker network create --driver overlay --attachable management || true
+      changed_when: false
+      tags:
+        - services
+
+    - name: Deploy Swarm Visualizer
+      shell: |
+        docker service create \
+          --name=viz \
+          --publish=8080:8080 \
+          --constraint=node.role==manager \
+          --mount=type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+          dockersamples/visualizer
+      when: deploy_visualizer
+      register: viz_deploy
+      failed_when: false
+      changed_when: "'already exists' not in viz_deploy.stderr"
+      tags:
+        - services
+        - visualizer
+
+    - name: Deploy Portainer
+      shell: |
+        docker service create \
+          --name portainer \
+          --publish 9000:9000 \
+          --constraint=node.role==manager \
+          --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+          --mount type=volume,src=portainer_data,dst=/data \
+          portainer/portainer-ce:latest
+      when: deploy_portainer
+      register: portainer_deploy
+      failed_when: false
+      changed_when: "'already exists' not in portainer_deploy.stderr"
+      tags:
+        - services
+        - portainer
+
+# ==========================
+# Play 6: Verification
+# ==========================
+- name: Verify Docker Swarm cluster
+  hosts: swarm_managers[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Get Swarm node list
+      shell: docker node ls
+      register: node_list
+      changed_when: false
+      tags:
+        - verification
+
+    - name: Get Swarm service list
+      shell: docker service ls
+      register: service_list
+      changed_when: false
+      tags:
+        - verification
+
+    - name: Display cluster status
+      debug:
+        msg: |
+          Docker Swarm Cluster Status
+          ============================
+
+          Nodes:
+          {{ node_list.stdout }}
+
+          Services:
+          {{ service_list.stdout }}
+
+          Management URLs:
+          - Visualizer: http://{{ ansible_default_ipv4.address }}:8080
+          - Portainer: http://{{ ansible_default_ipv4.address }}:9000
+      tags:
+        - verification

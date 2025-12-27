@@ -1,0 +1,72 @@
+# Simulated geerlingguy.nginx role patterns
+---
+- name: Include OS-specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+
+- name: Define nginx_user
+  set_fact:
+    nginx_user: "{{ __nginx_user }}"
+  when: nginx_user is not defined
+
+- name: Ensure nginx packages are installed
+  package:
+    name: "{{ nginx_packages }}"
+    state: "{{ nginx_package_state }}"
+  notify: reload nginx
+
+- name: Remove default nginx vhost config file
+  file:
+    path: "{{ nginx_default_vhost_path }}"
+    state: absent
+  when: nginx_remove_default_vhost | bool
+  notify: reload nginx
+
+- name: Ensure nginx_vhost_path exists
+  file:
+    path: "{{ nginx_vhost_path }}"
+    state: directory
+    mode: '0755'
+  notify: reload nginx
+
+- name: Add managed vhost config files
+  template:
+    src: "{{ item.template | default('vhost.j2') }}"
+    dest: "{{ nginx_vhost_path }}/{{ item.filename | default(item.server_name.split(' ')[0] ~ '.conf') }}"
+    force: true
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ nginx_vhosts }}"
+  when:
+    - nginx_vhosts is defined
+    - item.state | default('present') != 'absent'
+  notify: reload nginx
+
+- name: Remove managed vhost config files
+  file:
+    path: "{{ nginx_vhost_path }}/{{ item.filename | default(item.server_name.split(' ')[0] ~ '.conf') }}"
+    state: absent
+  loop: "{{ nginx_vhosts }}"
+  when:
+    - nginx_vhosts is defined
+    - item.state | default('present') == 'absent'
+  notify: reload nginx
+
+- name: Copy SSL certificates
+  copy:
+    src: "{{ item.ssl_certificate_src | default(omit) }}"
+    dest: "{{ item.ssl_certificate }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ nginx_vhosts }}"
+  when:
+    - item.ssl_certificate is defined
+    - item.ssl_certificate_src is defined
+  notify: reload nginx
+
+- name: Ensure nginx service is running
+  service:
+    name: nginx
+    state: "{{ nginx_service_state }}"
+    enabled: "{{ nginx_service_enabled }}"

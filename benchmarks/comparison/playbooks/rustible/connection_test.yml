@@ -1,0 +1,13 @@
+# Rustible Connection Test Playbook
+# Used for benchmarking connection establishment times
+# Compatible with Rustible's YAML playbook format
+---
+- name: Connection Benchmark Test
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Simple ping to test connection
+      ping:
+
+    - name: Echo test command
+      command: echo "connection established"

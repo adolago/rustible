@@ -11,12 +11,17 @@ pub struct TemplateEngine {
 
 impl TemplateEngine {
     /// Create a new template engine
+    #[must_use]
     pub fn new() -> Self {
         let env = Environment::new();
         Self { env }
     }
 
     /// Render a template string
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if template parsing or rendering fails.
     pub fn render(
         &self,
         template: &str,
@@ -28,6 +33,7 @@ impl TemplateEngine {
     }
 
     /// Check if a string contains template syntax
+    #[must_use]
     pub fn is_template(s: &str) -> bool {
         s.contains("{{") || s.contains("{%")
     }

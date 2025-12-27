@@ -1,0 +1,9 @@
+---
+# Rustible Kubernetes Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rustible
+  labels:
+    app.kubernetes.io/name: rustible
+    app.kubernetes.io/component: automation

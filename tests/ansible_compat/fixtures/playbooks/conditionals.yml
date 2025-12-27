@@ -1,0 +1,194 @@
+# Conditional Evaluation Test Playbook
+# Tests Ansible when conditions and Jinja2 tests
+---
+- name: Test Conditional Evaluation
+  hosts: all
+  gather_facts: false
+
+  vars:
+    enabled: true
+    disabled: false
+    count: 10
+    name: "production"
+    empty_string: ""
+    empty_list: []
+    non_empty_list:
+      - item1
+    config:
+      database:
+        host: localhost
+        port: 5432
+      cache:
+        enabled: true
+
+  tasks:
+    # Boolean conditions
+    - name: Test when true literal
+      debug:
+        msg: "Condition is true"
+      when: true
+      register: when_true
+
+    - name: Test when false literal
+      debug:
+        msg: "Should be skipped"
+      when: false
+      register: when_false
+
+    - name: Test when variable is true
+      debug:
+        msg: "enabled is true"
+      when: enabled
+      register: when_var_true
+
+    - name: Test when variable is false
+      debug:
+        msg: "Should be skipped"
+      when: disabled
+      register: when_var_false
+
+    # Comparison operators
+    - name: Test equality comparison
+      debug:
+        msg: "count is 10"
+      when: count == 10
+      register: when_eq
+
+    - name: Test inequality comparison
+      debug:
+        msg: "count is not 5"
+      when: count != 5
+      register: when_neq
+
+    - name: Test greater than
+      debug:
+        msg: "count > 5"
+      when: count > 5
+      register: when_gt
+
+    - name: Test less than or equal
+      debug:
+        msg: "count <= 10"
+      when: count <= 10
+      register: when_lte
+
+    - name: Test string comparison
+      debug:
+        msg: "name is production"
+      when: name == "production"
+      register: when_string
+
+    # Logical operators
+    - name: Test and operator
+      debug:
+        msg: "Both conditions true"
+      when: enabled and count == 10
+      register: when_and
+
+    - name: Test or operator
+      debug:
+        msg: "At least one true"
+      when: disabled or enabled
+      register: when_or
+
+    - name: Test not operator
+      debug:
+        msg: "Not disabled"
+      when: not disabled
+      register: when_not
+
+    - name: Test complex condition with parentheses
+      debug:
+        msg: "Complex condition passed"
+      when: (enabled or disabled) and count > 5
+      register: when_complex
+
+    # Multiple conditions (implicit AND)
+    - name: Test multiple conditions as list
+      debug:
+        msg: "All conditions met"
+      when:
+        - enabled
+        - count > 0
+        - name == "production"
+      register: when_multiple
+
+    # Jinja2 tests
+    - name: Test is defined
+      debug:
+        msg: "enabled is defined"
+      when: enabled is defined
+      register: when_defined
+
+    - name: Test is not defined
+      debug:
+        msg: "undefined_var is not defined"
+      when: undefined_var is not defined
+      register: when_not_defined
+
+    - name: Test is none
+      debug:
+        msg: "null_var is none"
+      vars:
+        null_var: null
+      when: null_var is none
+      register: when_none
+
+    - name: Test empty string is falsy
+      debug:
+        msg: "Should be skipped"
+      when: empty_string
+      register: when_empty_string
+
+    - name: Test empty list is falsy
+      debug:
+        msg: "Should be skipped"
+      when: empty_list
+      register: when_empty_list
+
+    - name: Test non-empty list is truthy
+      debug:
+        msg: "List has items"
+      when: non_empty_list
+      register: when_non_empty
+
+    # Nested variable access
+    - name: Test nested variable access in when
+      debug:
+        msg: "Database host is localhost"
+      when: config.database.host == 'localhost'
+      register: when_nested
+
+    - name: Test nested boolean in when
+      debug:
+        msg: "Cache is enabled"
+      when: config.cache.enabled
+      register: when_nested_bool
+
+- name: Test Registered Variables in Conditions
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Run a command
+      debug:
+        msg: "First task"
+      register: first_task
+
+    - name: Check if first task succeeded
+      debug:
+        msg: "First task completed"
+      when: first_task is defined
+      register: check_defined
+
+    - name: Check changed status
+      debug:
+        msg: "Task was changed"
+      when: first_task.changed
+      register: check_changed
+
+    - name: Simulate failed check
+      debug:
+        msg: "Task did not fail"
+      when: not first_task.failed
+      register: check_not_failed

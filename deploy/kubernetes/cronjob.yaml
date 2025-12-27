@@ -1,0 +1,128 @@
+---
+# Rustible CronJob for Scheduled Playbook Execution
+# Runs a playbook on a schedule (e.g., compliance checks, updates)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rustible-scheduled
+  namespace: rustible
+  labels:
+    app.kubernetes.io/name: rustible
+    app.kubernetes.io/component: cronjob
+spec:
+  # Run daily at 2:00 AM UTC
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600  # 1 hour timeout
+
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: rustible
+            app.kubernetes.io/component: cronjob
+        spec:
+          serviceAccountName: rustible
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+
+          containers:
+            - name: rustible
+              image: ghcr.io/rustible/rustible:latest
+              imagePullPolicy: Always
+
+              command: ["/usr/local/bin/rustible"]
+              args:
+                - "run"
+                - "/workspace/playbooks/scheduled.yaml"
+                - "-i"
+                - "/etc/rustible/inventory.yaml"
+                - "-v"
+
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+
+              env:
+                - name: RUST_LOG
+                  value: "info"
+                - name: RUSTIBLE_CONFIG
+                  value: "/etc/rustible/config.toml"
+
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/rustible
+                  readOnly: true
+                - name: ssh-keys
+                  mountPath: /home/rustible/.ssh
+                  readOnly: true
+                - name: playbooks
+                  mountPath: /workspace/playbooks
+                  readOnly: true
+
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+
+          volumes:
+            - name: config
+              configMap:
+                name: rustible-config
+            - name: ssh-keys
+              secret:
+                secretName: rustible-ssh-keys
+                defaultMode: 0600
+            - name: playbooks
+              configMap:
+                name: rustible-playbooks
+
+          restartPolicy: OnFailure
+---
+# Example playbooks ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustible-playbooks
+  namespace: rustible
+  labels:
+    app.kubernetes.io/name: rustible
+    app.kubernetes.io/component: playbooks
+data:
+  scheduled.yaml: |
+    ---
+    - name: Scheduled maintenance tasks
+      hosts: all
+      gather_facts: true
+
+      tasks:
+        - name: Check disk space
+          ansible.builtin.command: df -h
+          register: disk_space
+          changed_when: false
+
+        - name: Display disk usage
+          ansible.builtin.debug:
+            var: disk_space.stdout_lines
+
+        - name: Check system uptime
+          ansible.builtin.command: uptime
+          register: system_uptime
+          changed_when: false
+
+        - name: Display uptime
+          ansible.builtin.debug:
+            var: system_uptime.stdout

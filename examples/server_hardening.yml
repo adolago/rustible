@@ -1,0 +1,564 @@
+---
+# Basic Server Hardening Playbook
+# Applies security best practices to Linux servers
+#
+# Usage:
+#   rustible examples/server_hardening.yml -i examples/inventory.yml
+#
+# Requirements:
+#   - Ubuntu/Debian or CentOS/RHEL target hosts
+#   - Root or sudo access
+#   - SSH connectivity
+#
+# WARNING: This playbook will modify SSH configuration!
+#          Ensure you have alternative access methods before running.
+
+- name: Basic Server Hardening
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # SSH Configuration
+    ssh_port: 22
+    ssh_permit_root_login: "no"
+    ssh_password_authentication: "no"
+    ssh_pubkey_authentication: "yes"
+    ssh_max_auth_tries: 3
+    ssh_client_alive_interval: 300
+    ssh_client_alive_count_max: 2
+    ssh_allowed_users: []
+    ssh_allowed_groups:
+      - sudo
+      - wheel
+
+    # Firewall Configuration
+    firewall_enabled: true
+    firewall_allowed_tcp_ports:
+      - "{{ ssh_port }}"
+    firewall_allowed_udp_ports: []
+
+    # Automatic Updates
+    enable_automatic_updates: true
+
+    # Fail2ban Configuration
+    enable_fail2ban: true
+    fail2ban_bantime: 3600
+    fail2ban_findtime: 600
+    fail2ban_maxretry: 5
+
+    # Password Policy
+    password_max_days: 90
+    password_min_days: 7
+    password_warn_age: 14
+
+    # System Limits
+    max_logins: 10
+
+    # Audit Configuration
+    enable_auditd: true
+
+  pre_tasks:
+    - name: Display hardening warning
+      debug:
+        msg: |
+          ===========================================
+          SERVER HARDENING IN PROGRESS
+          ===========================================
+          This playbook will apply security hardening.
+          Ensure you have SSH key access before continuing!
+          ===========================================
+      tags:
+        - always
+
+  tasks:
+    # ========================
+    # System Updates
+    # ========================
+    - name: Update all packages (Debian/Ubuntu)
+      apt:
+        upgrade: safe
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      tags:
+        - updates
+        - packages
+
+    - name: Update all packages (RHEL/CentOS)
+      yum:
+        name: "*"
+        state: latest
+        update_cache: true
+      when: ansible_os_family == "RedHat"
+      tags:
+        - updates
+        - packages
+
+    # ========================
+    # SSH Hardening
+    # ========================
+    - name: Backup original sshd_config
+      copy:
+        src: /etc/ssh/sshd_config
+        dest: /etc/ssh/sshd_config.backup
+        remote_src: true
+        mode: "0600"
+      args:
+        creates: /etc/ssh/sshd_config.backup
+      tags:
+        - ssh
+
+    - name: Configure SSH Port
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Port '
+        line: "Port {{ ssh_port }}"
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    - name: Disable root login via SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin '
+        line: "PermitRootLogin {{ ssh_permit_root_login }}"
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    - name: Disable password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication '
+        line: "PasswordAuthentication {{ ssh_password_authentication }}"
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    - name: Enable public key authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PubkeyAuthentication '
+        line: "PubkeyAuthentication {{ ssh_pubkey_authentication }}"
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    - name: Set maximum authentication attempts
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?MaxAuthTries '
+        line: "MaxAuthTries {{ ssh_max_auth_tries }}"
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    - name: Configure SSH client alive settings
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^#?ClientAliveInterval ', line: 'ClientAliveInterval {{ ssh_client_alive_interval }}' }
+        - { regexp: '^#?ClientAliveCountMax ', line: 'ClientAliveCountMax {{ ssh_client_alive_count_max }}' }
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    - name: Disable empty passwords
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitEmptyPasswords '
+        line: "PermitEmptyPasswords no"
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    - name: Disable X11 forwarding
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?X11Forwarding '
+        line: "X11Forwarding no"
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    - name: Set SSH protocol version
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Protocol '
+        line: "Protocol 2"
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    - name: Configure allowed groups
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?AllowGroups '
+        line: "AllowGroups {{ ssh_allowed_groups | join(' ') }}"
+      when: ssh_allowed_groups | length > 0
+      notify: Restart SSH
+      tags:
+        - ssh
+
+    # ========================
+    # Firewall Configuration
+    # ========================
+    - name: Install UFW (Debian/Ubuntu)
+      apt:
+        name: ufw
+        state: present
+      when:
+        - firewall_enabled
+        - ansible_os_family == "Debian"
+      tags:
+        - firewall
+
+    - name: Set UFW default policies
+      shell: |
+        ufw default deny incoming
+        ufw default allow outgoing
+      when:
+        - firewall_enabled
+        - ansible_os_family == "Debian"
+      changed_when: false
+      tags:
+        - firewall
+
+    - name: Allow TCP ports through UFW
+      shell: ufw allow {{ item }}/tcp
+      loop: "{{ firewall_allowed_tcp_ports }}"
+      when:
+        - firewall_enabled
+        - ansible_os_family == "Debian"
+      changed_when: false
+      tags:
+        - firewall
+
+    - name: Allow UDP ports through UFW
+      shell: ufw allow {{ item }}/udp
+      loop: "{{ firewall_allowed_udp_ports }}"
+      when:
+        - firewall_enabled
+        - firewall_allowed_udp_ports | length > 0
+        - ansible_os_family == "Debian"
+      changed_when: false
+      tags:
+        - firewall
+
+    - name: Enable UFW
+      shell: echo "y" | ufw enable
+      when:
+        - firewall_enabled
+        - ansible_os_family == "Debian"
+      changed_when: false
+      tags:
+        - firewall
+
+    # ========================
+    # Fail2ban Installation
+    # ========================
+    - name: Install Fail2ban
+      package:
+        name: fail2ban
+        state: present
+      when: enable_fail2ban
+      tags:
+        - fail2ban
+
+    - name: Configure Fail2ban jail
+      copy:
+        content: |
+          [DEFAULT]
+          bantime = {{ fail2ban_bantime }}
+          findtime = {{ fail2ban_findtime }}
+          maxretry = {{ fail2ban_maxretry }}
+          banaction = iptables-multiport
+          backend = systemd
+
+          [sshd]
+          enabled = true
+          port = {{ ssh_port }}
+          filter = sshd
+          logpath = /var/log/auth.log
+          maxretry = {{ fail2ban_maxretry }}
+        dest: /etc/fail2ban/jail.local
+        mode: "0644"
+      when: enable_fail2ban
+      notify: Restart Fail2ban
+      tags:
+        - fail2ban
+
+    - name: Start and enable Fail2ban
+      service:
+        name: fail2ban
+        state: started
+        enabled: true
+      when: enable_fail2ban
+      tags:
+        - fail2ban
+
+    # ========================
+    # Password Policies
+    # ========================
+    - name: Configure password aging in login.defs
+      lineinfile:
+        path: /etc/login.defs
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^PASS_MAX_DAYS', line: 'PASS_MAX_DAYS {{ password_max_days }}' }
+        - { regexp: '^PASS_MIN_DAYS', line: 'PASS_MIN_DAYS {{ password_min_days }}' }
+        - { regexp: '^PASS_WARN_AGE', line: 'PASS_WARN_AGE {{ password_warn_age }}' }
+      tags:
+        - password-policy
+
+    # ========================
+    # Disable Unnecessary Services
+    # ========================
+    - name: Disable unnecessary services
+      service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - cups
+        - avahi-daemon
+        - rpcbind
+      ignore_errors: true
+      tags:
+        - services
+
+    # ========================
+    # Kernel Hardening
+    # ========================
+    - name: Configure sysctl security parameters
+      copy:
+        content: |
+          # IP Spoofing protection
+          net.ipv4.conf.all.rp_filter = 1
+          net.ipv4.conf.default.rp_filter = 1
+
+          # Ignore ICMP broadcast requests
+          net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+          # Disable source packet routing
+          net.ipv4.conf.all.accept_source_route = 0
+          net.ipv4.conf.default.accept_source_route = 0
+          net.ipv6.conf.all.accept_source_route = 0
+          net.ipv6.conf.default.accept_source_route = 0
+
+          # Ignore send redirects
+          net.ipv4.conf.all.send_redirects = 0
+          net.ipv4.conf.default.send_redirects = 0
+
+          # Block SYN attacks
+          net.ipv4.tcp_syncookies = 1
+          net.ipv4.tcp_max_syn_backlog = 2048
+          net.ipv4.tcp_synack_retries = 2
+          net.ipv4.tcp_syn_retries = 5
+
+          # Log Martians
+          net.ipv4.conf.all.log_martians = 1
+
+          # Ignore ICMP redirects
+          net.ipv4.conf.all.accept_redirects = 0
+          net.ipv4.conf.default.accept_redirects = 0
+          net.ipv6.conf.all.accept_redirects = 0
+          net.ipv6.conf.default.accept_redirects = 0
+
+          # Disable IPv6 if not needed
+          # net.ipv6.conf.all.disable_ipv6 = 1
+          # net.ipv6.conf.default.disable_ipv6 = 1
+
+          # Restrict core dumps
+          fs.suid_dumpable = 0
+
+          # Randomize virtual address space
+          kernel.randomize_va_space = 2
+
+          # Restrict access to kernel logs
+          kernel.dmesg_restrict = 1
+
+          # Restrict ptrace scope
+          kernel.yama.ptrace_scope = 1
+        dest: /etc/sysctl.d/99-security.conf
+        mode: "0644"
+      notify: Apply sysctl
+      tags:
+        - kernel
+
+    # ========================
+    # File Permissions
+    # ========================
+    - name: Set proper permissions on sensitive files
+      file:
+        path: "{{ item.path }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/passwd, mode: '0644' }
+        - { path: /etc/shadow, mode: '0600' }
+        - { path: /etc/group, mode: '0644' }
+        - { path: /etc/gshadow, mode: '0600' }
+        - { path: /etc/ssh/sshd_config, mode: '0600' }
+      tags:
+        - permissions
+
+    - name: Secure home directory permissions
+      shell: |
+        for dir in /home/*; do
+          if [ -d "$dir" ]; then
+            chmod 700 "$dir"
+          fi
+        done
+      changed_when: false
+      tags:
+        - permissions
+
+    # ========================
+    # Automatic Updates
+    # ========================
+    - name: Install unattended-upgrades (Debian/Ubuntu)
+      apt:
+        name:
+          - unattended-upgrades
+          - apt-listchanges
+        state: present
+      when:
+        - enable_automatic_updates
+        - ansible_os_family == "Debian"
+      tags:
+        - automatic-updates
+
+    - name: Configure unattended-upgrades
+      copy:
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+          APT::Periodic::AutocleanInterval "7";
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
+      when:
+        - enable_automatic_updates
+        - ansible_os_family == "Debian"
+      tags:
+        - automatic-updates
+
+    # ========================
+    # Audit System
+    # ========================
+    - name: Install auditd
+      package:
+        name: auditd
+        state: present
+      when: enable_auditd
+      tags:
+        - audit
+
+    - name: Configure audit rules
+      copy:
+        content: |
+          # Monitor authentication events
+          -w /etc/pam.d/ -p wa -k pam_changes
+          -w /etc/nsswitch.conf -p wa -k nsswitch_changes
+
+          # Monitor user/group changes
+          -w /etc/passwd -p wa -k passwd_changes
+          -w /etc/shadow -p wa -k shadow_changes
+          -w /etc/group -p wa -k group_changes
+          -w /etc/gshadow -p wa -k gshadow_changes
+
+          # Monitor sudo configuration
+          -w /etc/sudoers -p wa -k sudoers_changes
+          -w /etc/sudoers.d/ -p wa -k sudoers_d_changes
+
+          # Monitor SSH configuration
+          -w /etc/ssh/sshd_config -p wa -k sshd_config_changes
+
+          # Monitor cron
+          -w /etc/crontab -p wa -k crontab_changes
+          -w /etc/cron.d/ -p wa -k cron_d_changes
+
+          # Monitor login events
+          -w /var/log/lastlog -p wa -k login_events
+          -w /var/log/faillog -p wa -k login_events
+        dest: /etc/audit/rules.d/security.rules
+        mode: "0640"
+      when: enable_auditd
+      notify: Restart auditd
+      tags:
+        - audit
+
+    - name: Start and enable auditd
+      service:
+        name: auditd
+        state: started
+        enabled: true
+      when: enable_auditd
+      tags:
+        - audit
+
+    # ========================
+    # Login Banner
+    # ========================
+    - name: Configure login banner
+      copy:
+        content: |
+          **************************************************************************
+          *                           AUTHORIZED ACCESS ONLY                       *
+          **************************************************************************
+          * This system is for authorized users only. All activities are logged.  *
+          * Unauthorized access is prohibited and will be prosecuted.             *
+          **************************************************************************
+        dest: /etc/issue.net
+        mode: "0644"
+      tags:
+        - banner
+
+    - name: Enable SSH banner
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Banner '
+        line: "Banner /etc/issue.net"
+      notify: Restart SSH
+      tags:
+        - banner
+
+  post_tasks:
+    - name: Display hardening summary
+      debug:
+        msg: |
+          Server Hardening Complete!
+          ==========================
+          SSH Port: {{ ssh_port }}
+          Root Login: {{ ssh_permit_root_login }}
+          Password Auth: {{ ssh_password_authentication }}
+          Firewall: {{ 'Enabled' if firewall_enabled else 'Disabled' }}
+          Fail2ban: {{ 'Enabled' if enable_fail2ban else 'Disabled' }}
+          Auto Updates: {{ 'Enabled' if enable_automatic_updates else 'Disabled' }}
+          Audit: {{ 'Enabled' if enable_auditd else 'Disabled' }}
+
+          IMPORTANT: Ensure you can still SSH before closing this session!
+      tags:
+        - always
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+        state: restarted
+
+    - name: Apply sysctl
+      command: sysctl --system
+
+    - name: Restart Fail2ban
+      service:
+        name: fail2ban
+        state: restarted
+
+    - name: Restart auditd
+      service:
+        name: auditd
+        state: restarted

@@ -1,0 +1,5 @@
+# Role vars (higher precedence than defaults)
+---
+role_vars_var: "from_role_vars"
+common_var: "role_vars_level"
+nginx_port: 8080

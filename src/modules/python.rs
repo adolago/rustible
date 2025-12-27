@@ -20,7 +20,6 @@ use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 use walkdir::WalkDir;
-use zip::write::FileOptions;
 
 /// Result from Ansible module execution (JSON format)
 #[derive(Debug, Deserialize, Serialize)]
@@ -279,7 +278,7 @@ impl PythonModuleExecutor {
         let mut buffer = Vec::new();
         {
             let mut zip = zip::ZipWriter::new(Cursor::new(&mut buffer));
-            let options = FileOptions::default()
+            let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Stored)
                 .unix_permissions(0o755);
 

@@ -9,8 +9,20 @@ docker = ["dep:bollard"]
 kubernetes = ["dep:kube", "dep:k8s-openapi"]
 # AWS cloud modules (EC2, S3, VPC, etc.) - requires optional AWS SDK
 aws = ["dep:aws-config", "dep:aws-sdk-ec2", "dep:aws-sdk-s3"]
+# Azure cloud modules (VMs, Resource Groups, Networking) - stub implementation
+azure = []
+# GCP cloud modules (Compute Engine, Networking) - stub implementation
+gcp = []
+# Database modules (PostgreSQL, MySQL, etc.) - stub implementation
+database = []
+# Background warmup of lazy-initialized components
+startup-warmup = []
+# REST API server
+api = ["dep:axum", "dep:tower-http", "dep:jsonwebtoken", "dep:futures-util"]
 # Full feature set with ssh2 backend
 full = ["russh", "local", "ssh2-backend", "docker", "kubernetes"]
+# Full feature set with all cloud providers
+full-cloud = ["full", "aws", "azure", "gcp"]
 # Full feature set with AWS (requires additional compile time)
 full-aws = ["full", "aws"]
 # Pure Rust build (no C dependencies)
@@ -96,6 +108,7 @@ base64 = "0.21"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+humantime-serde = "1.1"
 
 # SSH connectivity - pure Rust (russh)
 russh = { version = "0.45", optional = true }
@@ -120,8 +133,11 @@ similar = "2.4"
 # Parallel execution
 rayon = "1.8"
 
+# Graph algorithms for state dependency tracking
+petgraph = "0.6"
+
 # HTTP client for API modules
-reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "blocking"], default-features = false }
 url = "2.5"
 
 # Validation
@@ -150,15 +166,31 @@ libc = "0.2"
 
 # File handling
 filetime = "0.2.26"
-zip = "0.6"
+zip = "2.2"
 
 # Checksums for stat module
 md5 = "0.7"
 sha1 = "0.10"
 sha2 = "0.10"
 
+# Archive support
+flate2 = "1.0"
+tar = "0.4"
+
+# Terminal detection
+is-terminal = "0.4"
+
+# Unix/POSIX functionality
+nix = { version = "0.29", features = ["user", "fs", "process", "signal", "term"] }
+
 # Temporary file handling
 tempfile = "3.9"
+
+# REST API server (optional)
+axum = { version = "0.7", features = ["ws"], optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+jsonwebtoken = { version = "9.3", optional = true }
+futures-util = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -171,6 +203,7 @@ wiremock = "0.6"
 proptest = "1.4"
 async-ssh2-tokio = "0.12"
 serial_test = "3.1"
+ed25519-dalek = "2.0"
 
 [[bench]]
 name = "russh_benchmark"

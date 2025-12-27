@@ -1,0 +1,339 @@
+---
+# LAMP Stack Deployment Playbook
+# Deploys Linux, Apache, MySQL/MariaDB, and PHP
+#
+# Usage:
+#   rustible examples/lamp_stack.yml -i examples/inventory.yml
+#
+# Requirements:
+#   - Debian/Ubuntu target hosts
+#   - Root or sudo access
+#   - SSH connectivity
+
+- name: Deploy LAMP Stack
+  hosts: webservers
+  become: true
+  gather_facts: true
+
+  vars:
+    # Apache configuration
+    apache_document_root: /var/www/html
+    apache_server_admin: admin@example.com
+    apache_port: 80
+
+    # MySQL/MariaDB configuration
+    mysql_root_password: "{{ vault_mysql_root_password | default('ChangeMe123!') }}"
+    mysql_app_database: myapp
+    mysql_app_user: appuser
+    mysql_app_password: "{{ vault_mysql_app_password | default('AppPassword123!') }}"
+
+    # PHP configuration
+    php_version: "8.2"
+    php_packages:
+      - php
+      - php-mysql
+      - php-curl
+      - php-gd
+      - php-mbstring
+      - php-xml
+      - php-zip
+      - libapache2-mod-php
+
+    # Application settings
+    app_name: "My LAMP Application"
+    app_environment: production
+
+  pre_tasks:
+    - name: Validate OS family
+      assert:
+        that:
+          - ansible_os_family == "Debian"
+        fail_msg: "This playbook only supports Debian/Ubuntu systems"
+        success_msg: "OS family validated: {{ ansible_os_family }}"
+      tags:
+        - validation
+
+    - name: Update apt cache
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+      tags:
+        - packages
+
+  tasks:
+    # ===================
+    # Apache Installation
+    # ===================
+    - name: Install Apache web server
+      apt:
+        name:
+          - apache2
+          - apache2-utils
+        state: present
+      tags:
+        - apache
+        - packages
+
+    - name: Create document root directory
+      file:
+        path: "{{ apache_document_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+      tags:
+        - apache
+        - config
+
+    - name: Configure Apache virtual host
+      copy:
+        content: |
+          <VirtualHost *:{{ apache_port }}>
+              ServerAdmin {{ apache_server_admin }}
+              DocumentRoot {{ apache_document_root }}
+
+              <Directory {{ apache_document_root }}>
+                  Options Indexes FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+
+              ErrorLog ${APACHE_LOG_DIR}/error.log
+              CustomLog ${APACHE_LOG_DIR}/access.log combined
+
+              # PHP settings
+              <FilesMatch \.php$>
+                  SetHandler application/x-httpd-php
+              </FilesMatch>
+          </VirtualHost>
+        dest: /etc/apache2/sites-available/000-default.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Apache
+      tags:
+        - apache
+        - config
+
+    - name: Enable Apache modules
+      shell: a2enmod rewrite headers
+      register: apache_modules
+      changed_when: "'Enabling module' in apache_modules.stdout"
+      notify: Restart Apache
+      tags:
+        - apache
+        - config
+
+    # ======================
+    # MariaDB Installation
+    # ======================
+    - name: Install MariaDB server
+      apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+          - python3-mysqldb
+        state: present
+      tags:
+        - database
+        - packages
+
+    - name: Start and enable MariaDB service
+      service:
+        name: mariadb
+        state: started
+        enabled: true
+      tags:
+        - database
+        - service
+
+    - name: Set MariaDB root password
+      shell: |
+        mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_root_password }}';"
+      args:
+        creates: /root/.mysql_password_set
+      register: mysql_root_set
+      no_log: true
+      tags:
+        - database
+        - security
+
+    - name: Create password marker file
+      file:
+        path: /root/.mysql_password_set
+        state: touch
+        mode: "0600"
+      when: mysql_root_set is changed
+      tags:
+        - database
+        - security
+
+    - name: Remove anonymous MySQL users
+      shell: |
+        mysql -u root -p'{{ mysql_root_password }}' -e "DELETE FROM mysql.user WHERE User='';"
+      no_log: true
+      ignore_errors: true
+      tags:
+        - database
+        - security
+
+    - name: Create application database
+      shell: |
+        mysql -u root -p'{{ mysql_root_password }}' -e "CREATE DATABASE IF NOT EXISTS {{ mysql_app_database }};"
+      no_log: true
+      tags:
+        - database
+        - config
+
+    - name: Create application database user
+      shell: |
+        mysql -u root -p'{{ mysql_root_password }}' -e "CREATE USER IF NOT EXISTS '{{ mysql_app_user }}'@'localhost' IDENTIFIED BY '{{ mysql_app_password }}';"
+        mysql -u root -p'{{ mysql_root_password }}' -e "GRANT ALL PRIVILEGES ON {{ mysql_app_database }}.* TO '{{ mysql_app_user }}'@'localhost';"
+        mysql -u root -p'{{ mysql_root_password }}' -e "FLUSH PRIVILEGES;"
+      no_log: true
+      tags:
+        - database
+        - config
+
+    # ==================
+    # PHP Installation
+    # ==================
+    - name: Install PHP and modules
+      apt:
+        name: "{{ php_packages }}"
+        state: present
+      notify: Restart Apache
+      tags:
+        - php
+        - packages
+
+    - name: Configure PHP settings
+      lineinfile:
+        path: /etc/php/{{ php_version }}/apache2/php.ini
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: true
+      loop:
+        - { regexp: '^;?upload_max_filesize', line: 'upload_max_filesize = 64M' }
+        - { regexp: '^;?post_max_size', line: 'post_max_size = 64M' }
+        - { regexp: '^;?memory_limit', line: 'memory_limit = 256M' }
+        - { regexp: '^;?max_execution_time', line: 'max_execution_time = 300' }
+        - { regexp: '^;?date.timezone', line: 'date.timezone = UTC' }
+      notify: Restart Apache
+      tags:
+        - php
+        - config
+
+    # =======================
+    # Application Deployment
+    # =======================
+    - name: Deploy PHP info page
+      copy:
+        content: |
+          <?php
+          /**
+           * {{ app_name }}
+           * Environment: {{ app_environment }}
+           * Deployed via Rustible
+           */
+
+          // Display server info
+          echo "<h1>Welcome to {{ app_name }}</h1>";
+          echo "<p>Environment: {{ app_environment }}</p>";
+          echo "<hr>";
+
+          // Test database connection
+          $host = 'localhost';
+          $db = '{{ mysql_app_database }}';
+          $user = '{{ mysql_app_user }}';
+          $pass = '{{ mysql_app_password }}';
+
+          try {
+              $pdo = new PDO("mysql:host=$host;dbname=$db", $user, $pass);
+              echo "<p style='color:green'>Database connection: SUCCESS</p>";
+          } catch (PDOException $e) {
+              echo "<p style='color:red'>Database connection: FAILED</p>";
+          }
+
+          echo "<hr>";
+          phpinfo();
+          ?>
+        dest: "{{ apache_document_root }}/index.php"
+        owner: www-data
+        group: www-data
+        mode: "0644"
+      tags:
+        - application
+        - deploy
+
+    - name: Remove default index.html
+      file:
+        path: "{{ apache_document_root }}/index.html"
+        state: absent
+      tags:
+        - application
+        - deploy
+
+    # =================
+    # Firewall Rules
+    # =================
+    - name: Install UFW firewall
+      apt:
+        name: ufw
+        state: present
+      tags:
+        - firewall
+        - packages
+
+    - name: Allow HTTP traffic
+      shell: ufw allow {{ apache_port }}/tcp
+      register: ufw_http
+      changed_when: "'Rule added' in ufw_http.stdout or 'Rules updated' in ufw_http.stdout"
+      tags:
+        - firewall
+        - config
+
+    - name: Allow SSH traffic
+      shell: ufw allow 22/tcp
+      register: ufw_ssh
+      changed_when: "'Rule added' in ufw_ssh.stdout or 'Rules updated' in ufw_ssh.stdout"
+      tags:
+        - firewall
+        - config
+
+    # =================
+    # Service Startup
+    # =================
+    - name: Ensure Apache is running
+      service:
+        name: apache2
+        state: started
+        enabled: true
+      tags:
+        - apache
+        - service
+
+  post_tasks:
+    - name: Verify LAMP stack installation
+      debug:
+        msg: |
+          LAMP Stack Deployment Complete!
+          ================================
+          Apache: http://{{ ansible_default_ipv4.address | default(ansible_host) }}:{{ apache_port }}
+          Database: {{ mysql_app_database }}
+          PHP Version: {{ php_version }}
+
+          Test the installation by visiting the server IP in your browser.
+      tags:
+        - validation
+
+  handlers:
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
+
+    - name: Restart MariaDB
+      service:
+        name: mariadb
+        state: restarted

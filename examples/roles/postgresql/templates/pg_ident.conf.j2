@@ -1,0 +1,9 @@
+# PostgreSQL User Name Maps
+# Managed by Rustible - postgresql role
+# DO NOT EDIT MANUALLY
+#
+# MAPNAME       SYSTEM-USERNAME         PG-USERNAME
+
+{% for entry in postgresql_ident_entries %}
+{{ entry.mapname }}          {{ entry.system_user }}              {{ entry.pg_user }}
+{% endfor %}

@@ -1365,7 +1365,7 @@ fn yaml_to_json(value: &serde_yaml::Value) -> serde_json::Value {
 }
 
 /// Parse JSON data into inventory
-fn parse_json_inventory(
+pub fn parse_json_inventory(
     inventory: &mut Inventory,
     data: &serde_json::Value,
 ) -> InventoryResult<()> {
@@ -1474,6 +1474,14 @@ fn json_to_yaml(value: &serde_json::Value) -> serde_yaml::Value {
             serde_yaml::Value::Mapping(map)
         }
     }
+}
+
+/// Alias for parse_json_inventory for backward compatibility
+pub fn parse_json_inventory_from_value(
+    inventory: &mut Inventory,
+    data: &serde_json::Value,
+) -> InventoryResult<()> {
+    parse_json_inventory(inventory, data)
 }
 
 // ============================================================================

@@ -1,0 +1,181 @@
+# Docker Compose for Rustible Development and Testing
+#
+# Usage:
+#   Development:  docker compose up -d
+#   Testing:      docker compose --profile testing up -d
+#   Full stack:   docker compose --profile testing --profile monitoring up -d
+#   Cleanup:      docker compose down -v
+#
+version: '3.8'
+
+networks:
+  rustible_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+volumes:
+  rustible_workspace:
+  ssh_keys:
+
+services:
+  # ============================================================================
+  # Rustible CLI Container - Development
+  # ============================================================================
+  rustible:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: rustible:latest
+    container_name: rustible-dev
+    networks:
+      rustible_network:
+        ipv4_address: 172.30.0.2
+    volumes:
+      - rustible_workspace:/workspace
+      - ssh_keys:/home/rustible/.ssh:ro
+      - ../../examples:/workspace/examples:ro
+    environment:
+      - RUST_LOG=info
+      - RUSTIBLE_CONFIG=/etc/rustible/config.toml
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    entrypoint: ["/bin/bash"]
+
+  # ============================================================================
+  # Target Hosts for Testing
+  # ============================================================================
+  target-ubuntu:
+    profiles: ["testing"]
+    image: ubuntu:24.04
+    container_name: rustible-target-ubuntu
+    hostname: target-ubuntu
+    networks:
+      rustible_network:
+        ipv4_address: 172.30.1.10
+    ports:
+      - "2231:22"
+    command: >
+      bash -c "
+        apt-get update &&
+        apt-get install -y openssh-server sudo python3 &&
+        mkdir -p /var/run/sshd &&
+        useradd -m -s /bin/bash testuser &&
+        echo 'testuser:testpass' | chpasswd &&
+        echo 'testuser ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers &&
+        ssh-keygen -A &&
+        exec /usr/sbin/sshd -D
+      "
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  target-debian:
+    profiles: ["testing"]
+    image: debian:bookworm-slim
+    container_name: rustible-target-debian
+    hostname: target-debian
+    networks:
+      rustible_network:
+        ipv4_address: 172.30.1.11
+    ports:
+      - "2232:22"
+    command: >
+      bash -c "
+        apt-get update &&
+        apt-get install -y openssh-server sudo python3 &&
+        mkdir -p /var/run/sshd &&
+        useradd -m -s /bin/bash testuser &&
+        echo 'testuser:testpass' | chpasswd &&
+        echo 'testuser ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers &&
+        ssh-keygen -A &&
+        exec /usr/sbin/sshd -D
+      "
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  target-alpine:
+    profiles: ["testing"]
+    image: alpine:3.19
+    container_name: rustible-target-alpine
+    hostname: target-alpine
+    networks:
+      rustible_network:
+        ipv4_address: 172.30.1.12
+    ports:
+      - "2233:22"
+    command: >
+      sh -c "
+        apk add --no-cache openssh sudo python3 bash &&
+        mkdir -p /var/run/sshd &&
+        adduser -D -s /bin/bash testuser &&
+        echo 'testuser:testpass' | chpasswd &&
+        echo 'testuser ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers &&
+        ssh-keygen -A &&
+        exec /usr/sbin/sshd -D
+      "
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # ============================================================================
+  # Integration Test Runner
+  # ============================================================================
+  test-runner:
+    profiles: ["testing"]
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: rustible:latest
+    container_name: rustible-test-runner
+    networks:
+      rustible_network:
+        ipv4_address: 172.30.0.3
+    volumes:
+      - ../../tests:/workspace/tests:ro
+      - ../../examples:/workspace/examples:ro
+      - ssh_keys:/home/rustible/.ssh
+    environment:
+      - RUST_LOG=debug
+      - RUSTIBLE_HOSTS=target-ubuntu,target-debian,target-alpine
+    depends_on:
+      target-ubuntu:
+        condition: service_healthy
+      target-debian:
+        condition: service_healthy
+      target-alpine:
+        condition: service_healthy
+    working_dir: /workspace
+    entrypoint: ["/usr/local/bin/rustible"]
+    command: ["--help"]
+
+  # ============================================================================
+  # Monitoring (Optional)
+  # ============================================================================
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v2.48.0
+    container_name: rustible-prometheus
+    networks:
+      rustible_network:
+        ipv4_address: 172.30.2.10
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'

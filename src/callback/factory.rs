@@ -790,7 +790,10 @@ mod tests {
         let result = PluginFactory::create("unknown_plugin", &CallbackConfig::default());
         assert!(result.is_err());
 
-        let err = result.unwrap_err();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("Expected error"),
+        };
         assert_eq!(err.kind, PluginFactoryErrorKind::UnknownPlugin);
         assert!(err.message.contains("unknown_plugin"));
     }

@@ -1,0 +1,23 @@
+---
+# Nginx Role Handlers
+
+- name: reload nginx
+  service:
+    name: nginx
+    state: reloaded
+  when: nginx_service_state == 'started'
+
+- name: restart nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: test nginx configuration
+  command: nginx -t
+  changed_when: false
+  register: nginx_config_test
+
+- name: stop nginx
+  service:
+    name: nginx
+    state: stopped

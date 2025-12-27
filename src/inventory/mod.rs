@@ -96,17 +96,41 @@
 //! - `~regex` - Regex match on hostname
 //! - `web*` - Wildcard match
 
+pub mod cache;
+pub mod constructed;
 pub mod group;
 pub mod host;
 pub mod plugin;
+pub mod plugins;
 
 pub use group::{Group, GroupBuilder, GroupHierarchy};
 pub use host::{ConnectionParams, ConnectionType, Host, HostParseError, SshParams};
 pub use plugin::{
+    inventory_to_json, parse_json_inventory, parse_json_inventory_from_value,
     AwsEc2InventoryPlugin, CacheStats, CachedInventoryPlugin, FileInventoryPlugin, InventoryCache,
     InventoryPlugin, InventoryPluginConfig, InventoryPluginFactory, InventoryPluginRegistry,
     KeyedGroup, PluginError, PluginErrorKind, PluginInfo, PluginOptionInfo, PluginResult,
     PluginType, ScriptInventoryPlugin,
+};
+
+// Re-export enhanced cache types
+pub use cache::{
+    CacheEntryInfo, CacheStatsSnapshot, FileDependency, InventoryCache as EnhancedInventoryCache,
+    InventoryCacheConfig, InventoryCacheEntry, InventoryCacheMetrics,
+};
+
+// Re-export constructed inventory plugin types
+pub use constructed::{
+    ConstructedConfig, ConstructedConfigBuilder, ConstructedError, ConstructedPlugin,
+    ExpressionEvaluator,
+};
+
+// Re-export dynamic inventory plugin types
+pub use plugins::{
+    create_plugin_from_config, create_plugin_from_file, sanitize_group_name, AwsEc2Plugin,
+    AzurePlugin, ComposeConfig, DynamicInventoryPlugin, DynamicPluginRegistry, FilterConfig,
+    FilterOperator, GcpPlugin, HostnameConfig, KeyedGroupConfig, PluginConfig, PluginConfigBuilder,
+    PluginConfigError, PluginConfigResult, PluginOption, PluginOptionType,
 };
 
 use indexmap::IndexMap;

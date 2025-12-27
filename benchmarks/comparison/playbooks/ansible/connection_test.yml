@@ -1,0 +1,13 @@
+# Ansible Connection Test Playbook
+# Used for benchmarking connection establishment times
+---
+- name: Connection Benchmark Test
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Simple ping to test connection
+      ansible.builtin.ping:
+
+    - name: Echo test command
+      ansible.builtin.command: echo "connection established"
+      changed_when: false

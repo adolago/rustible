@@ -1,0 +1,59 @@
+# Variable Precedence Test Playbook
+# Tests Ansible's 20-level variable precedence hierarchy
+---
+- name: Test Variable Precedence
+  hosts: all
+  gather_facts: false
+
+  # Play vars (level 10)
+  vars:
+    play_var: "from_play_vars"
+    common_var: "play_wins_over_inventory"
+
+  # vars_files (level 12)
+  vars_files:
+    - "{{ playbook_dir }}/vars/vars_file.yml"
+
+  tasks:
+    - name: Test play vars precedence
+      debug:
+        msg: "play_var={{ play_var }}"
+      register: play_var_result
+
+    - name: Test common var from play
+      debug:
+        msg: "common_var={{ common_var }}"
+      register: common_var_result
+
+    - name: Set fact to override (level 17)
+      set_fact:
+        common_var: "set_fact_wins"
+
+    - name: Test set_fact precedence over play_vars
+      debug:
+        msg: "common_var={{ common_var }}"
+      register: setfact_result
+
+    - name: Test extra vars precedence (level 20 - highest)
+      debug:
+        msg: "extra_var={{ extra_var | default('not_set') }}"
+      register: extra_var_result
+
+- name: Test Task-Level Vars
+  hosts: all
+  gather_facts: false
+  vars:
+    base_var: "play_level"
+
+  tasks:
+    - name: Test task vars override play vars (level 15)
+      debug:
+        msg: "base_var={{ base_var }}"
+      vars:
+        base_var: "task_level"
+      register: task_var_result
+
+    - name: Verify play var unchanged after task
+      debug:
+        msg: "base_var={{ base_var }}"
+      register: after_task_result

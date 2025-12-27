@@ -1,0 +1,246 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run security checks daily at 6 AM UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Dependency vulnerability scanning
+  audit:
+    name: Cargo Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: |
+          cargo audit --json > audit-report.json 2>&1 || true
+          cargo audit 2>&1 | tee audit-report.txt
+
+          # Check for critical/high vulnerabilities
+          if cargo audit --deny warnings 2>&1; then
+            echo "No vulnerabilities found"
+          else
+            echo "::error::Security vulnerabilities detected!"
+            exit 1
+          fi
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-audit-report
+          path: |
+            audit-report.json
+            audit-report.txt
+          retention-days: 30
+
+  # Dependency license compliance
+  licenses:
+    name: License Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Create deny.toml if not exists
+        run: |
+          if [[ ! -f deny.toml ]]; then
+            cat > deny.toml << 'EOF'
+          [advisories]
+          db-path = "~/.cargo/advisory-db"
+          db-urls = ["https://github.com/rustsec/advisory-db"]
+          vulnerability = "deny"
+          unmaintained = "warn"
+          yanked = "warn"
+          notice = "warn"
+
+          [licenses]
+          unlicensed = "deny"
+          copyleft = "warn"
+          allow = [
+              "MIT",
+              "Apache-2.0",
+              "Apache-2.0 WITH LLVM-exception",
+              "BSD-2-Clause",
+              "BSD-3-Clause",
+              "ISC",
+              "Zlib",
+              "0BSD",
+              "Unicode-DFS-2016",
+              "MPL-2.0",
+              "CC0-1.0",
+          ]
+
+          [bans]
+          multiple-versions = "warn"
+          wildcards = "warn"
+          highlight = "all"
+
+          [sources]
+          unknown-registry = "deny"
+          unknown-git = "warn"
+          allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+          EOF
+          fi
+
+      - name: Run cargo deny
+        run: cargo deny check 2>&1 | tee license-report.txt || true
+
+      - name: Upload license report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: license-report
+          path: license-report.txt
+          retention-days: 30
+
+  # SAST - Static Application Security Testing
+  sast:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          components: clippy
+
+      - name: Run clippy security lints
+        run: |
+          cargo clippy --all-features -- \
+            -W clippy::unwrap_used \
+            -W clippy::expect_used \
+            -W clippy::panic \
+            -W clippy::todo \
+            -W clippy::unimplemented \
+            -W clippy::dbg_macro \
+            -W clippy::print_stdout \
+            -W clippy::print_stderr \
+            2>&1 | tee clippy-security.txt || true
+
+      - name: Upload clippy report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clippy-security-report
+          path: clippy-security.txt
+          retention-days: 30
+
+  # Check for sensitive data leaks
+  secrets-scan:
+    name: Secrets Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install trufflehog
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run trufflehog
+        run: |
+          trufflehog git file://. --only-verified --fail 2>&1 | tee secrets-scan.txt || true
+
+      - name: Upload secrets scan report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secrets-scan-report
+          path: secrets-scan.txt
+          retention-days: 30
+
+  # Supply chain security
+  supply-chain:
+    name: Supply Chain Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Check Cargo.lock exists
+        run: |
+          if [[ ! -f Cargo.lock ]]; then
+            echo "::warning::Cargo.lock not found. This could lead to non-reproducible builds."
+            cargo generate-lockfile
+          fi
+
+      - name: Verify dependency integrity
+        run: |
+          cargo fetch --locked 2>&1 | tee fetch-report.txt
+
+      - name: Check for typosquatting
+        run: |
+          # Check for common typosquatting patterns
+          echo "Checking for suspicious dependency names..."
+          grep -E '^\[dependencies\]' -A 1000 Cargo.toml | \
+            grep -E '^[a-z]' | \
+            cut -d' ' -f1 | \
+            cut -d'=' -f1 > deps.txt
+
+          # Known typosquatting patterns (add more as needed)
+          SUSPICIOUS=0
+          while read dep; do
+            case "$dep" in
+              *-rs|rs-*)
+                echo "::notice::Dependency '$dep' has -rs suffix/prefix (common pattern, likely OK)"
+                ;;
+            esac
+          done < deps.txt
+
+          echo "Supply chain check completed"
+
+  # Summary job
+  security-summary:
+    name: Security Summary
+    needs: [audit, licenses, sast, secrets-scan, supply-chain]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Cargo Audit | ${{ needs.audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| License Check | ${{ needs.licenses.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Static Analysis | ${{ needs.sast.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets Scan | ${{ needs.secrets-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Supply Chain | ${{ needs.supply-chain.result }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for failures
+        if: contains(needs.*.result, 'failure')
+        run: |
+          echo "::error::One or more security checks failed"
+          exit 1

@@ -1,0 +1,283 @@
+# Jinja2 Filter Compatibility Test Playbook
+# Tests common Jinja2 filters used in Ansible
+---
+- name: Test Jinja2 Filters
+  hosts: all
+  gather_facts: false
+
+  vars:
+    simple_string: "hello world"
+    mixed_case: "HeLLo WoRLD"
+    number: 42
+    float_num: 3.14159
+    items:
+      - apple
+      - banana
+      - cherry
+    dict_var:
+      name: test
+      value: 123
+    json_string: '{"key": "value", "count": 10}'
+    yaml_string: |
+      name: config
+      version: 1.0
+    base64_string: "SGVsbG8gV29ybGQ="
+    path_string: "/path/to/some/file.txt"
+    template_string: "Hello {{ name }}"
+    list_of_dicts:
+      - name: alice
+        age: 30
+      - name: bob
+        age: 25
+      - name: charlie
+        age: 35
+    numbers: [3, 1, 4, 1, 5, 9, 2, 6]
+    hash_input: "test string"
+
+  tasks:
+    # String filters
+    - name: Test upper filter
+      debug:
+        msg: "{{ simple_string | upper }}"
+      register: upper_result
+
+    - name: Test lower filter
+      debug:
+        msg: "{{ mixed_case | lower }}"
+      register: lower_result
+
+    - name: Test capitalize filter
+      debug:
+        msg: "{{ simple_string | capitalize }}"
+      register: capitalize_result
+
+    - name: Test title filter
+      debug:
+        msg: "{{ simple_string | title }}"
+      register: title_result
+
+    - name: Test replace filter
+      debug:
+        msg: "{{ simple_string | replace('world', 'ansible') }}"
+      register: replace_result
+
+    - name: Test regex_replace filter
+      debug:
+        msg: "{{ simple_string | regex_replace('w.*d', 'everyone') }}"
+      register: regex_replace_result
+
+    - name: Test trim filter
+      debug:
+        msg: "{{ '  spaced  ' | trim }}"
+      register: trim_result
+
+    - name: Test split filter
+      debug:
+        msg: "{{ 'a,b,c' | split(',') }}"
+      register: split_result
+
+    # List filters
+    - name: Test join filter
+      debug:
+        msg: "{{ items | join(', ') }}"
+      register: join_result
+
+    - name: Test first filter
+      debug:
+        msg: "{{ items | first }}"
+      register: first_result
+
+    - name: Test last filter
+      debug:
+        msg: "{{ items | last }}"
+      register: last_result
+
+    - name: Test length filter
+      debug:
+        msg: "{{ items | length }}"
+      register: length_result
+
+    - name: Test sort filter
+      debug:
+        msg: "{{ numbers | sort }}"
+      register: sort_result
+
+    - name: Test reverse filter
+      debug:
+        msg: "{{ items | reverse | list }}"
+      register: reverse_result
+
+    - name: Test unique filter
+      debug:
+        msg: "{{ numbers | unique | list }}"
+      register: unique_result
+
+    - name: Test flatten filter
+      debug:
+        msg: "{{ [[1,2], [3,4]] | flatten }}"
+      register: flatten_result
+
+    - name: Test map filter
+      debug:
+        msg: "{{ list_of_dicts | map(attribute='name') | list }}"
+      register: map_result
+
+    - name: Test select filter
+      debug:
+        msg: "{{ numbers | select('gt', 3) | list }}"
+      register: select_result
+
+    - name: Test reject filter
+      debug:
+        msg: "{{ numbers | reject('gt', 5) | list }}"
+      register: reject_result
+
+    - name: Test selectattr filter
+      debug:
+        msg: "{{ list_of_dicts | selectattr('age', 'gt', 28) | list }}"
+      register: selectattr_result
+
+    # Number filters
+    - name: Test int filter
+      debug:
+        msg: "{{ '42' | int }}"
+      register: int_result
+
+    - name: Test float filter
+      debug:
+        msg: "{{ '3.14' | float }}"
+      register: float_result
+
+    - name: Test abs filter
+      debug:
+        msg: "{{ -10 | abs }}"
+      register: abs_result
+
+    - name: Test round filter
+      debug:
+        msg: "{{ float_num | round(2) }}"
+      register: round_result
+
+    # Type conversion filters
+    - name: Test string filter
+      debug:
+        msg: "{{ number | string }}"
+      register: string_result
+
+    - name: Test bool filter
+      debug:
+        msg: "{{ 'yes' | bool }}"
+      register: bool_result
+
+    - name: Test list filter
+      debug:
+        msg: "{{ 'abc' | list }}"
+      register: list_result
+
+    # JSON/YAML filters
+    - name: Test from_json filter
+      debug:
+        msg: "{{ json_string | from_json }}"
+      register: from_json_result
+
+    - name: Test to_json filter
+      debug:
+        msg: "{{ dict_var | to_json }}"
+      register: to_json_result
+
+    - name: Test to_nice_json filter
+      debug:
+        msg: "{{ dict_var | to_nice_json }}"
+      register: to_nice_json_result
+
+    - name: Test from_yaml filter
+      debug:
+        msg: "{{ yaml_string | from_yaml }}"
+      register: from_yaml_result
+
+    - name: Test to_yaml filter
+      debug:
+        msg: "{{ dict_var | to_yaml }}"
+      register: to_yaml_result
+
+    # Path filters
+    - name: Test basename filter
+      debug:
+        msg: "{{ path_string | basename }}"
+      register: basename_result
+
+    - name: Test dirname filter
+      debug:
+        msg: "{{ path_string | dirname }}"
+      register: dirname_result
+
+    - name: Test splitext filter
+      debug:
+        msg: "{{ 'file.txt' | splitext }}"
+      register: splitext_result
+
+    # Default filter
+    - name: Test default filter
+      debug:
+        msg: "{{ undefined_var | default('default_value') }}"
+      register: default_result
+
+    - name: Test default with empty string
+      debug:
+        msg: "{{ '' | default('empty', true) }}"
+      register: default_empty_result
+
+    # Encoding filters
+    - name: Test b64encode filter
+      debug:
+        msg: "{{ 'Hello World' | b64encode }}"
+      register: b64encode_result
+
+    - name: Test b64decode filter
+      debug:
+        msg: "{{ base64_string | b64decode }}"
+      register: b64decode_result
+
+    # Hash filters
+    - name: Test hash filter (md5)
+      debug:
+        msg: "{{ hash_input | hash('md5') }}"
+      register: hash_md5_result
+
+    - name: Test hash filter (sha256)
+      debug:
+        msg: "{{ hash_input | hash('sha256') }}"
+      register: hash_sha256_result
+
+    # Ternary filter
+    - name: Test ternary filter
+      debug:
+        msg: "{{ (number > 40) | ternary('big', 'small') }}"
+      register: ternary_result
+
+    # Combine/dict2items filters
+    - name: Test combine filter
+      debug:
+        msg: "{{ {'a': 1} | combine({'b': 2}) }}"
+      register: combine_result
+
+    - name: Test dict2items filter
+      debug:
+        msg: "{{ dict_var | dict2items }}"
+      register: dict2items_result
+
+    - name: Test items2dict filter
+      debug:
+        msg: "{{ [{'key': 'a', 'value': 1}, {'key': 'b', 'value': 2}] | items2dict }}"
+      register: items2dict_result
+
+    # Regex filters
+    - name: Test regex_search filter
+      debug:
+        msg: "{{ simple_string | regex_search('w[a-z]+') }}"
+      register: regex_search_result
+
+    - name: Test regex_findall filter
+      debug:
+        msg: "{{ 'one1two2three3' | regex_findall('[0-9]+') }}"
+      register: regex_findall_result

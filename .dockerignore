@@ -1,0 +1,67 @@
+# Rustible Docker Build Ignore File
+# Reduces build context size for faster builds
+
+# Build artifacts
+target/
+*.rs.bk
+*.pdb
+
+# Git
+.git/
+.gitignore
+.github/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Documentation (not needed in image)
+docs/
+*.md
+!README.md
+
+# Test fixtures (large)
+tests/fixtures/
+fuzz/
+
+# CI/CD and tooling
+.gitlab-ci.yml
+.travis.yml
+Makefile
+justfile
+
+# Local configuration
+.env
+.env.*
+*.local
+
+# Cache and temporary files
+.tmp/
+.cache/
+.swarm/
+.hive-mind/
+.claude/
+.claude-flow/
+memory/
+benchmarks/
+
+# Container build files (avoid recursion)
+deploy/
+
+# Coordination files
+coordination/
+.mcp.json
+claude-flow
+.jules/
+
+# Misc
+LICENSE
+ROADMAP.md
+INCLUDE_TASKS_SUMMARY.md
+PARALLELIZATION_QUICKSTART.md
+FORMATTING_DISABLED.tmp
+test_*.yml
+test_*.rs

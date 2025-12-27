@@ -1,0 +1,168 @@
+---
+# PostgreSQL Role Default Variables
+# Override these in vars/main.yml or playbook vars
+
+# PostgreSQL version
+postgresql_version: 16
+
+# Package configuration
+postgresql_packages:
+  - "postgresql-{{ postgresql_version }}"
+  - "postgresql-contrib-{{ postgresql_version }}"
+  - "postgresql-client-{{ postgresql_version }}"
+
+postgresql_prerequisites:
+  - python3-psycopg2
+  - libpq-dev
+  - gnupg
+  - curl
+
+# Use official PostgreSQL repository
+postgresql_use_official_repo: false
+
+# Service configuration
+postgresql_service_name: postgresql
+postgresql_service_state: started
+postgresql_service_enabled: true
+
+# User and group
+postgresql_user: postgres
+postgresql_group: postgres
+
+# Directory paths
+postgresql_data_dir: "/var/lib/postgresql/{{ postgresql_version }}/main"
+postgresql_config_dir: "/etc/postgresql/{{ postgresql_version }}/main"
+postgresql_bin_dir: "/usr/lib/postgresql/{{ postgresql_version }}/bin"
+postgresql_log_dir: /var/log/postgresql
+
+# Initialize database cluster
+postgresql_init_cluster: true
+
+# Connection settings
+postgresql_listen_addresses:
+  - localhost
+postgresql_port: 5432
+postgresql_max_connections: 100
+postgresql_superuser_reserved_connections: 3
+
+# Authentication
+postgresql_authentication_methods:
+  local: peer
+  host: md5
+
+# Client authentication rules (pg_hba.conf)
+postgresql_hba_entries:
+  - type: local
+    database: all
+    user: postgres
+    method: peer
+  - type: local
+    database: all
+    user: all
+    method: peer
+  - type: host
+    database: all
+    user: all
+    address: "127.0.0.1/32"
+    method: scram-sha-256
+  - type: host
+    database: all
+    user: all
+    address: "::1/128"
+    method: scram-sha-256
+
+# Ident mapping entries (pg_ident.conf)
+postgresql_ident_entries: []
+
+# Memory settings (adjust based on system RAM)
+postgresql_shared_buffers: 128MB
+postgresql_effective_cache_size: 512MB
+postgresql_work_mem: 4MB
+postgresql_maintenance_work_mem: 64MB
+
+# WAL settings
+postgresql_wal_level: replica
+postgresql_max_wal_size: 1GB
+postgresql_min_wal_size: 80MB
+postgresql_wal_buffers: 16MB
+
+# Checkpoint settings
+postgresql_checkpoint_completion_target: 0.9
+postgresql_checkpoint_timeout: 5min
+
+# Logging configuration
+postgresql_log_destination: stderr
+postgresql_logging_collector: true
+postgresql_log_directory: log
+postgresql_log_filename: "postgresql-%Y-%m-%d_%H%M%S.log"
+postgresql_log_rotation_age: 1d
+postgresql_log_rotation_size: 100MB
+postgresql_log_min_duration_statement: -1
+postgresql_log_line_prefix: "%m [%p] %q%u@%d "
+
+# Query tuning
+postgresql_random_page_cost: 1.1
+postgresql_effective_io_concurrency: 200
+postgresql_default_statistics_target: 100
+
+# Locale settings
+postgresql_datestyle: "iso, mdy"
+postgresql_timezone: UTC
+postgresql_lc_messages: en_US.UTF-8
+postgresql_lc_monetary: en_US.UTF-8
+postgresql_lc_numeric: en_US.UTF-8
+postgresql_lc_time: en_US.UTF-8
+
+# SSL configuration
+postgresql_ssl: false
+postgresql_ssl_cert_file: ""
+postgresql_ssl_key_file: ""
+postgresql_ssl_ca_file: ""
+
+# Users to create (empty by default)
+postgresql_users: []
+# Example:
+# postgresql_users:
+#   - name: appuser
+#     password: "secure_password"
+#     options: "CREATEDB"
+
+# Databases to create (empty by default)
+postgresql_databases: []
+# Example:
+# postgresql_databases:
+#   - name: myapp
+#     owner: appuser
+#     encoding: UTF8
+
+# Privileges to grant (empty by default)
+postgresql_privileges: []
+# Example:
+# postgresql_privileges:
+#   - database: myapp
+#     user: appuser
+#     privileges: "ALL PRIVILEGES"
+
+# Extensions to install (empty by default)
+postgresql_extensions: []
+# Example:
+# postgresql_extensions:
+#   - database: myapp
+#     extension: pgcrypto
+#   - database: myapp
+#     extension: uuid-ossp
+
+# Backup configuration
+postgresql_backup_enabled: false
+postgresql_backup_dir: /var/backups/postgresql
+postgresql_backup_hour: "2"
+postgresql_backup_minute: "0"
+
+# Firewall configuration
+postgresql_configure_firewall: false
+
+# Replication settings (for replicas)
+postgresql_replication_enabled: false
+postgresql_primary_host: ""
+postgresql_replication_user: replicator
+postgresql_replication_password: ""

@@ -76,6 +76,33 @@ pub mod russh_pool;
 #[cfg(feature = "ssh2-backend")]
 pub mod ssh;
 
+/// Circuit breaker pattern for connection resilience.
+pub mod circuit_breaker;
+
+/// Connection health monitoring and diagnostics.
+pub mod health;
+
+/// Jump host (bastion) support for SSH connections.
+pub mod jump_host;
+
+/// Robust retry logic with exponential backoff.
+pub mod retry;
+
+/// SSH Agent forwarding support.
+#[cfg(feature = "russh")]
+pub mod ssh_agent;
+
+/// Network security module (host key pinning, TLS validation, audit logging).
+pub mod security;
+
+/// Windows Remote Management (WinRM) connection support.
+#[cfg(feature = "winrm")]
+pub mod winrm;
+
+/// Kubernetes pod connection support.
+#[cfg(feature = "kubernetes")]
+pub mod kubernetes;
+
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -108,6 +135,38 @@ pub use russh_pool::{
     HealthCheckResult, HostUtilization, PoolConfig, PoolStats as RusshPoolStats,
     PoolUtilizationMetrics, PooledConnectionHandle, PrewarmResult, RusshConnectionPool,
     RusshConnectionPoolBuilder, WarmupResult,
+};
+
+// Re-export circuit breaker types
+pub use circuit_breaker::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpenError, CircuitBreakerRegistry,
+    CircuitBreakerStats, CircuitState,
+};
+
+// Re-export health monitoring types
+pub use health::{
+    DegradationConfig, DegradationResult, DegradationStrategy, HealthChecker, HealthConfig,
+    HealthMonitor, HealthStats, HealthStatus,
+};
+
+// Re-export jump host types
+pub use jump_host::{JumpHostChain, JumpHostConfig, JumpHostResolver, MAX_JUMP_DEPTH};
+
+// Re-export retry types
+pub use retry::{BackoffStrategy, RetryPolicy, RetryResult, RetryStats};
+
+// Re-export SSH agent types (feature-gated)
+#[cfg(feature = "russh")]
+pub use ssh_agent::{
+    AgentClientMetrics, AgentConnectionPool, AgentError, AgentForwarder, AgentForwardingConfig,
+    AgentKeyInfo, ForwardingMetrics, PoolStats as AgentPoolStats, SshAgentClient,
+};
+
+// Re-export security types
+pub use security::{
+    AuditEvent, AuditEventType, AuditLevel, EncryptionAuditLog, HostKeyPolicy,
+    HostKeyVerificationMode, HostKeyVerificationResult, NetworkIsolation, NetworkSecurityConfig,
+    PinnedHostKey, SecurityError, SecurityResult, TlsValidationConfig, TlsVersion,
 };
 
 /// Russh-related error type - wraps russh::Error for compatibility with the Handler trait

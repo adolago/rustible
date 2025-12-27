@@ -435,6 +435,68 @@ pub mod output;
 pub mod callback;
 
 // ============================================================================
+// Diagnostics and Debugging
+// ============================================================================
+
+/// Diagnostic tools for debugging and troubleshooting.
+///
+/// Provides debugging capabilities: Debug Mode, Variable Inspection,
+/// Step-by-step Execution, Breakpoint Support, and State Dump.
+pub mod diagnostics;
+
+// ============================================================================
+// Metrics and Observability
+// ============================================================================
+
+/// Metrics and observability for Rustible.
+///
+/// Provides metrics collection and export: Connection Metrics, Pool Metrics,
+/// Command Metrics, and Prometheus Export.
+pub mod metrics;
+
+// ============================================================================
+// State Management
+// ============================================================================
+
+/// State management system for tracking execution state, diffs, and rollback.
+///
+/// This module provides comprehensive state tracking, persistence, diff reporting,
+/// rollback capability, and dependency tracking between tasks.
+pub mod state;
+
+// ============================================================================
+// REST API (Optional)
+// ============================================================================
+
+/// REST API server for Rustible.
+///
+/// This module provides a REST API for Rustible, enabling programmatic access
+/// to playbook execution, inventory management, and job monitoring.
+///
+/// # Features
+///
+/// - **Playbook Execution**: Submit playbooks for execution via HTTP
+/// - **Inventory Management**: Query hosts, groups, and variables
+/// - **Job Management**: Monitor job status and history
+/// - **Real-time Output**: WebSocket support for live execution output
+/// - **Authentication**: JWT-based authentication
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use rustible::api::{ApiServer, ApiConfig};
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let config = ApiConfig::default();
+///     let server = ApiServer::new(config);
+///     server.run().await.unwrap();
+/// }
+/// ```
+#[cfg(feature = "api")]
+pub mod api;
+
+// ============================================================================
 // Version Information
 // ============================================================================
 

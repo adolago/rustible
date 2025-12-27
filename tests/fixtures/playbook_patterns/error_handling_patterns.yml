@@ -1,0 +1,184 @@
+# Common Pattern: Comprehensive Error Handling
+# Tests block/rescue/always, ignore_errors, failed_when, changed_when
+---
+- name: Error Handling Patterns
+  hosts: all
+  gather_facts: true
+
+  vars:
+    rollback_enabled: true
+    max_retries: 3
+    retry_delay: 5
+
+  tasks:
+    # Pattern 1: Block with rescue and always
+    - name: Critical operation with rollback
+      block:
+        - name: Create backup before changes
+          archive:
+            path: "{{ config_dir }}"
+            dest: "/tmp/config_backup_{{ ansible_date_time.epoch }}.tar.gz"
+            format: gz
+          register: backup_result
+
+        - name: Apply configuration changes
+          template:
+            src: config.j2
+            dest: "{{ config_dir }}/main.conf"
+            backup: true
+          notify: reload service
+
+        - name: Validate configuration
+          command: "{{ config_validator }} --check {{ config_dir }}/main.conf"
+          changed_when: false
+
+        - name: Apply changes
+          command: "{{ config_apply_cmd }}"
+
+      rescue:
+        - name: Log the failure
+          debug:
+            msg: "Configuration failed: {{ ansible_failed_result | default('unknown') }}"
+
+        - name: Restore from backup
+          unarchive:
+            src: "{{ backup_result.dest }}"
+            dest: "{{ config_dir | dirname }}"
+            remote_src: true
+          when:
+            - rollback_enabled | bool
+            - backup_result is defined
+            - backup_result.dest is defined
+
+        - name: Reload with old config
+          service:
+            name: "{{ service_name }}"
+            state: reloaded
+          when: rollback_enabled | bool
+
+        - name: Fail with detailed message
+          fail:
+            msg: |
+              Configuration deployment failed.
+              Backup was {{ 'restored' if rollback_enabled else 'NOT restored' }}.
+              Please check the logs.
+
+      always:
+        - name: Cleanup temporary files
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "/tmp/config_staging"
+            - "/tmp/validation_results"
+          ignore_errors: true
+
+        - name: Report final state
+          debug:
+            msg: "Operation completed with state: {{ 'success' if not ansible_failed_task else 'failed' }}"
+
+    # Pattern 2: Retry with until
+    - name: Wait for service to be healthy
+      uri:
+        url: "http://localhost:{{ service_port }}/health"
+        method: GET
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: "{{ max_retries }}"
+      delay: "{{ retry_delay }}"
+      ignore_errors: true
+
+    - name: Handle health check failure
+      block:
+        - name: Collect diagnostic information
+          command: "{{ item }}"
+          loop:
+            - "journalctl -u {{ service_name }} --no-pager -n 50"
+            - "netstat -tlnp | grep {{ service_port }}"
+            - "ps aux | grep {{ service_name }}"
+          register: diagnostics
+          changed_when: false
+          ignore_errors: true
+
+        - name: Save diagnostics
+          copy:
+            content: |
+              {% for result in diagnostics.results %}
+              === {{ result.item }} ===
+              {{ result.stdout | default('No output') }}
+              {{ result.stderr | default('') }}
+              {% endfor %}
+            dest: "/tmp/service_diagnostics_{{ ansible_date_time.epoch }}.txt"
+
+        - name: Fail with diagnostic info
+          fail:
+            msg: "Service health check failed after {{ max_retries }} attempts. Diagnostics saved."
+      when: health_check is failed
+
+    # Pattern 3: Custom failed_when and changed_when
+    - name: Check application state
+      command: /opt/app/bin/status
+      register: app_status
+      changed_when: false
+      failed_when:
+        - app_status.rc not in [0, 1, 2]
+        - "'CRITICAL' in app_status.stdout"
+
+    - name: Conditional operation based on state
+      command: /opt/app/bin/sync
+      register: sync_result
+      changed_when: "'synced 0 records' not in sync_result.stdout"
+      failed_when: sync_result.rc != 0 and 'already in sync' not in sync_result.stderr
+
+    # Pattern 4: Graceful degradation
+    - name: Try primary method
+      block:
+        - name: Download from primary source
+          get_url:
+            url: "{{ primary_download_url }}"
+            dest: "{{ download_dest }}"
+            checksum: "sha256:{{ expected_checksum }}"
+          register: primary_download
+
+      rescue:
+        - name: Try secondary source
+          get_url:
+            url: "{{ secondary_download_url }}"
+            dest: "{{ download_dest }}"
+            checksum: "sha256:{{ expected_checksum }}"
+          register: secondary_download
+
+      rescue:
+        - name: Try tertiary source (no checksum)
+          get_url:
+            url: "{{ tertiary_download_url }}"
+            dest: "{{ download_dest }}"
+          register: tertiary_download
+
+        - name: Warn about unverified download
+          debug:
+            msg: "WARNING: Downloaded from tertiary source without checksum verification"
+
+    # Pattern 5: Conditional error handling
+    - name: Operation that may fail
+      command: /opt/app/bin/optional-operation
+      register: optional_result
+      failed_when: false
+      changed_when: optional_result.rc == 0
+
+    - name: Handle optional operation result
+      debug:
+        msg: >-
+          Optional operation {{ 'succeeded' if optional_result.rc == 0 else 'failed (non-critical)' }}
+
+    - name: Continue only if optional succeeded
+      include_tasks: post_optional.yml
+      when: optional_result.rc == 0
+
+  handlers:
+    - name: reload service
+      service:
+        name: "{{ service_name }}"
+        state: reloaded
+      listen: "reload service"

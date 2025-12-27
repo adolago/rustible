@@ -1,0 +1,207 @@
+# Common Pattern: Multi-Tier Application Deployment
+# Tests complex play ordering, delegation, and run_once
+---
+- name: Preparation - Gather facts and validate
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Validate minimum Ansible version
+      assert:
+        that:
+          - ansible_version.major >= 2
+          - ansible_version.minor >= 9
+        msg: "This playbook requires Ansible 2.9 or higher"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Ensure all hosts are reachable
+      ping:
+
+    - name: Gather package facts
+      package_facts:
+        manager: auto
+      when: ansible_os_family in ['Debian', 'RedHat']
+
+
+- name: Database Tier Setup
+  hosts: databases
+  become: true
+
+  vars:
+    db_name: "{{ app_database_name | default('appdb') }}"
+    db_user: "{{ app_database_user | default('appuser') }}"
+
+  tasks:
+    - name: Install database packages
+      package:
+        name: "{{ db_packages }}"
+        state: present
+
+    - name: Configure database
+      template:
+        src: "{{ db_config_template }}"
+        dest: "{{ db_config_path }}"
+        owner: "{{ db_user }}"
+        group: "{{ db_group }}"
+        mode: '0640'
+      notify: restart database
+
+    - name: Ensure database is started
+      service:
+        name: "{{ db_service_name }}"
+        state: started
+        enabled: true
+
+    - name: Create application database
+      community.mysql.mysql_db:
+        name: "{{ db_name }}"
+        state: present
+      when: db_type == 'mysql'
+
+    - name: Create application database user
+      community.mysql.mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        priv: "{{ db_name }}.*:ALL"
+        host: "%"
+        state: present
+      when: db_type == 'mysql'
+      no_log: true
+
+  handlers:
+    - name: restart database
+      service:
+        name: "{{ db_service_name }}"
+        state: restarted
+
+
+- name: Application Tier Setup
+  hosts: application_servers
+  become: true
+
+  vars:
+    app_config:
+      database:
+        host: "{{ hostvars[groups['databases'][0]]['ansible_host'] | default(groups['databases'][0]) }}"
+        port: "{{ db_port | default(3306) }}"
+        name: "{{ db_name }}"
+        user: "{{ db_user }}"
+
+  tasks:
+    - name: Install application dependencies
+      package:
+        name: "{{ app_dependencies }}"
+        state: present
+
+    - name: Create application user
+      user:
+        name: "{{ app_user }}"
+        system: true
+        shell: /bin/false
+        home: "{{ app_home }}"
+        create_home: true
+
+    - name: Deploy application code
+      unarchive:
+        src: "{{ app_artifact }}"
+        dest: "{{ app_home }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        remote_src: "{{ app_artifact_remote | default(false) }}"
+      notify: restart application
+
+    - name: Create application config
+      template:
+        src: app_config.yml.j2
+        dest: "{{ app_home }}/config.yml"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: '0600'
+      notify: restart application
+
+    - name: Install systemd service
+      template:
+        src: app.service.j2
+        dest: /etc/systemd/system/{{ app_name }}.service
+        mode: '0644'
+      notify:
+        - reload systemd
+        - restart application
+
+    - name: Start application
+      service:
+        name: "{{ app_name }}"
+        state: started
+        enabled: true
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: true
+
+    - name: restart application
+      service:
+        name: "{{ app_name }}"
+        state: restarted
+
+
+- name: Load Balancer Configuration
+  hosts: load_balancers
+  become: true
+
+  vars:
+    backend_servers: "{{ groups['application_servers'] }}"
+
+  tasks:
+    - name: Install load balancer
+      package:
+        name: "{{ lb_package }}"
+        state: present
+
+    - name: Configure load balancer
+      template:
+        src: lb_config.j2
+        dest: "{{ lb_config_path }}"
+        validate: "{{ lb_config_validate_cmd | default(omit) }}"
+      notify: reload load balancer
+
+    - name: Ensure load balancer is running
+      service:
+        name: "{{ lb_service }}"
+        state: started
+        enabled: true
+
+  handlers:
+    - name: reload load balancer
+      service:
+        name: "{{ lb_service }}"
+        state: reloaded
+
+
+- name: Final Verification
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Wait for application to be accessible
+      uri:
+        url: "http://{{ lb_vip | default(groups['load_balancers'][0]) }}/health"
+        method: GET
+        status_code: 200
+      register: result
+      until: result.status == 200
+      retries: 30
+      delay: 10
+
+    - name: Send deployment notification
+      uri:
+        url: "{{ notification_webhook }}"
+        method: POST
+        body_format: json
+        body:
+          event: deployment_complete
+          version: "{{ app_version }}"
+          environment: "{{ app_environment }}"
+        status_code: [200, 201, 204]
+      when: notification_webhook is defined

@@ -1,0 +1,19 @@
+# Ansible Facts Gathering Benchmark Playbook
+# Used for benchmarking fact gathering performance
+---
+- name: Facts Gathering Benchmark Test
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Display OS family
+      ansible.builtin.debug:
+        msg: "OS: {{ ansible_os_family }}, Distribution: {{ ansible_distribution }}"
+
+    - name: Display system information
+      ansible.builtin.debug:
+        msg: |
+          Hostname: {{ ansible_hostname }}
+          Architecture: {{ ansible_architecture }}
+          Kernel: {{ ansible_kernel }}
+          Memory: {{ ansible_memtotal_mb }} MB
+          Processors: {{ ansible_processor_vcpus }}

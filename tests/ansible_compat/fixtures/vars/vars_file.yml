@@ -1,0 +1,8 @@
+# Variable file for precedence testing
+---
+vars_file_var: "from_vars_file"
+common_var: "vars_file_level"
+database:
+  host: db.example.com
+  port: 5432
+  name: production_db

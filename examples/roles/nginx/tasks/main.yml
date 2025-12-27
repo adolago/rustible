@@ -1,0 +1,140 @@
+---
+# Nginx Role Tasks
+# Comprehensive nginx web server installation and configuration
+
+- name: Include OS-specific variables
+  include_vars: "{{ item }}"
+  with_first_found:
+    - "{{ ansible_distribution | lower }}.yml"
+    - "{{ ansible_os_family | lower }}.yml"
+    - default.yml
+  ignore_errors: true
+
+- name: Install nginx package
+  package:
+    name: "{{ nginx_package_name }}"
+    state: "{{ nginx_package_state }}"
+
+- name: Ensure nginx directories exist
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - "{{ nginx_conf_dir }}"
+    - "{{ nginx_sites_available_dir }}"
+    - "{{ nginx_sites_enabled_dir }}"
+    - "{{ nginx_log_dir }}"
+    - "{{ nginx_ssl_dir }}"
+
+- name: Deploy main nginx configuration
+  template:
+    src: nginx.conf.j2
+    dest: "{{ nginx_conf_dir }}/nginx.conf"
+    owner: root
+    group: root
+    mode: '0644'
+    validate: nginx -t -c %s
+  notify: reload nginx
+
+- name: Deploy mime types configuration
+  copy:
+    src: mime.types
+    dest: "{{ nginx_conf_dir }}/mime.types"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+
+- name: Configure virtual hosts
+  template:
+    src: vhost.conf.j2
+    dest: "{{ nginx_sites_available_dir }}/{{ item.server_name }}.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ nginx_vhosts }}"
+  when: nginx_vhosts is defined
+  notify: reload nginx
+
+- name: Enable virtual hosts
+  file:
+    src: "{{ nginx_sites_available_dir }}/{{ item.server_name }}.conf"
+    dest: "{{ nginx_sites_enabled_dir }}/{{ item.server_name }}.conf"
+    state: link
+  loop: "{{ nginx_vhosts }}"
+  when:
+    - nginx_vhosts is defined
+    - item.enabled | default(true)
+  notify: reload nginx
+
+- name: Remove default nginx site
+  file:
+    path: "{{ nginx_sites_enabled_dir }}/default"
+    state: absent
+  when: nginx_remove_default_vhost | default(true)
+  notify: reload nginx
+
+- name: Configure SSL certificates
+  copy:
+    content: "{{ item.ssl_certificate }}"
+    dest: "{{ nginx_ssl_dir }}/{{ item.server_name }}.crt"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ nginx_vhosts }}"
+  when:
+    - nginx_vhosts is defined
+    - item.ssl_certificate is defined
+  notify: reload nginx
+  no_log: true
+
+- name: Configure SSL private keys
+  copy:
+    content: "{{ item.ssl_certificate_key }}"
+    dest: "{{ nginx_ssl_dir }}/{{ item.server_name }}.key"
+    owner: root
+    group: root
+    mode: '0600'
+  loop: "{{ nginx_vhosts }}"
+  when:
+    - nginx_vhosts is defined
+    - item.ssl_certificate_key is defined
+  notify: reload nginx
+  no_log: true
+
+- name: Generate DH parameters
+  command: openssl dhparam -out {{ nginx_ssl_dir }}/dhparam.pem 2048
+  args:
+    creates: "{{ nginx_ssl_dir }}/dhparam.pem"
+  when: nginx_ssl_dhparam | default(false)
+  notify: reload nginx
+
+- name: Configure logrotate for nginx
+  template:
+    src: logrotate.j2
+    dest: /etc/logrotate.d/nginx
+    owner: root
+    group: root
+    mode: '0644'
+  when: nginx_logrotate | default(true)
+
+- name: Ensure nginx service is started and enabled
+  service:
+    name: nginx
+    state: "{{ nginx_service_state }}"
+    enabled: "{{ nginx_service_enabled }}"
+
+- name: Configure firewall for HTTP
+  command: ufw allow 80/tcp
+  when: nginx_configure_firewall | default(false)
+  changed_when: false
+
+- name: Configure firewall for HTTPS
+  command: ufw allow 443/tcp
+  when:
+    - nginx_configure_firewall | default(false)
+    - nginx_ssl_enabled | default(false)
+  changed_when: false

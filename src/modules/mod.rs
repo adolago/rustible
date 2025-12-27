@@ -4,8 +4,11 @@
 //! Modules are the building blocks that perform actual work on target systems.
 
 pub mod apt;
+pub mod archive;
 pub mod assert;
+pub mod authorized_key;
 pub mod blockinfile;
+pub mod cloud;
 pub mod command;
 pub mod copy;
 pub mod cron;
@@ -14,24 +17,38 @@ pub mod cron;
 // pub mod database;
 pub mod debug;
 pub mod dnf;
+pub mod docker;
 pub mod facts;
 pub mod file;
+pub mod firewalld;
 pub mod git;
 pub mod group;
 pub mod hostname;
 pub mod include_vars;
+pub mod k8s;
+pub mod known_hosts;
 pub mod lineinfile;
 pub mod mount;
+pub mod network;
 pub mod package;
+pub mod pause;
 pub mod pip;
 pub mod python;
+pub mod selinux;
 pub mod service;
 pub mod set_fact;
 pub mod shell;
 pub mod stat;
 pub mod sysctl;
+pub mod systemd_unit;
 pub mod template;
+pub mod timezone;
+pub mod ufw;
+pub mod unarchive;
+pub mod uri;
 pub mod user;
+pub mod wait_for;
+pub mod windows;
 pub mod yum;
 
 pub use python::PythonModuleExecutor;
@@ -835,6 +852,10 @@ impl ModuleRegistry {
         registry.register(Arc::new(stat::StatModule));
 
         registry.register(Arc::new(facts::FactsModule));
+
+        // Network device configuration modules
+        network::register_network_modules(&mut registry);
+
         registry
     }
 

@@ -1,0 +1,91 @@
+# Simulated geerlingguy.docker role patterns
+# Tests common role patterns from Ansible Galaxy
+---
+- name: Include OS-specific variables
+  include_vars: "{{ item }}"
+  with_first_found:
+    - files:
+        - "{{ ansible_distribution }}-{{ ansible_distribution_version }}.yml"
+        - "{{ ansible_distribution }}.yml"
+        - "{{ ansible_os_family }}.yml"
+        - default.yml
+      paths:
+        - ../vars
+
+- name: Check if Docker is already present
+  command: docker --version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  register: docker_version_result
+
+- name: Set docker_installed fact
+  set_fact:
+    docker_installed: "{{ docker_version_result.rc == 0 }}"
+
+- name: Include installation tasks
+  include_tasks: install-{{ ansible_os_family }}.yml
+  when: not docker_installed
+
+- name: Ensure Docker dependencies are installed
+  package:
+    name: "{{ docker_dependencies }}"
+    state: present
+  when: docker_dependencies is defined and docker_dependencies | length > 0
+
+- name: Add Docker GPG key
+  apt_key:
+    url: "{{ docker_apt_gpg_key }}"
+    id: "{{ docker_apt_gpg_key_id }}"
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Add Docker repository
+  apt_repository:
+    repo: "{{ docker_apt_repository }}"
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Install Docker packages
+  package:
+    name: "{{ item }}"
+    state: "{{ docker_package_state }}"
+  loop: "{{ docker_packages }}"
+  notify: restart docker
+
+- name: Ensure Docker daemon configuration directory exists
+  file:
+    path: /etc/docker
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure Docker daemon
+  template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: '0644'
+  when: docker_daemon_options | default({}) | length > 0
+  notify: restart docker
+
+- name: Ensure Docker service is started and enabled
+  service:
+    name: docker
+    state: "{{ docker_service_state }}"
+    enabled: "{{ docker_service_enabled }}"
+
+- name: Add users to docker group
+  user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"
+  when: docker_users is defined
+
+- name: Install Docker Compose
+  include_tasks: docker-compose.yml
+  when: docker_install_compose | bool

@@ -1,0 +1,98 @@
+# Nginx Configuration
+# Managed by Rustible - nginx role
+# DO NOT EDIT MANUALLY
+
+user {{ nginx_user }};
+worker_processes {{ nginx_worker_processes }};
+pid /run/nginx.pid;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+    worker_connections {{ nginx_worker_connections }};
+{% if nginx_multi_accept %}
+    multi_accept on;
+{% endif %}
+}
+
+http {
+    ##
+    # Basic Settings
+    ##
+{% if nginx_sendfile %}
+    sendfile on;
+{% endif %}
+{% if nginx_tcp_nopush %}
+    tcp_nopush on;
+{% endif %}
+{% if nginx_tcp_nodelay %}
+    tcp_nodelay on;
+{% endif %}
+    keepalive_timeout {{ nginx_keepalive_timeout }};
+    types_hash_max_size {{ nginx_types_hash_max_size }};
+{% if not nginx_server_tokens %}
+    server_tokens off;
+{% endif %}
+
+    include {{ nginx_conf_dir }}/mime.types;
+    default_type application/octet-stream;
+
+    ##
+    # Logging Settings
+    ##
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log {{ nginx_access_log }} {{ nginx_log_format }};
+    error_log {{ nginx_error_log }};
+
+    ##
+    # Gzip Settings
+    ##
+{% if nginx_gzip %}
+    gzip on;
+{% if nginx_gzip_vary %}
+    gzip_vary on;
+{% endif %}
+    gzip_proxied {{ nginx_gzip_proxied }};
+    gzip_comp_level {{ nginx_gzip_comp_level }};
+    gzip_types {{ nginx_gzip_types | join(' ') }};
+{% endif %}
+
+{% if nginx_ssl_enabled %}
+    ##
+    # SSL Settings
+    ##
+    ssl_protocols {{ nginx_ssl_protocols }};
+    ssl_ciphers {{ nginx_ssl_ciphers }};
+{% if nginx_ssl_prefer_server_ciphers %}
+    ssl_prefer_server_ciphers on;
+{% endif %}
+    ssl_session_cache {{ nginx_ssl_session_cache }};
+    ssl_session_timeout {{ nginx_ssl_session_timeout }};
+{% if nginx_ssl_dhparam %}
+    ssl_dhparam {{ nginx_ssl_dir }}/dhparam.pem;
+{% endif %}
+{% endif %}
+
+{% if nginx_rate_limiting %}
+    ##
+    # Rate Limiting
+    ##
+    limit_req_zone $binary_remote_addr {{ nginx_rate_limit_zone }};
+{% endif %}
+
+{% if nginx_add_security_headers %}
+    ##
+    # Security Headers
+    ##
+{% for header, value in nginx_security_headers.items() %}
+    add_header {{ header }} "{{ value }}" always;
+{% endfor %}
+{% endif %}
+
+    ##
+    # Virtual Host Configs
+    ##
+    include {{ nginx_sites_enabled_dir }}/*.conf;
+}

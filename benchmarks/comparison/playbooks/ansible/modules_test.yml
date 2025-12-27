@@ -1,0 +1,75 @@
+# Ansible Module Execution Benchmark Playbook
+# Used for benchmarking various module execution performance
+---
+- name: Module Execution Benchmark Test
+  hosts: all
+  gather_facts: false
+  vars:
+    test_dir: /tmp/ansible_bench_test
+    test_file: /tmp/ansible_bench_test/test.txt
+
+  tasks:
+    # File module tests
+    - name: Create test directory
+      ansible.builtin.file:
+        path: "{{ test_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Copy module test
+    - name: Copy content to file
+      ansible.builtin.copy:
+        content: |
+          This is a test file created by Ansible.
+          Timestamp: {{ ansible_date_time.iso8601 | default('N/A') }}
+          Testing module execution performance.
+        dest: "{{ test_file }}"
+        mode: '0644'
+
+    # Stat module test
+    - name: Get file stats
+      ansible.builtin.stat:
+        path: "{{ test_file }}"
+      register: file_stat
+
+    # Template module test (using inline template)
+    - name: Template test with variables
+      ansible.builtin.copy:
+        content: |
+          # Generated configuration
+          test_value=benchmark
+          test_count=100
+          test_enabled=true
+        dest: "{{ test_dir }}/config.txt"
+        mode: '0644'
+
+    # Lineinfile module test
+    - name: Add line to file
+      ansible.builtin.lineinfile:
+        path: "{{ test_dir }}/config.txt"
+        line: "benchmark_line=added"
+        state: present
+
+    # Command module tests (sequential)
+    - name: Run echo command
+      ansible.builtin.command: echo "test output 1"
+      changed_when: false
+
+    - name: Run date command
+      ansible.builtin.command: date +%s
+      changed_when: false
+
+    - name: Run uname command
+      ansible.builtin.command: uname -a
+      changed_when: false
+
+    # Shell module test
+    - name: Run shell command with pipes
+      ansible.builtin.shell: echo "hello world" | tr 'a-z' 'A-Z'
+      changed_when: false
+
+    # Cleanup
+    - name: Remove test directory
+      ansible.builtin.file:
+        path: "{{ test_dir }}"
+        state: absent

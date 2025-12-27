@@ -1,0 +1,96 @@
+# PostgreSQL Configuration File
+# Managed by Rustible - postgresql role
+# DO NOT EDIT MANUALLY
+
+#------------------------------------------------------------------------------
+# CONNECTIONS AND AUTHENTICATION
+#------------------------------------------------------------------------------
+
+listen_addresses = '{{ postgresql_listen_addresses | join(",") }}'
+port = {{ postgresql_port }}
+max_connections = {{ postgresql_max_connections }}
+superuser_reserved_connections = {{ postgresql_superuser_reserved_connections }}
+
+#------------------------------------------------------------------------------
+# RESOURCE USAGE (except WAL)
+#------------------------------------------------------------------------------
+
+shared_buffers = {{ postgresql_shared_buffers }}
+work_mem = {{ postgresql_work_mem }}
+maintenance_work_mem = {{ postgresql_maintenance_work_mem }}
+effective_cache_size = {{ postgresql_effective_cache_size }}
+
+#------------------------------------------------------------------------------
+# WRITE AHEAD LOG
+#------------------------------------------------------------------------------
+
+wal_level = {{ postgresql_wal_level }}
+max_wal_size = {{ postgresql_max_wal_size }}
+min_wal_size = {{ postgresql_min_wal_size }}
+wal_buffers = {{ postgresql_wal_buffers }}
+
+#------------------------------------------------------------------------------
+# CHECKPOINTS
+#------------------------------------------------------------------------------
+
+checkpoint_completion_target = {{ postgresql_checkpoint_completion_target }}
+checkpoint_timeout = {{ postgresql_checkpoint_timeout }}
+
+#------------------------------------------------------------------------------
+# REPORTING AND LOGGING
+#------------------------------------------------------------------------------
+
+log_destination = '{{ postgresql_log_destination }}'
+logging_collector = {{ postgresql_logging_collector | lower }}
+log_directory = '{{ postgresql_log_directory }}'
+log_filename = '{{ postgresql_log_filename }}'
+log_rotation_age = {{ postgresql_log_rotation_age }}
+log_rotation_size = {{ postgresql_log_rotation_size }}
+log_min_duration_statement = {{ postgresql_log_min_duration_statement }}
+log_line_prefix = '{{ postgresql_log_line_prefix }}'
+
+#------------------------------------------------------------------------------
+# QUERY TUNING
+#------------------------------------------------------------------------------
+
+random_page_cost = {{ postgresql_random_page_cost }}
+effective_io_concurrency = {{ postgresql_effective_io_concurrency }}
+default_statistics_target = {{ postgresql_default_statistics_target }}
+
+#------------------------------------------------------------------------------
+# CLIENT CONNECTION DEFAULTS
+#------------------------------------------------------------------------------
+
+datestyle = '{{ postgresql_datestyle }}'
+timezone = '{{ postgresql_timezone }}'
+lc_messages = '{{ postgresql_lc_messages }}'
+lc_monetary = '{{ postgresql_lc_monetary }}'
+lc_numeric = '{{ postgresql_lc_numeric }}'
+lc_time = '{{ postgresql_lc_time }}'
+default_text_search_config = 'pg_catalog.english'
+
+{% if postgresql_ssl %}
+#------------------------------------------------------------------------------
+# SSL CONFIGURATION
+#------------------------------------------------------------------------------
+
+ssl = on
+{% if postgresql_ssl_cert_file %}
+ssl_cert_file = '{{ postgresql_ssl_cert_file }}'
+{% endif %}
+{% if postgresql_ssl_key_file %}
+ssl_key_file = '{{ postgresql_ssl_key_file }}'
+{% endif %}
+{% if postgresql_ssl_ca_file %}
+ssl_ca_file = '{{ postgresql_ssl_ca_file }}'
+{% endif %}
+{% endif %}
+
+{% if postgresql_replication_enabled %}
+#------------------------------------------------------------------------------
+# REPLICATION
+#------------------------------------------------------------------------------
+
+max_wal_senders = 3
+wal_keep_size = 64MB
+{% endif %}

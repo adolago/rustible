@@ -4,7 +4,12 @@
 //! including argument parsing, configuration loading, and subcommand handling.
 
 pub mod commands;
+pub mod completions;
+pub mod diff;
+pub mod interactive;
+pub mod json_output;
 pub mod output;
+pub mod progress;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;

@@ -1,0 +1,111 @@
+---
+# Rustible Deployment for Kubernetes
+# This deploys Rustible as a Job runner or CronJob for scheduled automation
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustible
+  namespace: rustible
+  labels:
+    app.kubernetes.io/name: rustible
+    app.kubernetes.io/component: automation
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustible
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rustible
+        app.kubernetes.io/component: automation
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: rustible
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: rustible
+          image: ghcr.io/rustible/rustible:latest
+          imagePullPolicy: Always
+
+          command: ["/bin/bash"]
+          args: ["-c", "sleep infinity"]  # Keep pod running for exec
+
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          env:
+            - name: RUST_LOG
+              value: "info"
+            - name: RUSTIBLE_CONFIG
+              value: "/etc/rustible/config.toml"
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/rustible
+              readOnly: true
+            - name: ssh-keys
+              mountPath: /home/rustible/.ssh
+              readOnly: true
+            - name: playbooks
+              mountPath: /workspace/playbooks
+              readOnly: true
+            - name: workspace
+              mountPath: /workspace/output
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/rustible", "--version"]
+            initialDelaySeconds: 5
+            periodSeconds: 60
+
+          readinessProbe:
+            exec:
+              command: ["/usr/local/bin/rustible", "--version"]
+            initialDelaySeconds: 3
+            periodSeconds: 10
+
+      volumes:
+        - name: config
+          configMap:
+            name: rustible-config
+        - name: ssh-keys
+          secret:
+            secretName: rustible-ssh-keys
+            defaultMode: 0600
+        - name: playbooks
+          configMap:
+            name: rustible-playbooks
+            optional: true
+        - name: workspace
+          emptyDir: {}
+
+      restartPolicy: Always
+---
+# ServiceAccount for Rustible
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rustible
+  namespace: rustible
+  labels:
+    app.kubernetes.io/name: rustible

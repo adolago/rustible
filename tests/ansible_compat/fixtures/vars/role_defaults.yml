@@ -1,0 +1,6 @@
+# Role defaults (lowest precedence)
+---
+role_default_var: "from_role_defaults"
+common_var: "role_defaults_level"
+nginx_port: 80
+app_name: "default_app"

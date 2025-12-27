@@ -1,0 +1,121 @@
+# Common Pattern: Rolling Update Deployment
+# Tests serial execution, delegation, and health checks
+---
+- name: Rolling Update Application Deployment
+  hosts: webservers
+  serial: "{{ rolling_update_batch_size | default(1) }}"
+  max_fail_percentage: 0
+  any_errors_fatal: false
+
+  vars:
+    app_name: myapp
+    app_version: "{{ deploy_version | default('latest') }}"
+    health_check_retries: 10
+    health_check_delay: 5
+
+  pre_tasks:
+    - name: Get current timestamp
+      set_fact:
+        deploy_timestamp: "{{ ansible_date_time.iso8601 }}"
+
+    - name: Disable host in load balancer
+      uri:
+        url: "{{ lb_api_url }}/hosts/{{ inventory_hostname }}/disable"
+        method: POST
+        status_code: [200, 204]
+      delegate_to: localhost
+      when: lb_api_url is defined
+
+    - name: Wait for connections to drain
+      wait_for:
+        timeout: "{{ connection_drain_timeout | default(30) }}"
+      when: lb_api_url is defined
+
+  tasks:
+    - name: Stop application service
+      service:
+        name: "{{ app_name }}"
+        state: stopped
+      register: stop_result
+
+    - name: Backup current application
+      archive:
+        path: "{{ app_install_dir }}"
+        dest: "/tmp/{{ app_name }}-backup-{{ deploy_timestamp }}.tar.gz"
+        format: gz
+      when: backup_before_deploy | default(true) | bool
+
+    - name: Deploy new application version
+      unarchive:
+        src: "{{ app_artifact_url }}/{{ app_name }}-{{ app_version }}.tar.gz"
+        dest: "{{ app_install_dir }}"
+        remote_src: true
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+      notify: clear application cache
+
+    - name: Update application configuration
+      template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: "{{ item.mode | default('0644') }}"
+        backup: true
+      loop: "{{ app_config_files | default([]) }}"
+      notify: reload application
+
+    - name: Run database migrations
+      command: "{{ app_install_dir }}/bin/migrate --env={{ app_environment }}"
+      args:
+        chdir: "{{ app_install_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      when: run_migrations | default(false) | bool
+      run_once: true
+
+    - name: Start application service
+      service:
+        name: "{{ app_name }}"
+        state: started
+        enabled: true
+      register: start_result
+
+    - name: Wait for application to be ready
+      uri:
+        url: "http://localhost:{{ app_port | default(8080) }}/health"
+        method: GET
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+
+  post_tasks:
+    - name: Enable host in load balancer
+      uri:
+        url: "{{ lb_api_url }}/hosts/{{ inventory_hostname }}/enable"
+        method: POST
+        status_code: [200, 204]
+      delegate_to: localhost
+      when: lb_api_url is defined
+
+    - name: Verify traffic is being served
+      uri:
+        url: "http://{{ inventory_hostname }}:{{ app_port | default(8080) }}/health"
+        method: GET
+        status_code: 200
+      delegate_to: localhost
+      retries: 3
+      delay: 2
+
+  handlers:
+    - name: clear application cache
+      file:
+        path: "{{ app_cache_dir }}"
+        state: absent
+
+    - name: reload application
+      service:
+        name: "{{ app_name }}"
+        state: reloaded

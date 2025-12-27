@@ -1,0 +1,37 @@
+---
+# Rustible ConfigMap for configuration and playbooks
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustible-config
+  namespace: rustible
+  labels:
+    app.kubernetes.io/name: rustible
+    app.kubernetes.io/component: config
+data:
+  config.toml: |
+    # Rustible Configuration
+    [defaults]
+    forks = 10
+    timeout = 30
+    gather_facts = true
+
+    [connection]
+    type = "ssh"
+    timeout = 10
+    retries = 3
+
+    [logging]
+    level = "info"
+    format = "json"
+
+  inventory.yaml: |
+    # Example inventory - customize for your environment
+    all:
+      children:
+        webservers:
+          hosts: {}
+        databases:
+          hosts: {}
+      vars:
+        ansible_user: admin

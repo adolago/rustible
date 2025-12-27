@@ -1,0 +1,16 @@
+# Rustible Facts Gathering Benchmark Playbook
+# Used for benchmarking fact gathering performance
+---
+- name: Facts Gathering Benchmark Test
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Display OS family
+      debug:
+        msg: "OS: {{ ansible_os_family }}, Architecture: {{ ansible_architecture }}"
+
+    - name: Display system information
+      debug:
+        msg: |
+          Hostname: {{ ansible_hostname }}
+          Kernel: {{ ansible_kernel }}
