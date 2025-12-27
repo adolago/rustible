@@ -1,0 +1,179 @@
+---
+# Stanley Inventory Configuration for Rustible
+# Defines hosts and groups for Stanley deployment
+
+all:
+  children:
+    # Main Stanley Application Servers
+    stanley_servers:
+      hosts:
+        stanley-prod-01:
+          ansible_host: 10.0.1.10
+          ansible_user: deploy
+          api_port: 8000
+          gui_port: 3000
+          environment: production
+          
+        stanley-prod-02:
+          ansible_host: 10.0.1.11
+          ansible_user: deploy
+          api_port: 8000
+          gui_port: 3000
+          environment: production
+          
+    # Development and Testing
+    stanley_development:
+      hosts:
+        stanley-dev-01:
+          ansible_host: 10.0.2.10
+          ansible_user: vagrant
+          api_port: 8001
+          gui_port: 3001
+          environment: development
+          
+        stanley-local:
+          ansible_host: 127.0.0.1
+          ansible_user: "{{ lookup('env', 'USER') }}"
+          api_port: 8002
+          gui_port: 3002
+          environment: development
+          ansible_connection: local
+          
+    # Database Servers
+    stanley_databases:
+      hosts:
+        stanley-db-01:
+          ansible_host: 10.0.1.20
+          ansible_user: postgres
+          postgres_port: 5432
+          postgres_version: 15
+          
+        stanley-db-02:
+          ansible_host: 10.0.1.21
+          ansible_user: postgres
+          postgres_port: 5432
+          postgres_version: 15
+          
+    # Redis Cache Servers
+    stanley_cache:
+      hosts:
+        stanley-redis-01:
+          ansible_host: 10.0.1.30
+          ansible_user: redis
+          redis_port: 6379
+          
+        stanley-redis-02:
+          ansible_host: 10.0.1.31
+          ansible_user: redis
+          redis_port: 6379
+          
+    # Load Balancers
+    stanley_load_balancers:
+      hosts:
+        stanley-lb-01:
+          ansible_host: 10.0.1.5
+          ansible_user: nginx
+          lb_type: nginx
+          
+        stanley-lb-02:
+          ansible_host: 10.0.1.6
+          ansible_user: nginx
+          lb_type: nginx
+          
+    # Monitoring and Observability
+    stanley_monitoring:
+      hosts:
+        stanley-monitor-01:
+          ansible_host: 10.0.1.40
+          ansible_user: monitor
+          prometheus_port: 9090
+          grafana_port: 3000
+          
+    # Backup Servers
+    stanley_backup:
+      hosts:
+        stanley-backup-01:
+          ansible_host: 10.0.1.50
+          ansible_user: backup
+          backup_retention_days: 30
+
+  # Global Variables
+  vars:
+    # Environment Configuration
+    stanley_domain: "stanley.example.com"
+    stanley_ssl_enabled: true
+    stanley_backup_enabled: true
+    
+    # Security Settings
+    stanley_firewall_enabled: true
+    stanley_fail2ban_enabled: true
+    
+    # Database Configuration
+    postgres_max_connections: 200
+    postgres_shared_buffers: "256MB"
+    postgres_effective_cache_size: "1GB"
+    
+    # Redis Configuration
+    redis_maxmemory: "1gb"
+    redis_maxmemory_policy: "allkeys-lru"
+    
+    # Application Configuration
+    stanley_workers: 4
+    stanley_worker_timeout: 300
+    stanley_log_level: "INFO"
+    
+    # Monitoring
+    prometheus_retention: "15d"
+    grafana_admin_password: "{{ vault_grafana_admin_password }}"
+    
+    # Backup Configuration
+    backup_s3_bucket: "stanley-backups"
+    backup_schedule: "0 2 * * *"
+
+# Production Environment
+production:
+  hosts:
+    stanley-prod-01:
+    stanley-prod-02:
+    stanley-db-01:
+    stanley-db-02:
+    stanley-redis-01:
+    stanley-redis-02:
+    stanley-lb-01:
+    stanley-lb-02:
+    stanley-monitor-01:
+    stanley-backup-01:
+  vars:
+    environment: production
+    stanley_ssl_enabled: true
+    stanley_log_level: "WARNING"
+    postgres_max_connections: 500
+    backup_retention_days: 90
+
+# Development Environment  
+development:
+  hosts:
+    stanley-dev-01:
+    stanley-local:
+  vars:
+    environment: development
+    stanley_ssl_enabled: false
+    stanley_log_level: "DEBUG"
+    postgres_max_connections: 100
+    backup_retention_days: 7
+
+# Staging Environment
+staging:
+  hosts:
+    stanley-staging-01:
+      ansible_host: 10.0.3.10
+      ansible_user: deploy
+      api_port: 8003
+      gui_port: 3003
+      environment: staging
+  vars:
+    environment: staging
+    stanley_ssl_enabled: true
+    stanley_log_level: "INFO"
+    postgres_max_connections: 200
+    backup_retention_days: 14

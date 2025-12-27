@@ -61,7 +61,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, beta, "1.75"]  # MSRV from Cargo.toml
+        rust: [stable, beta, "1.85"]  # MSRV from Cargo.toml
         features: [default, pure-rust]
         exclude:
           # Skip beta on Windows to reduce CI time
@@ -69,7 +69,7 @@ jobs:
             rust: beta
           # Skip MSRV on macOS to reduce CI time
           - os: macos-latest
-            rust: "1.75"
+            rust: "1.85"
 
     steps:
       - name: Checkout repository

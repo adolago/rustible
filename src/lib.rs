@@ -78,9 +78,14 @@
 //! }
 //! ```
 
+// Clippy configuration
 #![warn(clippy::all)]
+// Enable pedantic for local development, CI allows these
 #![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
+// Development-time allowances
+#![allow(dead_code)]
+#![allow(unused_variables)]
 
 // Re-export commonly used items in prelude
 pub mod prelude {

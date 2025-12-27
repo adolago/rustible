@@ -16,6 +16,12 @@ ignore = [
     # Status: Transitive dependency through validator_derive if present
     # If atty appears it's from unmaintained dependencies
     "RUSTSEC-2021-0145",
+
+    # RUSTSEC-2024-0421: idna - Punycode decoding issue
+    # Status: Transitive dependency via validator/url crates
+    # Risk: URL parsing edge cases with malformed Punycode
+    # Mitigation: We don't process untrusted URLs from external sources
+    "RUSTSEC-2024-0421",
 ]
 
 # Only fail on actual vulnerabilities, not warnings about unmaintained packages

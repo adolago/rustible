@@ -295,8 +295,9 @@ fn test_pause_check_mode_message_minutes() {
 fn test_pause_interactive_detection() {
     // Test TTY detection logic (simplified)
     // In a test environment, we're typically non-interactive
-    let is_tty = atty::is(atty::Stream::Stdin);
-    // This test just verifies the atty crate works
+    use std::io::IsTerminal;
+    let is_tty = std::io::stdin().is_terminal();
+    // This test just verifies the terminal detection works
     assert!(is_tty || !is_tty); // Always true, just testing the function call
 }
 

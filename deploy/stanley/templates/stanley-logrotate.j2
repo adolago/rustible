@@ -1,0 +1,54 @@
+# Stanley logrotate configuration
+{{ stanley_logs_dir }}/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 {{ stanley_user }} {{ stanley_user }}
+    postrotate
+        # Reload rsyslog if it's being used
+        if [ -f /var/run/rsyslogd.pid ]; then
+            /bin/kill -HUP $(cat /var/run/rsyslogd.pid 2> /dev/null) 2> /dev/null || true
+        fi
+        # Send SIGUSR1 to application to reopen log files
+        if pgrep -f stanley-api; then
+            pkill -USR1 -f stanley-api || true
+        fi
+        if pgrep -f stanley-gui; then
+            pkill -USR1 -f stanley-gui || true
+        fi
+    endscript
+}
+
+# Application-specific logs
+{{ stanley_logs_dir }}/api.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 {{ stanley_user }} {{ stanley_user }}
+}
+
+{{ stanley_logs_dir }}/gui.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 {{ stanley_user }} {{ stanley_user }}
+}
+
+{{ stanley_logs_dir }}/error.log {
+    daily
+    rotate 60
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 {{ stanley_user }} {{ stanley_user }}
+}

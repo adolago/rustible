@@ -1,0 +1,43 @@
+[Unit]
+Description=Stanley Financial Platform GUI
+Documentation=https://github.com/your-org/stanley
+After=network.target stanley-api.service
+Wants=stanley-api.service
+
+[Service]
+Type=exec
+User={{ stanley_user }}
+Group={{ stanley_user }}
+WorkingDirectory={{ stanley_home }}/stanley-gui
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile={{ stanley_home }}/.env
+ExecStart=/usr/bin/cargo run --release --bin stanley-gui
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths={{ stanley_data_dir }} {{ stanley_logs_dir }}
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Resource limits
+LimitNOFILE=32768
+LimitNPROC=2048
+MemoryMax=512M
+TasksMax=2048
+
+[Install]
+WantedBy=multi-user.target

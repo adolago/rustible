@@ -38,7 +38,7 @@ license = "MIT"
 repository = "https://github.com/rustible/rustible"
 keywords = ["ansible", "automation", "configuration-management", "devops", "infrastructure"]
 categories = ["command-line-utilities", "development-tools", "config"]
-rust-version = "1.75"
+rust-version = "1.85"
 readme = "README.md"
 
 [lib]
@@ -141,7 +141,7 @@ reqwest = { version = "0.11", features = ["json", "rustls-tls", "blocking"], def
 url = "2.5"
 
 # Validation
-validator = { version = "0.16", features = ["derive"] }
+validator = { version = "0.19", features = ["derive"] }
 
 # CSV parsing for inventory
 csv = "1.3"
@@ -195,7 +195,7 @@ futures-util = { version = "0.3", optional = true }
 [dev-dependencies]
 tokio-test = "0.4"
 mockall = "0.12"
-atty = "0.2"
+# Note: atty removed - use is-terminal instead (already in main dependencies)
 urlencoding = "2.1"
 assert_cmd = "2.0"
 predicates = "3.1"

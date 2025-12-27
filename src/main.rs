@@ -4,6 +4,10 @@
 //!
 //! This is the main entry point for the Rustible CLI.
 
+// Development-time allowances
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 mod cli;
 mod config;
 

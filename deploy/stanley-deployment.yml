@@ -1,0 +1,407 @@
+---
+# Stanley Deployment Playbook for Rustible
+# Deploys Stanley financial analysis platform using Rustible
+
+- name: Deploy Stanley Financial Platform
+  hosts: stanley_servers
+  become: true
+  gather_facts: true
+  
+  vars:
+    # Stanley Configuration
+    stanley_version: "latest"
+    stanley_user: "stanley"
+    stanley_home: "/opt/stanley"
+    stanley_data_dir: "/var/lib/stanley"
+    stanley_logs_dir: "/var/log/stanley"
+    stanley_config_dir: "/etc/stanley"
+    
+    # Service Configuration
+    api_port: "{{ lookup('env', 'STANLEY_API_PORT') | default('8000', true) }}"
+    gui_port: "{{ lookup('env', 'STANLEY_GUI_PORT') | default('3000', true) }}"
+    
+    # Database Configuration
+    postgres_version: "15"
+    postgres_db: "{{ lookup('env', 'POSTGRES_DB') | default('stanley', true) }}"
+    postgres_user: "{{ lookup('env', 'POSTGRES_USER') | default('stanley', true) }}"
+    postgres_password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('stanley_secure_pass', true) }}"
+    
+    # Redis Configuration
+    redis_password: "{{ lookup('env', 'REDIS_PASSWORD') | default('', true) }}"
+    
+    # API Keys (should be encrypted in production)
+    openbb_api_key: "{{ lookup('env', 'OPENBB_API_KEY') | default('', true) }}"
+    sec_identity: "{{ lookup('env', 'SEC_IDENTITY') | default('stanley@example.com', true) }}"
+    
+    # Docker Configuration
+    docker_network: "stanley_network"
+    docker_compose_version: "v2.20.2"
+    
+  pre_tasks:
+    - name: Validate required environment variables
+      fail:
+        msg: "Required environment variable {{ item }} is not set"
+      when: lookup('env', item) == ''
+      loop:
+        - OPENBB_API_KEY
+        - SEC_IDENTITY
+      ignore_errors: true
+      tags: validate
+
+  tasks:
+    # =========================================================================
+    # System Prerequisites
+    # =========================================================================
+    - name: Update package cache
+      package:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags: packages
+
+    - name: Install system dependencies
+      package:
+        name:
+          - curl
+          - git
+          - python3
+          - python3-pip
+          - python3-venv
+          - build-essential
+          - pkg-config
+          - libssl-dev
+          - postgresql-client
+          - redis-tools
+        state: present
+      tags: packages
+
+    - name: Install Docker dependencies
+      package:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: docker
+
+    # =========================================================================
+    # Docker Installation
+    # =========================================================================
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: docker
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags: docker
+
+    - name: Install Docker
+      package:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+      tags: docker
+
+    - name: Start and enable Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      tags: docker
+
+    - name: Add stanley user to docker group
+      user:
+        name: "{{ stanley_user }}"
+        groups: docker
+        append: yes
+      tags: docker
+
+    # =========================================================================
+    # Stanley User Setup
+    # =========================================================================
+    - name: Create Stanley system user
+      user:
+        name: "{{ stanley_user }}"
+        system: yes
+        shell: /bin/bash
+        home: "{{ stanley_home }}"
+        create_home: yes
+      tags: user
+
+    - name: Create Stanley directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ stanley_user }}"
+        group: "{{ stanley_user }}"
+        mode: '0755'
+      loop:
+        - "{{ stanley_home }}"
+        - "{{ stanley_data_dir }}"
+        - "{{ stanley_logs_dir }}"
+        - "{{ stanley_config_dir }}"
+      tags: directories
+
+    # =========================================================================
+    # Application Deployment
+    # =========================================================================
+    - name: Clone Stanley repository
+      git:
+        repo: https://github.com/your-org/stanley.git
+        dest: "{{ stanley_home }}/stanley"
+        version: "{{ stanley_version }}"
+        force: yes
+      become_user: "{{ stanley_user }}"
+      tags: deploy
+
+    - name: Create Python virtual environment
+      pip:
+        requirements: "{{ stanley_home }}/stanley/requirements.txt"
+        virtualenv: "{{ stanley_home }}/venv"
+        virtualenv_python: python3
+      become_user: "{{ stanley_user }}"
+      tags: deploy
+
+    - name: Install Stanley package
+      pip:
+        name: "{{ stanley_home }}/stanley"
+        virtualenv: "{{ stanley_home }}/venv"
+      become_user: "{{ stanley_user }}"
+      tags: deploy
+
+    # =========================================================================
+    # Database Setup
+    # =========================================================================
+    - name: Install PostgreSQL
+      package:
+        name: "postgresql-{{ postgres_version }}"
+        state: present
+      tags: database
+
+    - name: Start and enable PostgreSQL
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+      tags: database
+
+    - name: Create Stanley database
+      postgresql_db:
+        name: "{{ postgres_db }}"
+        owner: "{{ postgres_user }}"
+        encoding: UTF-8
+        lc_collate: en_US.UTF-8
+        lc_ctype: en_US.UTF-8
+      become_user: postgres
+      tags: database
+
+    - name: Create Stanley database user
+      postgresql_user:
+        name: "{{ postgres_user }}"
+        password: "{{ postgres_password }}"
+        db: "{{ postgres_db }}"
+        priv: ALL
+      become_user: postgres
+      tags: database
+
+    # =========================================================================
+    # Redis Setup
+    # =========================================================================
+    - name: Install Redis
+      package:
+        name: redis-server
+        state: present
+      tags: redis
+
+    - name: Configure Redis password
+      lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^#?requirepass'
+        line: "requirepass {{ redis_password }}"
+        backup: yes
+      when: redis_password != ''
+      tags: redis
+
+    - name: Start and enable Redis
+      service:
+        name: redis-server
+        state: started
+        enabled: yes
+      tags: redis
+
+    # =========================================================================
+    # Configuration Files
+    # =========================================================================
+    - name: Create Stanley configuration
+      template:
+        src: stanley.yaml.j2
+        dest: "{{ stanley_config_dir }}/stanley.yaml"
+        owner: "{{ stanley_user }}"
+        group: "{{ stanley_user }}"
+        mode: '0640'
+      tags: config
+
+    - name: Create environment file
+      template:
+        src: .env.j2
+        dest: "{{ stanley_home }}/.env"
+        owner: "{{ stanley_user }}"
+        group: "{{ stanley_user }}"
+        mode: '0640'
+      tags: config
+
+    - name: Create systemd service for Stanley API
+      template:
+        src: stanley-api.service.j2
+        dest: /etc/systemd/system/stanley-api.service
+        mode: '0644'
+      tags: services
+      notify: Reload systemd
+
+    - name: Create systemd service for Stanley GUI
+      template:
+        src: stanley-gui.service.j2
+        dest: /etc/systemd/system/stanley-gui.service
+        mode: '0644'
+      tags: services
+      notify: Reload systemd
+
+    # =========================================================================
+    # Service Management
+    # =========================================================================
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+      tags: services
+
+    - name: Start and enable Stanley services
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - stanley-api
+        - stanley-gui
+      tags: services
+
+    # =========================================================================
+    # Health Checks
+    # =========================================================================
+    - name: Wait for API to be ready
+      uri:
+        url: "http://localhost:{{ api_port }}/api/health"
+        method: GET
+        status_code: 200
+      register: api_health
+      until: api_health.status == 200
+      retries: 30
+      delay: 10
+      tags: healthcheck
+
+    - name: Wait for GUI to be ready
+      uri:
+        url: "http://localhost:{{ gui_port }}/health"
+        method: GET
+        status_code: 200
+      register: gui_health
+      until: gui_health.status == 200
+      retries: 30
+      delay: 10
+      tags: healthcheck
+
+    - name: Display deployment status
+      debug:
+        msg:
+          - "Stanley deployment completed successfully!"
+          - "API URL: http://{{ ansible_default_ipv4.address }}:{{ api_port }}"
+          - "GUI URL: http://{{ ansible_default_ipv4.address }}:{{ gui_port }}"
+          - "Logs: {{ stanley_logs_dir }}"
+          - "Data: {{ stanley_data_dir }}"
+      tags: status
+
+  handlers:
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Restart Stanley API
+      service:
+        name: stanley-api
+        state: restarted
+
+    - name: Restart Stanley GUI
+      service:
+        name: stanley-gui
+        state: restarted
+
+# Play 2: Backup and Maintenance
+- name: Configure Stanley backup and maintenance
+  hosts: stanley_servers
+  become: true
+  gather_facts: true
+  
+  tasks:
+    - name: Create backup script
+      template:
+        src: backup.sh.j2
+        dest: /usr/local/bin/stanley-backup
+        mode: '0755'
+      tags: backup
+
+    - name: Create maintenance script
+      template:
+        src: maintenance.sh.j2
+        dest: /usr/local/bin/stanley-maintenance
+        mode: '0755'
+      tags: maintenance
+
+    - name: Configure backup cron job
+      cron:
+        name: "Stanley backup"
+        job: "/usr/local/bin/stanley-backup"
+        hour: "2"
+        minute: "0"
+        user: "{{ stanley_user }}"
+      tags: backup
+
+# Play 3: Monitoring and Alerting
+- name: Configure Stanley monitoring
+  hosts: stanley_servers
+  become: true
+  gather_facts: true
+  
+  tasks:
+    - name: Install monitoring tools
+      package:
+        name:
+          - prometheus-node-exporter
+          - logrotate
+        state: present
+      tags: monitoring
+
+    - name: Configure logrotate for Stanley logs
+      template:
+        src: stanley-logrotate.j2
+        dest: /etc/logrotate.d/stanley
+        mode: '0644'
+      tags: monitoring
+
+    - name: Start and enable monitoring services
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - prometheus-node-exporter
+      tags: monitoring
