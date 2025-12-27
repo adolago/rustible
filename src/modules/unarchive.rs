@@ -172,21 +172,46 @@ impl UnarchiveModule {
         use sha2::{Digest, Sha256};
 
         let mut file = File::open(path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
+        // Use 64KB buffer for streaming to prevent memory exhaustion
+        const BUFFER_SIZE: usize = 64 * 1024;
+        let mut buffer = [0u8; BUFFER_SIZE];
 
         match algorithm.to_lowercase().as_str() {
             "sha256" | "sha-256" => {
-                let hash = Sha256::digest(&buffer);
+                let mut hasher = Sha256::new();
+                loop {
+                    let bytes_read = file.read(&mut buffer)?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    hasher.update(&buffer[..bytes_read]);
+                }
+                let hash = hasher.finalize();
                 Ok(format!("{:x}", hash))
             }
             "md5" => {
-                let hash = md5::compute(&buffer);
+                let mut context = md5::Context::new();
+                loop {
+                    let bytes_read = file.read(&mut buffer)?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    context.consume(&buffer[..bytes_read]);
+                }
+                let hash = context.compute();
                 Ok(format!("{:x}", hash))
             }
             "sha1" | "sha-1" => {
                 use sha1::Digest as Sha1Digest;
-                let hash = sha1::Sha1::digest(&buffer);
+                let mut hasher = sha1::Sha1::new();
+                loop {
+                    let bytes_read = file.read(&mut buffer)?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    hasher.update(&buffer[..bytes_read]);
+                }
+                let hash = hasher.finalize();
                 Ok(format!("{:x}", hash))
             }
             _ => Err(ModuleError::InvalidParameter(format!(
