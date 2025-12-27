@@ -60,13 +60,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Windows excluded: Unix-only codebase (uses std::os::unix extensively)
+        os: [ubuntu-latest, macos-latest]
         rust: [stable, beta, "1.85"]  # MSRV from Cargo.toml
         features: [default, pure-rust]
         exclude:
-          # Skip beta on Windows to reduce CI time
-          - os: windows-latest
-            rust: beta
           # Skip MSRV on macOS to reduce CI time
           - os: macos-latest
             rust: "1.85"
@@ -207,10 +205,7 @@ jobs:
             os: macos-latest
             artifact_name: rustible
             asset_name: rustible-macos-aarch64
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            artifact_name: rustible.exe
-            asset_name: rustible-windows-x86_64.exe
+          # Windows excluded: Unix-only codebase (uses std::os::unix extensively)
 
     steps:
       - name: Checkout repository
@@ -253,13 +248,11 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
-      - name: Strip binary (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: Strip binary
         run: |
           strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }} || true
 
-      - name: Create tarball (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: Create tarball
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} dist/
@@ -267,28 +260,11 @@ jobs:
           cd dist
           tar -czvf ../${{ matrix.asset_name }}.tar.gz *
 
-      - name: Create zip (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist
-          Copy-Item target/${{ matrix.target }}/release/${{ matrix.artifact_name }} dist/
-          Copy-Item README.md, LICENSE dist/ -ErrorAction SilentlyContinue
-          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.asset_name }}.zip
-
-      - name: Upload artifact (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_name }}.tar.gz
-
-      - name: Upload artifact (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ matrix.asset_name }}.zip
 
   # Summary job that requires all other jobs to pass
   ci-success:

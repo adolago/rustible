@@ -13,6 +13,7 @@ use minijinja::{Environment, Error, Value};
 use once_cell::sync::Lazy;
 use std::fs;
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use tokio::runtime::Handle;
@@ -160,6 +161,7 @@ impl TemplateModule {
         }
     }
 
+    #[cfg(unix)]
     fn set_permissions(path: &Path, mode: Option<u32>) -> ModuleResult<bool> {
         if let Some(mode) = mode {
             let current = fs::metadata(path)?.permissions().mode() & 0o7777;
@@ -168,6 +170,12 @@ impl TemplateModule {
                 return Ok(true);
             }
         }
+        Ok(false)
+    }
+
+    #[cfg(not(unix))]
+    fn set_permissions(_path: &Path, _mode: Option<u32>) -> ModuleResult<bool> {
+        // Permission modes are not supported on Windows
         Ok(false)
     }
 
@@ -196,6 +204,7 @@ impl TemplateModule {
 
         if !needs_update {
             // Check if only permissions need updating
+            #[cfg(unix)]
             let perm_changed = if let Some(m) = mode {
                 if dest_path.exists() {
                     let current = fs::metadata(dest_path)?.permissions().mode() & 0o7777;
@@ -206,6 +215,8 @@ impl TemplateModule {
             } else {
                 false
             };
+            #[cfg(not(unix))]
+            let perm_changed = false;
 
             if perm_changed {
                 if context.check_mode {
@@ -286,13 +297,19 @@ impl TemplateModule {
         output = output
             .with_data("dest", serde_json::json!(dest))
             .with_data("src", serde_json::json!(src))
-            .with_data("size", serde_json::json!(meta.len()))
-            .with_data(
-                "mode",
-                serde_json::json!(format!("{:o}", meta.permissions().mode() & 0o7777)),
-            )
-            .with_data("uid", serde_json::json!(meta.uid()))
-            .with_data("gid", serde_json::json!(meta.gid()));
+            .with_data("size", serde_json::json!(meta.len()));
+
+        // Unix-specific file metadata
+        #[cfg(unix)]
+        {
+            output = output
+                .with_data(
+                    "mode",
+                    serde_json::json!(format!("{:o}", meta.permissions().mode() & 0o7777)),
+                )
+                .with_data("uid", serde_json::json!(meta.uid()))
+                .with_data("gid", serde_json::json!(meta.gid()));
+        }
 
         Ok(output)
     }
