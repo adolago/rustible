@@ -456,11 +456,11 @@ mod throttle_tests {
         let manager1 = manager.clone();
         let handle1 = tokio::spawn(async move {
             let _guard = manager1.acquire("host1", "test", None).await;
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         });
 
         // Give first task time to acquire
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
 
         let manager2 = manager.clone();
         let start = Instant::now();
@@ -472,8 +472,9 @@ mod throttle_tests {
         handle2.await.unwrap();
 
         let elapsed = start.elapsed();
+        // Use generous timing for CI environments (use 50ms threshold for ~100ms expected)
         assert!(
-            elapsed >= Duration::from_millis(40),
+            elapsed >= Duration::from_millis(50),
             "Per-host throttle should serialize same host: took {:?}",
             elapsed
         );
