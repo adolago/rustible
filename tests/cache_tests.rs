@@ -21,9 +21,11 @@ use indexmap::IndexMap;
 use serde_json::{json, Value as JsonValue};
 
 use rustible::cache::{
-    classify_module_idempotency, Cache, CacheConfig, CacheDependency, CacheManager, CacheMetrics,
-    CacheType, CachedModuleResult, FactCache, IdempotencyClass, ModuleCacheKey, ModuleResultCache,
-    PlaybookCache, RoleCache, VariableCache,
+    Cache, CacheConfig, CacheDependency, CacheManager, CacheMetrics,
+    CacheType, FactCache, PlaybookCache, RoleCache, VariableCache,
+};
+use rustible::cache::module_result::{
+    classify_module_idempotency, CachedModuleResult, IdempotencyClass, ModuleCacheKey, ModuleResultCache,
 };
 
 // ============================================================================
@@ -32,7 +34,7 @@ use rustible::cache::{
 
 mod template_cache_tests {
     use super::*;
-    use rustible::cache::{
+    use rustible::cache::template::{
         LazyTemplate, TemplateCache, TemplateCacheConfig, TemplateCacheKey, TemplatePreloader,
     };
 
