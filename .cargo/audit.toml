@@ -29,3 +29,4 @@ informational_warnings = [
 [output]
 # Output format
 format = "terminal"
+quiet = false
