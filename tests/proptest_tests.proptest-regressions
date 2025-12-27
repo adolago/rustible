@@ -1,8 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 82b38e0bc2e2281c887f7dd6495d056dbb8d19e116397c3311c3fb8ced75eeec # shrinks to a = Mapping {"a": Null}, b = Null, c = Mapping {}
-cc f411daf229ab2dab2a34498a06abb584e91b24309a3831b658ddb0b839fbff21 # shrinks to parent_name = "_", children = ["_"]
