@@ -590,6 +590,18 @@ pub struct Task {
     /// Condition for retry success
     #[serde(skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+
+    /// Block of tasks (for block/rescue/always error handling)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block: Option<Vec<Task>>,
+
+    /// Rescue tasks (run on block failure)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rescue: Option<Vec<Task>>,
+
+    /// Always tasks (always run after block, regardless of success/failure)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub always: Option<Vec<Task>>,
 }
 
 impl<'de> Deserialize<'de> for Task {
@@ -802,6 +814,15 @@ impl<'de> Deserialize<'de> for Task {
                 .map(|v| v as u32),
             delay: obj.get("delay").and_then(|v| v.as_u64()),
             until: obj.get("until").and_then(|v| v.as_str()).map(String::from),
+            block: obj.get("block").and_then(|v| {
+                serde_json::from_value::<Vec<Task>>(v.clone()).ok()
+            }),
+            rescue: obj.get("rescue").and_then(|v| {
+                serde_json::from_value::<Vec<Task>>(v.clone()).ok()
+            }),
+            always: obj.get("always").and_then(|v| {
+                serde_json::from_value::<Vec<Task>>(v.clone()).ok()
+            }),
         })
     }
 }
@@ -844,6 +865,9 @@ impl Task {
             retries: None,
             delay: None,
             until: None,
+            block: None,
+            rescue: None,
+            always: None,
         }
     }
 

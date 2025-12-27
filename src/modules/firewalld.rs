@@ -68,7 +68,7 @@ pub enum FirewalldState {
 }
 
 impl FirewalldState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "enabled" | "present" => Ok(FirewalldState::Enabled),
             "disabled" | "absent" => Ok(FirewalldState::Disabled),
@@ -79,7 +79,7 @@ impl FirewalldState {
         }
     }
 
-    fn should_be_present(&self) -> bool {
+    pub fn should_be_present(&self) -> bool {
         matches!(self, FirewalldState::Enabled | FirewalldState::Present)
     }
 }
@@ -94,7 +94,7 @@ pub enum ZoneTarget {
 }
 
 impl ZoneTarget {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_uppercase().as_str() {
             "DEFAULT" | "%%REJECT%%" => Ok(ZoneTarget::Default),
             "ACCEPT" => Ok(ZoneTarget::Accept),
@@ -107,7 +107,7 @@ impl ZoneTarget {
         }
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             ZoneTarget::Default => "default",
             ZoneTarget::Accept => "ACCEPT",

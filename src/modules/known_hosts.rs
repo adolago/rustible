@@ -57,7 +57,7 @@ pub enum KnownHostsState {
 }
 
 impl KnownHostsState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" => Ok(KnownHostsState::Present),
             "absent" => Ok(KnownHostsState::Absent),
@@ -83,7 +83,7 @@ pub enum KeyType {
 }
 
 impl KeyType {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "rsa" | "ssh-rsa" => Ok(KeyType::Rsa),
             "ed25519" | "ssh-ed25519" => Ok(KeyType::Ed25519),
@@ -100,7 +100,7 @@ impl KeyType {
         }
     }
 
-    fn as_ssh_keyscan_type(&self) -> &'static str {
+    pub fn as_ssh_keyscan_type(&self) -> &'static str {
         match self {
             KeyType::Rsa => "rsa",
             KeyType::Ed25519 => "ed25519",
@@ -111,7 +111,7 @@ impl KeyType {
         }
     }
 
-    fn as_openssh_str(&self) -> &'static str {
+    pub fn as_openssh_str(&self) -> &'static str {
         match self {
             KeyType::Rsa => "ssh-rsa",
             KeyType::Ed25519 => "ssh-ed25519",
@@ -124,7 +124,7 @@ impl KeyType {
         }
     }
 
-    fn from_openssh_str(s: &str) -> Option<Self> {
+    pub fn from_openssh_str(s: &str) -> Option<Self> {
         match s {
             "ssh-rsa" => Some(KeyType::Rsa),
             "ssh-ed25519" => Some(KeyType::Ed25519),
@@ -355,7 +355,7 @@ mod hmac {
 /// Known hosts file manager
 pub struct KnownHostsFile {
     path: PathBuf,
-    entries: Vec<KnownHostsEntry>,
+    pub entries: Vec<KnownHostsEntry>,
     comments: Vec<(usize, String)>, // Line number -> comment
 }
 

@@ -422,7 +422,7 @@ impl JsonCallback {
     }
 
     /// Records a task completion and updates host statistics.
-    async fn record_task_result(&self, host: &str, result: &ModuleResult) {
+    pub async fn record_task_result(&self, host: &str, result: &ModuleResult) {
         let mut stats = self.host_stats.write().await;
         let host_stats = stats.entry(host.to_string()).or_default();
 

@@ -27,7 +27,7 @@ pub enum MountState {
 }
 
 impl MountState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "mounted" => Ok(MountState::Mounted),
             "unmounted" => Ok(MountState::Unmounted),

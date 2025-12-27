@@ -158,7 +158,7 @@ struct TimerState {
 #[derive(Debug)]
 pub struct TimerCallback {
     /// Configuration for the timer
-    config: TimerConfig,
+    pub config: TimerConfig,
     /// Internal state protected by RwLock for thread-safe access
     state: RwLock<TimerState>,
     /// Total tasks executed (atomic for lock-free counting)
@@ -463,13 +463,13 @@ impl TimerCallback {
     }
 
     /// Record a task start time
-    fn record_task_start(&self, task_name: &str, host: &str) {
+    pub fn record_task_start(&self, task_name: &str, host: &str) {
         let key = format!("{}:{}", task_name, host);
         self.state.write().task_starts.insert(key, Instant::now());
     }
 
     /// Record a task completion and calculate duration
-    fn record_task_complete(
+    pub fn record_task_complete(
         &self,
         task_name: &str,
         host: &str,

@@ -431,16 +431,23 @@ impl SlackCallback {
 
     /// Send a message to Slack with retry logic.
     async fn send_message(&self, message: SlackMessage) -> SlackResult<Option<String>> {
-        // Rate limiting
-        {
+        // Rate limiting - calculate sleep time while holding the lock, then sleep after releasing it
+        let sleep_time = {
             let state = self.state.read();
             if let Some(last_time) = state.last_message_time {
                 let elapsed = last_time.elapsed().as_millis() as u64;
                 if elapsed < self.config.min_message_interval_ms {
-                    let sleep_time = self.config.min_message_interval_ms - elapsed;
-                    tokio::time::sleep(Duration::from_millis(sleep_time)).await;
+                    Some(self.config.min_message_interval_ms - elapsed)
+                } else {
+                    None
                 }
+            } else {
+                None
             }
+        };
+
+        if let Some(delay) = sleep_time {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
 
         let mut last_error = None;

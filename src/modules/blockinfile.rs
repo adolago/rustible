@@ -19,7 +19,7 @@ pub enum BlockState {
 }
 
 impl BlockState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" => Ok(BlockState::Present),
             "absent" => Ok(BlockState::Absent),

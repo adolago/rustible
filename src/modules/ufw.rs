@@ -66,7 +66,7 @@ pub enum UfwRule {
 }
 
 impl UfwRule {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "allow" => Ok(UfwRule::Allow),
             "deny" => Ok(UfwRule::Deny),
@@ -79,7 +79,7 @@ impl UfwRule {
         }
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             UfwRule::Allow => "allow",
             UfwRule::Deny => "deny",
@@ -98,7 +98,7 @@ pub enum UfwDirection {
 }
 
 impl UfwDirection {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "in" | "incoming" => Ok(UfwDirection::In),
             "out" | "outgoing" => Ok(UfwDirection::Out),
@@ -110,7 +110,7 @@ impl UfwDirection {
         }
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             UfwDirection::In => "in",
             UfwDirection::Out => "out",
@@ -128,7 +128,7 @@ pub enum UfwProto {
 }
 
 impl UfwProto {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "tcp" => Ok(UfwProto::Tcp),
             "udp" => Ok(UfwProto::Udp),
@@ -140,7 +140,7 @@ impl UfwProto {
         }
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             UfwProto::Tcp => "tcp",
             UfwProto::Udp => "udp",
@@ -160,7 +160,7 @@ pub enum UfwLogLevel {
 }
 
 impl UfwLogLevel {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "off" => Ok(UfwLogLevel::Off),
             "low" | "on" => Ok(UfwLogLevel::Low),
@@ -174,7 +174,7 @@ impl UfwLogLevel {
         }
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             UfwLogLevel::Off => "off",
             UfwLogLevel::Low => "low",
@@ -195,7 +195,7 @@ pub enum UfwState {
 }
 
 impl UfwState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "enabled" => Ok(UfwState::Enabled),
             "disabled" => Ok(UfwState::Disabled),
@@ -218,7 +218,7 @@ pub enum UfwDefault {
 }
 
 impl UfwDefault {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "allow" => Ok(UfwDefault::Allow),
             "deny" => Ok(UfwDefault::Deny),
@@ -230,7 +230,7 @@ impl UfwDefault {
         }
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             UfwDefault::Allow => "allow",
             UfwDefault::Deny => "deny",

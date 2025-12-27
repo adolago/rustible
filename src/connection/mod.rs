@@ -568,6 +568,7 @@ impl ConnectionType {
 }
 
 /// Factory for creating connections
+#[derive(Clone)]
 pub struct ConnectionFactory {
     /// Global configuration
     config: Arc<ConnectionConfig>,

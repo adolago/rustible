@@ -23,7 +23,7 @@ pub enum PackageManager {
 }
 
 impl PackageManager {
-    fn detect() -> Option<Self> {
+    pub fn detect() -> Option<Self> {
         // Check for package managers in order of preference
         let managers = [
             ("apt-get", PackageManager::Apt),
@@ -49,7 +49,7 @@ impl PackageManager {
         None
     }
 
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "apt" | "apt-get" => Ok(PackageManager::Apt),
             "dnf" => Ok(PackageManager::Dnf),
@@ -65,7 +65,7 @@ impl PackageManager {
         }
     }
 
-    fn install_cmd(&self) -> Vec<&'static str> {
+    pub fn install_cmd(&self) -> Vec<&'static str> {
         match self {
             PackageManager::Apt => vec!["apt-get", "install", "-y"],
             PackageManager::Dnf => vec!["dnf", "install", "-y"],
@@ -77,7 +77,7 @@ impl PackageManager {
         }
     }
 
-    fn remove_cmd(&self) -> Vec<&'static str> {
+    pub fn remove_cmd(&self) -> Vec<&'static str> {
         match self {
             PackageManager::Apt => vec!["apt-get", "remove", "-y"],
             PackageManager::Dnf => vec!["dnf", "remove", "-y"],
@@ -89,7 +89,7 @@ impl PackageManager {
         }
     }
 
-    fn update_cmd(&self) -> Vec<&'static str> {
+    pub fn update_cmd(&self) -> Vec<&'static str> {
         match self {
             PackageManager::Apt => vec!["apt-get", "update"],
             PackageManager::Dnf => vec!["dnf", "makecache"],
@@ -101,8 +101,7 @@ impl PackageManager {
         }
     }
 
-    #[allow(dead_code)]
-    fn upgrade_cmd(&self) -> Vec<&'static str> {
+    pub fn upgrade_cmd(&self) -> Vec<&'static str> {
         match self {
             PackageManager::Apt => vec!["apt-get", "upgrade", "-y"],
             PackageManager::Dnf => vec!["dnf", "upgrade", "-y"],
@@ -114,7 +113,7 @@ impl PackageManager {
         }
     }
 
-    fn is_installed(&self, package: &str) -> ModuleResult<bool> {
+    pub fn is_installed(&self, package: &str) -> ModuleResult<bool> {
         let result = match self {
             PackageManager::Apt => Command::new("dpkg")
                 .args(["-s", package])
@@ -147,7 +146,7 @@ impl PackageManager {
         })
     }
 
-    fn get_installed_version(&self, package: &str) -> ModuleResult<Option<String>> {
+    pub fn get_installed_version(&self, package: &str) -> ModuleResult<Option<String>> {
         let output = match self {
             PackageManager::Apt => Command::new("dpkg-query")
                 .args(["-W", "-f=${Version}", package])
@@ -187,7 +186,7 @@ pub enum PackageState {
 }
 
 impl PackageState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" | "installed" => Ok(PackageState::Present),
             "absent" | "removed" => Ok(PackageState::Absent),
@@ -204,7 +203,7 @@ impl PackageState {
 pub struct PackageModule;
 
 impl PackageModule {
-    fn run_package_command(
+    pub fn run_package_command(
         cmd: &[&str],
         packages: &[String],
     ) -> ModuleResult<(bool, String, String)> {

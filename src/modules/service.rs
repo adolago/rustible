@@ -200,7 +200,7 @@ pub enum ServiceState {
 }
 
 impl ServiceState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "started" | "running" => Ok(ServiceState::Started),
             "stopped" => Ok(ServiceState::Stopped),

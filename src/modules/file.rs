@@ -30,7 +30,7 @@ pub enum FileState {
 }
 
 impl FileState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "file" => Ok(FileState::File),
             "directory" | "dir" => Ok(FileState::Directory),

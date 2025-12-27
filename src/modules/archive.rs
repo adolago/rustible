@@ -52,7 +52,7 @@ pub enum ArchiveFormat {
 
 impl ArchiveFormat {
     /// Parse format from string
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "tar" => Ok(ArchiveFormat::Tar),
             "gz" | "tar.gz" | "tgz" | "gzip" => Ok(ArchiveFormat::TarGz),

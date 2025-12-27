@@ -84,7 +84,7 @@ pub enum SELinuxMode {
 }
 
 impl SELinuxMode {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "enforcing" | "1" => Ok(SELinuxMode::Enforcing),
             "permissive" | "0" => Ok(SELinuxMode::Permissive),
@@ -96,7 +96,7 @@ impl SELinuxMode {
         }
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             SELinuxMode::Enforcing => "enforcing",
             SELinuxMode::Permissive => "permissive",
@@ -123,7 +123,7 @@ pub enum SELinuxProtocol {
 }
 
 impl SELinuxProtocol {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "tcp" => Ok(SELinuxProtocol::Tcp),
             "udp" => Ok(SELinuxProtocol::Udp),
@@ -136,7 +136,7 @@ impl SELinuxProtocol {
         }
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             SELinuxProtocol::Tcp => "tcp",
             SELinuxProtocol::Udp => "udp",
@@ -168,7 +168,7 @@ pub enum SELinuxFileType {
 }
 
 impl SELinuxFileType {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "a" | "all" => Ok(SELinuxFileType::All),
             "f" | "file" | "" => Ok(SELinuxFileType::File),
@@ -207,7 +207,7 @@ pub enum PortState {
 }
 
 impl PortState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" => Ok(PortState::Present),
             "absent" => Ok(PortState::Absent),

@@ -75,8 +75,8 @@
 // ============================================================================
 
 // Core output plugins
-mod default;
-mod minimal;
+pub mod default;
+pub mod minimal;
 mod null;
 mod oneline;
 mod summary;
@@ -110,7 +110,11 @@ mod yaml;
 // Integration plugins
 mod forked;
 mod junit;
+pub mod logstash;
 mod mail;
+pub mod profile_tasks;
+pub mod slack;
+pub mod splunk;
 
 // ============================================================================
 // Default Callback Exports
@@ -201,6 +205,27 @@ pub use notification::{
     EmailConfig, FailureDetail, HostStatsSummary, NotificationCallback, NotificationConfig,
     NotificationPayload, NotificationStatus, SlackConfig, WebhookConfig,
 };
+
+// Slack callback
+pub use slack::{
+    SlackCallback, SlackCallbackConfig, SlackCallbackConfigBuilder, SlackError, SlackResult,
+};
+
+// Logstash callback
+pub use logstash::{
+    LogstashCallback, LogstashConfig, LogstashConfigBuilder, LogstashError, LogstashProtocol,
+    LogstashResult,
+};
+
+// Profile tasks callback
+pub use profile_tasks::{
+    AggregatedTaskTiming, HostTaskTiming, HostTiming, PerformanceRecommendation,
+    ProfileTasksCallback, ProfileTasksCallbackBuilder, ProfileTasksConfig,
+    RecommendationSeverity, SortOrder, TaskTiming,
+};
+
+// Splunk callback
+pub use splunk::{SplunkCallback, SplunkConfig, SplunkConfigBuilder, SplunkError, SplunkResult};
 
 // ============================================================================
 // Trait Re-exports

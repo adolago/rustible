@@ -221,7 +221,7 @@ impl Default for DefaultCallbackConfig {
 #[derive(Debug)]
 pub struct DefaultCallback {
     /// Configuration
-    config: DefaultCallbackConfig,
+    pub config: DefaultCallbackConfig,
     /// Whether to use colored output (computed from config and environment)
     use_color: AtomicBool,
     /// Current verbosity level

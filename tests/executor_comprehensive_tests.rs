@@ -742,7 +742,7 @@ async fn test_failure_handling_any_errors_fatal() {
     let mut playbook = Playbook::new("Any Errors Fatal Test");
     let mut play = Play::new("Test", "all");
     play.gather_facts = false;
-    play.any_errors_fatal = true;
+    // Note: any_errors_fatal is configured via ExecutorConfig, not Play
 
     // Fail on one host
     play.add_task(

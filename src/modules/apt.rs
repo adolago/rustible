@@ -34,7 +34,7 @@ pub enum AptState {
 }
 
 impl AptState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" | "installed" => Ok(AptState::Present),
             "absent" | "removed" => Ok(AptState::Absent),
@@ -65,7 +65,7 @@ pub enum UpgradeMode {
 }
 
 impl UpgradeMode {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "no" | "false" => Ok(UpgradeMode::No),
             "yes" | "true" | "safe" => Ok(UpgradeMode::Yes),

@@ -195,6 +195,8 @@ futures-util = { version = "0.3", optional = true }
 [dev-dependencies]
 tokio-test = "0.4"
 mockall = "0.12"
+atty = "0.2"
+urlencoding = "2.1"
 assert_cmd = "2.0"
 predicates = "3.1"
 pretty_assertions = "1.4"

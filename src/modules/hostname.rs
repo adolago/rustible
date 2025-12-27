@@ -31,7 +31,7 @@ pub enum HostnameStrategy {
 }
 
 impl HostnameStrategy {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "systemd" => Ok(HostnameStrategy::Systemd),
             "file" => Ok(HostnameStrategy::File),

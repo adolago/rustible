@@ -19,7 +19,7 @@ pub enum UserState {
 }
 
 impl UserState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" => Ok(UserState::Present),
             "absent" => Ok(UserState::Absent),

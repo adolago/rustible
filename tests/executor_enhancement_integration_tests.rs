@@ -625,24 +625,25 @@ mod throttle_tests {
 
     #[tokio::test]
     async fn test_task_throttle_manager_different_tasks() {
-        let manager = TaskThrottleManager::new();
+        let manager = std::sync::Arc::new(TaskThrottleManager::new());
 
         let start = Instant::now();
         let mut handles = vec![];
 
         // 2 tasks for task1 (throttle 1) and 2 tasks for task2 (throttle 1)
         // They should run in parallel since they're different tasks
-        for i in 0..2 {
-            let manager = manager.clone();
+        for _i in 0..2 {
+            let manager1 = manager.clone();
+            let manager2 = manager.clone();
+
             let handle = tokio::spawn(async move {
-                let _permit = manager.acquire("task1", 1).await;
+                let _permit = manager1.acquire("task1", 1).await;
                 tokio::time::sleep(Duration::from_millis(50)).await;
             });
             handles.push(handle);
 
-            let manager = manager.clone();
             let handle = tokio::spawn(async move {
-                let _permit = manager.acquire("task2", 1).await;
+                let _permit = manager2.acquire("task2", 1).await;
                 tokio::time::sleep(Duration::from_millis(50)).await;
             });
             handles.push(handle);

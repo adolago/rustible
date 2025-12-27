@@ -104,7 +104,7 @@ pub enum UnitType {
 
 impl UnitType {
     /// Parse unit type from string
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "service" => Ok(UnitType::Service),
             "socket" => Ok(UnitType::Socket),
@@ -165,7 +165,7 @@ pub enum UnitState {
 }
 
 impl UnitState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" => Ok(UnitState::Present),
             "absent" => Ok(UnitState::Absent),
@@ -187,7 +187,7 @@ pub enum RunningState {
 }
 
 impl RunningState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "started" | "running" => Ok(RunningState::Started),
             "stopped" => Ok(RunningState::Stopped),

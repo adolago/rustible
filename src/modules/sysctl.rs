@@ -26,7 +26,7 @@ pub enum SysctlState {
 }
 
 impl SysctlState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" => Ok(SysctlState::Present),
             "absent" => Ok(SysctlState::Absent),

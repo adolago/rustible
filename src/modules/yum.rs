@@ -61,7 +61,7 @@ pub enum YumState {
 }
 
 impl YumState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" | "installed" => Ok(YumState::Present),
             "absent" | "removed" => Ok(YumState::Absent),

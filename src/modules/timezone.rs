@@ -64,7 +64,7 @@ pub enum TimezoneStrategy {
 }
 
 impl TimezoneStrategy {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "timedatectl" | "systemd" => Ok(TimezoneStrategy::Timedatectl),
             "file" => Ok(TimezoneStrategy::File),
@@ -87,7 +87,7 @@ pub enum HwclockMode {
 }
 
 impl HwclockMode {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "utc" => Ok(HwclockMode::Utc),
             "local" | "localtime" => Ok(HwclockMode::Local),

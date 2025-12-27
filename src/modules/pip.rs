@@ -20,7 +20,7 @@ pub enum PipState {
 }
 
 impl PipState {
-    fn from_str(s: &str) -> ModuleResult<Self> {
+    pub fn from_str(s: &str) -> ModuleResult<Self> {
         match s.to_lowercase().as_str() {
             "present" | "installed" => Ok(PipState::Present),
             "absent" | "removed" => Ok(PipState::Absent),
@@ -165,6 +165,13 @@ impl PipConfig {
 pub struct PipModule;
 
 impl PipModule {
+    /// Build the pip command path based on parameters
+    /// Returns the path to the pip executable (respects virtualenv if set)
+    pub fn build_pip_command(&self, params: &ModuleParams) -> ModuleResult<String> {
+        let config = PipConfig::from_params(params)?;
+        Ok(config.pip_cmd)
+    }
+
     /// Check if a package is installed
     fn is_package_installed(&self, config: &PipConfig, package: &str) -> ModuleResult<bool> {
         // Strip version specifier for package check
