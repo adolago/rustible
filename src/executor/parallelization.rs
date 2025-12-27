@@ -349,11 +349,11 @@ mod tests {
             let _guard = manager1
                 .acquire(ParallelizationHint::HostExclusive, "host1", "test")
                 .await;
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         });
 
         // Give first task time to acquire lock
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
 
         let manager2 = manager.clone();
         let start = Instant::now();
@@ -368,9 +368,9 @@ mod tests {
 
         let elapsed = start.elapsed();
 
-        // Second task should have waited for first
+        // Second task should have waited for first (use generous timing for CI)
         assert!(
-            elapsed >= Duration::from_millis(40),
+            elapsed >= Duration::from_millis(50),
             "Host exclusive should block: took {:?}",
             elapsed
         );
