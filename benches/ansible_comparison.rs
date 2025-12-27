@@ -63,7 +63,9 @@ use rustible::connection::{ConnectionConfig, ConnectionFactory};
 use rustible::executor::parallelization::ParallelizationManager;
 use rustible::facts::Facts;
 use rustible::inventory::Inventory;
-use rustible::modules::{ModuleContext, ModuleOutput, ModuleParams, ModuleRegistry, ParallelizationHint};
+use rustible::modules::{
+    ModuleContext, ModuleOutput, ModuleParams, ModuleRegistry, ParallelizationHint,
+};
 use rustible::template::TemplateEngine;
 
 // ============================================================================
@@ -126,7 +128,10 @@ async fn simulate_fact_gather(host: &str) -> Facts {
     facts.set("ansible_architecture", serde_json::json!("x86_64"));
     facts.set("ansible_processor_count", serde_json::json!(8));
     facts.set("ansible_memtotal_mb", serde_json::json!(16384));
-    facts.set("ansible_default_ipv4", serde_json::json!({"address": "192.168.1.100"}));
+    facts.set(
+        "ansible_default_ipv4",
+        serde_json::json!({"address": "192.168.1.100"}),
+    );
     facts
 }
 
@@ -469,8 +474,14 @@ fn bench_module_execution(c: &mut Criterion) {
         std::fs::write(&src_path, "test content").expect("Failed to write source file");
 
         let mut params: ModuleParams = HashMap::new();
-        params.insert("src".to_string(), serde_json::json!(src_path.to_str().unwrap()));
-        params.insert("dest".to_string(), serde_json::json!("/tmp/nonexistent_dest.txt"));
+        params.insert(
+            "src".to_string(),
+            serde_json::json!(src_path.to_str().unwrap()),
+        );
+        params.insert(
+            "dest".to_string(),
+            serde_json::json!("/tmp/nonexistent_dest.txt"),
+        );
 
         let context = ModuleContext::new().with_check_mode(true);
 
@@ -489,9 +500,8 @@ fn bench_module_execution(c: &mut Criterion) {
             BenchmarkId::new("copy/transfer", format!("{}kb", size_kb)),
             &(size_kb * 1024),
             |b, &size| {
-                b.to_async(&rt).iter(|| async move {
-                    simulate_file_transfer(size).await
-                })
+                b.to_async(&rt)
+                    .iter(|| async move { simulate_file_transfer(size).await })
             },
         );
     }
@@ -519,10 +529,16 @@ fn bench_module_execution(c: &mut Criterion) {
     let complex_template = generate_template_content(20);
     let mut complex_vars: HashMap<String, serde_json::Value> = HashMap::new();
     for i in 0..20 {
-        complex_vars.insert(format!("var_{}", i), serde_json::json!(format!("value_{}", i)));
+        complex_vars.insert(
+            format!("var_{}", i),
+            serde_json::json!(format!("value_{}", i)),
+        );
     }
     complex_vars.insert("enable_feature".to_string(), serde_json::json!(true));
-    complex_vars.insert("items".to_string(), serde_json::json!(vec!["a", "b", "c", "d", "e"]));
+    complex_vars.insert(
+        "items".to_string(),
+        serde_json::json!(vec!["a", "b", "c", "d", "e"]),
+    );
 
     group.bench_function("template/complex", |b| {
         b.iter(|| {
@@ -535,10 +551,16 @@ fn bench_module_execution(c: &mut Criterion) {
     let large_template = generate_template_content(100);
     let mut large_vars: HashMap<String, serde_json::Value> = HashMap::new();
     for i in 0..100 {
-        large_vars.insert(format!("var_{}", i), serde_json::json!(format!("value_{}", i)));
+        large_vars.insert(
+            format!("var_{}", i),
+            serde_json::json!(format!("value_{}", i)),
+        );
     }
     large_vars.insert("enable_feature".to_string(), serde_json::json!(true));
-    large_vars.insert("items".to_string(), serde_json::json!((0..50).collect::<Vec<_>>()));
+    large_vars.insert(
+        "items".to_string(),
+        serde_json::json!((0..50).collect::<Vec<_>>()),
+    );
 
     group.bench_function("template/large_100_vars", |b| {
         b.iter(|| {
@@ -953,7 +975,10 @@ fn bench_memory_usage(c: &mut Criterion) {
     group.bench_function("context/with_vars", |b| {
         let mut vars: HashMap<String, serde_json::Value> = HashMap::new();
         for i in 0..50 {
-            vars.insert(format!("var_{}", i), serde_json::json!(format!("value_{}", i)));
+            vars.insert(
+                format!("var_{}", i),
+                serde_json::json!(format!("value_{}", i)),
+            );
         }
 
         b.iter(|| {
@@ -965,7 +990,10 @@ fn bench_memory_usage(c: &mut Criterion) {
     group.bench_function("context/with_facts", |b| {
         let mut facts: HashMap<String, serde_json::Value> = HashMap::new();
         for i in 0..30 {
-            facts.insert(format!("fact_{}", i), serde_json::json!(format!("value_{}", i)));
+            facts.insert(
+                format!("fact_{}", i),
+                serde_json::json!(format!("value_{}", i)),
+            );
         }
 
         b.iter(|| {
@@ -1056,10 +1084,7 @@ fn bench_memory_usage(c: &mut Criterion) {
             {
                 let mut pool_guard = pool.write().await;
                 for i in 0..50 {
-                    pool_guard.insert(
-                        format!("host{:05}", i),
-                        format!("connection_state_{}", i),
-                    );
+                    pool_guard.insert(format!("host{:05}", i), format!("connection_state_{}", i));
                 }
             }
 
@@ -1091,7 +1116,10 @@ fn bench_memory_usage(c: &mut Criterion) {
         let mut vars: HashMap<String, serde_json::Value> = HashMap::new();
         for i in 0..50 {
             template.push_str(&format!("{{{{ var_{} }}}} ", i));
-            vars.insert(format!("var_{}", i), serde_json::json!(format!("value_{}", i)));
+            vars.insert(
+                format!("var_{}", i),
+                serde_json::json!(format!("value_{}", i)),
+            );
         }
 
         b.iter(|| {
@@ -1158,7 +1186,10 @@ fn bench_ansible_patterns(c: &mut Criterion) {
         let template_content = generate_template_content(10);
         let mut vars: HashMap<String, serde_json::Value> = HashMap::new();
         for i in 0..10 {
-            vars.insert(format!("var_{}", i), serde_json::json!(format!("value_{}", i)));
+            vars.insert(
+                format!("var_{}", i),
+                serde_json::json!(format!("value_{}", i)),
+            );
         }
         vars.insert("enable_feature".to_string(), serde_json::json!(true));
         vars.insert("items".to_string(), serde_json::json!(vec!["a", "b", "c"]));
@@ -1261,7 +1292,8 @@ fn bench_ansible_patterns(c: &mut Criterion) {
                 .iter()
                 .filter(|(_, facts)| {
                     // Simulate when: ansible_os_family == "Debian"
-                    facts.get("ansible_os_family")
+                    facts
+                        .get("ansible_os_family")
                         .and_then(|v| v.as_str())
                         .map(|s| s == "Debian")
                         .unwrap_or(false)
@@ -1354,35 +1386,17 @@ fn bench_ansible_patterns(c: &mut Criterion) {
 // CRITERION CONFIGURATION
 // ============================================================================
 
-criterion_group!(
-    ssh_benches,
-    bench_ssh_connection,
-);
+criterion_group!(ssh_benches, bench_ssh_connection,);
 
-criterion_group!(
-    fact_benches,
-    bench_fact_gathering,
-);
+criterion_group!(fact_benches, bench_fact_gathering,);
 
-criterion_group!(
-    module_benches,
-    bench_module_execution,
-);
+criterion_group!(module_benches, bench_module_execution,);
 
-criterion_group!(
-    loop_benches,
-    bench_loop_performance,
-);
+criterion_group!(loop_benches, bench_loop_performance,);
 
-criterion_group!(
-    memory_benches,
-    bench_memory_usage,
-);
+criterion_group!(memory_benches, bench_memory_usage,);
 
-criterion_group!(
-    pattern_benches,
-    bench_ansible_patterns,
-);
+criterion_group!(pattern_benches, bench_ansible_patterns,);
 
 criterion_main!(
     ssh_benches,

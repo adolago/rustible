@@ -346,7 +346,9 @@ impl PluginConfigBuilder {
 
     /// Add multiple regions
     pub fn regions(mut self, regions: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.config.regions.extend(regions.into_iter().map(Into::into));
+        self.config
+            .regions
+            .extend(regions.into_iter().map(Into::into));
         self
     }
 
@@ -479,7 +481,9 @@ mod tests {
 
     #[test]
     fn test_keyed_group_generate_name() {
-        let kg = KeyedGroupConfig::new("instance_type").with_prefix("type").with_separator("_");
+        let kg = KeyedGroupConfig::new("instance_type")
+            .with_prefix("type")
+            .with_separator("_");
 
         assert_eq!(kg.generate_group_name("t2.micro"), "type_t2_micro");
         assert_eq!(kg.generate_group_name("m5.large"), "type_m5_large");

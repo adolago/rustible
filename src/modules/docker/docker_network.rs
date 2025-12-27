@@ -21,11 +21,11 @@
 //! - `force`: Force removal even if containers are connected
 
 #[cfg(feature = "docker")]
+use bollard::models::{Ipam, IpamConfig, NetworkCreateResponse};
+#[cfg(feature = "docker")]
 use bollard::network::{
     ConnectNetworkOptions, CreateNetworkOptions, DisconnectNetworkOptions, ListNetworksOptions,
 };
-#[cfg(feature = "docker")]
-use bollard::models::{Ipam, IpamConfig, NetworkCreateResponse};
 #[cfg(feature = "docker")]
 use bollard::Docker;
 
@@ -172,7 +172,8 @@ impl NetworkConfig {
 
         // Parse IPAM configuration
         let ipam = if let Some(serde_json::Value::Object(obj)) = params.get("ipam") {
-            let driver = obj.get("driver")
+            let driver = obj
+                .get("driver")
                 .and_then(|v| v.as_str())
                 .unwrap_or("default")
                 .to_string();
@@ -181,15 +182,22 @@ impl NetworkConfig {
             if let Some(serde_json::Value::Array(configs)) = obj.get("config") {
                 for cfg in configs {
                     if let serde_json::Value::Object(cfg_obj) = cfg {
-                        let subnet = cfg_obj.get("subnet")
+                        let subnet = cfg_obj
+                            .get("subnet")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
                         if !subnet.is_empty() {
                             config.push(SubnetConfig {
                                 subnet,
-                                gateway: cfg_obj.get("gateway").and_then(|v| v.as_str()).map(String::from),
-                                ip_range: cfg_obj.get("ip_range").and_then(|v| v.as_str()).map(String::from),
+                                gateway: cfg_obj
+                                    .get("gateway")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from),
+                                ip_range: cfg_obj
+                                    .get("ip_range")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from),
                             });
                         }
                     }
@@ -247,9 +255,12 @@ impl DockerNetworkModule {
     async fn network_exists(docker: &Docker, name: &str) -> ModuleResult<bool> {
         match docker.inspect_network::<&str>(name, None).await {
             Ok(_) => Ok(true),
-            Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => Ok(false),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => Ok(false),
             Err(e) => Err(ModuleError::ExecutionFailed(format!(
-                "Failed to inspect network: {}", e
+                "Failed to inspect network: {}",
+                e
             ))),
         }
     }
@@ -277,14 +288,16 @@ impl DockerNetworkModule {
     async fn create_network(docker: &Docker, config: &NetworkConfig) -> ModuleResult<String> {
         // Build IPAM config
         let ipam = config.ipam.as_ref().map(|ipam_config| {
-            let configs: Vec<IpamConfig> = ipam_config.config.iter().map(|c| {
-                IpamConfig {
+            let configs: Vec<IpamConfig> = ipam_config
+                .config
+                .iter()
+                .map(|c| IpamConfig {
                     subnet: Some(c.subnet.clone()),
                     gateway: c.gateway.clone(),
                     ip_range: c.ip_range.clone(),
                     ..Default::default()
-                }
-            }).collect();
+                })
+                .collect();
 
             Ipam {
                 driver: Some(ipam_config.driver.clone()),
@@ -314,13 +327,18 @@ impl DockerNetworkModule {
 
     /// Remove network
     async fn remove_network(docker: &Docker, name: &str) -> ModuleResult<()> {
-        docker.remove_network(name).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to remove network: {}", e))
-        })
+        docker
+            .remove_network(name)
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to remove network: {}", e)))
     }
 
     /// Connect container to network
-    async fn connect_container(docker: &Docker, network: &str, container: &str) -> ModuleResult<()> {
+    async fn connect_container(
+        docker: &Docker,
+        network: &str,
+        container: &str,
+    ) -> ModuleResult<()> {
         let options = ConnectNetworkOptions {
             container,
             ..Default::default()
@@ -335,25 +353,31 @@ impl DockerNetworkModule {
     }
 
     /// Disconnect container from network
-    async fn disconnect_container(docker: &Docker, network: &str, container: &str, force: bool) -> ModuleResult<()> {
-        let options = DisconnectNetworkOptions {
-            container,
-            force,
-        };
+    async fn disconnect_container(
+        docker: &Docker,
+        network: &str,
+        container: &str,
+        force: bool,
+    ) -> ModuleResult<()> {
+        let options = DisconnectNetworkOptions { container, force };
 
-        docker.disconnect_network(network, options).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!(
-                "Failed to disconnect container '{}' from network '{}': {}",
-                container, network, e
-            ))
-        })
+        docker
+            .disconnect_network(network, options)
+            .await
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!(
+                    "Failed to disconnect container '{}' from network '{}': {}",
+                    container, network, e
+                ))
+            })
     }
 
     /// Get containers connected to network
     async fn get_connected_containers(docker: &Docker, name: &str) -> ModuleResult<Vec<String>> {
         match docker.inspect_network::<&str>(name, None).await {
             Ok(info) => {
-                let containers = info.containers
+                let containers = info
+                    .containers
                     .map(|c| c.keys().cloned().collect())
                     .unwrap_or_default();
                 Ok(containers)
@@ -384,9 +408,11 @@ impl DockerNetworkModule {
                     } else {
                         // Disconnect all containers if force is set
                         if config.force {
-                            let connected = Self::get_connected_containers(&docker, &config.name).await?;
+                            let connected =
+                                Self::get_connected_containers(&docker, &config.name).await?;
                             for container in connected {
-                                Self::disconnect_container(&docker, &config.name, &container, true).await?;
+                                Self::disconnect_container(&docker, &config.name, &container, true)
+                                    .await?;
                             }
                         }
                         Self::remove_network(&docker, &config.name).await?;
@@ -414,16 +440,23 @@ impl DockerNetworkModule {
 
                 // Handle container connections
                 if !config.connected.is_empty() && (exists || !context.check_mode) {
-                    let currently_connected = Self::get_connected_containers(&docker, &config.name).await?;
+                    let currently_connected =
+                        Self::get_connected_containers(&docker, &config.name).await?;
 
                     for container in &config.connected {
                         if !currently_connected.contains(container) {
                             if context.check_mode {
-                                messages.push(format!("Would connect container '{}' to network", container));
+                                messages.push(format!(
+                                    "Would connect container '{}' to network",
+                                    container
+                                ));
                                 changed = true;
                             } else {
                                 Self::connect_container(&docker, &config.name, container).await?;
-                                messages.push(format!("Connected container '{}' to network", container));
+                                messages.push(format!(
+                                    "Connected container '{}' to network",
+                                    container
+                                ));
                                 changed = true;
                             }
                         }
@@ -451,9 +484,13 @@ impl DockerNetworkModule {
 
 #[cfg(not(feature = "docker"))]
 impl DockerNetworkModule {
-    fn execute_stub(&self, _params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<ModuleOutput> {
+    fn execute_stub(
+        &self,
+        _params: &ModuleParams,
+        _context: &ModuleContext,
+    ) -> ModuleResult<ModuleOutput> {
         Err(ModuleError::Unsupported(
-            "Docker module requires 'docker' feature to be enabled".to_string()
+            "Docker module requires 'docker' feature to be enabled".to_string(),
         ))
     }
 }
@@ -486,15 +523,16 @@ impl Module for DockerNetworkModule {
     ) -> ModuleResult<ModuleOutput> {
         #[cfg(feature = "docker")]
         {
-            let rt = tokio::runtime::Handle::try_current()
-                .map_err(|_| ModuleError::ExecutionFailed("No tokio runtime available".to_string()))?;
+            let rt = tokio::runtime::Handle::try_current().map_err(|_| {
+                ModuleError::ExecutionFailed("No tokio runtime available".to_string())
+            })?;
 
             let params = params.clone();
             let context = context.clone();
             std::thread::scope(|s| {
-                s.spawn(|| {
-                    rt.block_on(self.execute_async(&params, &context))
-                }).join().unwrap()
+                s.spawn(|| rt.block_on(self.execute_async(&params, &context)))
+                    .join()
+                    .unwrap()
             })
         }
 
@@ -516,8 +554,12 @@ impl Module for DockerNetworkModule {
         let config = NetworkConfig::from_params(params)?;
 
         let before = format!("network: {} (current state unknown)", config.name);
-        let after = format!("network: {} state={:?} driver={}",
-            config.name, config.state, config.driver.as_str());
+        let after = format!(
+            "network: {} state={:?} driver={}",
+            config.name,
+            config.state,
+            config.driver.as_str()
+        );
 
         Ok(Some(Diff::new(before, after)))
     }
@@ -529,8 +571,14 @@ mod tests {
 
     #[test]
     fn test_network_state_from_str() {
-        assert_eq!(NetworkState::from_str("present").unwrap(), NetworkState::Present);
-        assert_eq!(NetworkState::from_str("absent").unwrap(), NetworkState::Absent);
+        assert_eq!(
+            NetworkState::from_str("present").unwrap(),
+            NetworkState::Present
+        );
+        assert_eq!(
+            NetworkState::from_str("absent").unwrap(),
+            NetworkState::Absent
+        );
         assert!(NetworkState::from_str("invalid").is_err());
     }
 
@@ -541,7 +589,10 @@ mod tests {
         assert_eq!(NetworkDriver::from_str("host"), NetworkDriver::Host);
         assert_eq!(NetworkDriver::from_str("none"), NetworkDriver::None);
         assert_eq!(NetworkDriver::from_str("macvlan"), NetworkDriver::Macvlan);
-        assert!(matches!(NetworkDriver::from_str("custom_driver"), NetworkDriver::Custom(_)));
+        assert!(matches!(
+            NetworkDriver::from_str("custom_driver"),
+            NetworkDriver::Custom(_)
+        ));
     }
 
     #[test]

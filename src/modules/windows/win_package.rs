@@ -112,9 +112,7 @@ impl WinPackageModule {
     fn detect_provider(name: &str) -> PackageProvider {
         if name.to_lowercase().ends_with(".msi") {
             PackageProvider::Msi
-        } else if name.to_lowercase().ends_with(".msix")
-            || name.to_lowercase().ends_with(".appx")
-        {
+        } else if name.to_lowercase().ends_with(".msix") || name.to_lowercase().ends_with(".appx") {
             PackageProvider::Winget
         } else {
             // Default to Chocolatey as it's most common
@@ -433,7 +431,13 @@ $result | ConvertTo-Json -Compress
         version: Option<&str>,
         source: Option<&str>,
     ) -> String {
-        let mut args = vec!["install", "--exact", "--accept-package-agreements", "--accept-source-agreements", "--silent"];
+        let mut args = vec![
+            "install",
+            "--exact",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--silent",
+        ];
 
         let version_arg;
         if let Some(v) = version {
@@ -652,7 +656,10 @@ impl Module for WinPackageModule {
                             )));
                         }
 
-                        Ok(ModuleOutput::changed(format!("Installed package '{}'", name)))
+                        Ok(ModuleOutput::changed(format!(
+                            "Installed package '{}'",
+                            name
+                        )))
                     }
 
                     PackageState::Absent => {
@@ -725,89 +732,89 @@ impl Module for WinPackageModule {
                 }
             }
 
-            PackageProvider::Msi => {
-                match state {
-                    PackageState::Present | PackageState::Latest => {
-                        if context.check_mode {
-                            return Ok(ModuleOutput::changed(format!(
-                                "Would install MSI package '{}'",
+            PackageProvider::Msi => match state {
+                PackageState::Present | PackageState::Latest => {
+                    if context.check_mode {
+                        return Ok(ModuleOutput::changed(format!(
+                            "Would install MSI package '{}'",
+                            name
+                        )));
+                    }
+
+                    let install_script = Self::generate_msi_install_script(
+                        &name,
+                        install_args.as_deref(),
+                        product_id.as_deref(),
+                    );
+                    let (_success, stdout, _stderr) =
+                        execute_powershell_sync(connection, &install_script)?;
+                    let result = Self::parse_json_result(&stdout)?;
+
+                    if !result["changed"].as_bool().unwrap_or(false) {
+                        let message = result["message"].as_str().unwrap_or("Unknown error");
+                        if message.contains("already installed") {
+                            return Ok(ModuleOutput::ok(format!(
+                                "MSI package '{}' is already installed",
                                 name
                             )));
                         }
-
-                        let install_script = Self::generate_msi_install_script(
-                            &name,
-                            install_args.as_deref(),
-                            product_id.as_deref(),
-                        );
-                        let (_success, stdout, _stderr) =
-                            execute_powershell_sync(connection, &install_script)?;
-                        let result = Self::parse_json_result(&stdout)?;
-
-                        if !result["changed"].as_bool().unwrap_or(false) {
-                            let message = result["message"].as_str().unwrap_or("Unknown error");
-                            if message.contains("already installed") {
-                                return Ok(ModuleOutput::ok(format!(
-                                    "MSI package '{}' is already installed",
-                                    name
-                                )));
-                            }
-                            return Err(ModuleError::ExecutionFailed(format!(
-                                "Failed to install MSI: {}",
-                                message
-                            )));
-                        }
-
-                        let message = result["message"].as_str().unwrap_or("Installed successfully");
-                        let mut output =
-                            ModuleOutput::changed(format!("Installed MSI package: {}", message));
-                        if message.contains("reboot required") {
-                            output = output.with_data("reboot_required", serde_json::json!(true));
-                        }
-                        Ok(output)
+                        return Err(ModuleError::ExecutionFailed(format!(
+                            "Failed to install MSI: {}",
+                            message
+                        )));
                     }
 
-                    PackageState::Absent => {
-                        let pid = product_id.as_ref().ok_or_else(|| {
-                            ModuleError::MissingParameter(
-                                "product_id is required to uninstall MSI packages".to_string(),
-                            )
-                        })?;
+                    let message = result["message"]
+                        .as_str()
+                        .unwrap_or("Installed successfully");
+                    let mut output =
+                        ModuleOutput::changed(format!("Installed MSI package: {}", message));
+                    if message.contains("reboot required") {
+                        output = output.with_data("reboot_required", serde_json::json!(true));
+                    }
+                    Ok(output)
+                }
 
-                        if context.check_mode {
-                            return Ok(ModuleOutput::changed(format!(
-                                "Would uninstall MSI product '{}'",
+                PackageState::Absent => {
+                    let pid = product_id.as_ref().ok_or_else(|| {
+                        ModuleError::MissingParameter(
+                            "product_id is required to uninstall MSI packages".to_string(),
+                        )
+                    })?;
+
+                    if context.check_mode {
+                        return Ok(ModuleOutput::changed(format!(
+                            "Would uninstall MSI product '{}'",
+                            pid
+                        )));
+                    }
+
+                    let uninstall_script =
+                        Self::generate_msi_uninstall_script(pid, uninstall_args.as_deref());
+                    let (_success, stdout, _stderr) =
+                        execute_powershell_sync(connection, &uninstall_script)?;
+                    let result = Self::parse_json_result(&stdout)?;
+
+                    if !result["changed"].as_bool().unwrap_or(false) {
+                        let message = result["message"].as_str().unwrap_or("Unknown error");
+                        if message.contains("not installed") {
+                            return Ok(ModuleOutput::ok(format!(
+                                "MSI product '{}' is not installed",
                                 pid
                             )));
                         }
-
-                        let uninstall_script =
-                            Self::generate_msi_uninstall_script(pid, uninstall_args.as_deref());
-                        let (_success, stdout, _stderr) =
-                            execute_powershell_sync(connection, &uninstall_script)?;
-                        let result = Self::parse_json_result(&stdout)?;
-
-                        if !result["changed"].as_bool().unwrap_or(false) {
-                            let message = result["message"].as_str().unwrap_or("Unknown error");
-                            if message.contains("not installed") {
-                                return Ok(ModuleOutput::ok(format!(
-                                    "MSI product '{}' is not installed",
-                                    pid
-                                )));
-                            }
-                            return Err(ModuleError::ExecutionFailed(format!(
-                                "Failed to uninstall MSI: {}",
-                                message
-                            )));
-                        }
-
-                        Ok(ModuleOutput::changed(format!(
-                            "Uninstalled MSI product '{}'",
-                            pid
-                        )))
+                        return Err(ModuleError::ExecutionFailed(format!(
+                            "Failed to uninstall MSI: {}",
+                            message
+                        )));
                     }
+
+                    Ok(ModuleOutput::changed(format!(
+                        "Uninstalled MSI product '{}'",
+                        pid
+                    )))
                 }
-            }
+            },
 
             PackageProvider::Winget => {
                 // Check current package status

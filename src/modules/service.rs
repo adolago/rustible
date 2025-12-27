@@ -1332,9 +1332,9 @@ impl Module for ServiceModule {
         let context = context.clone();
         let module = self;
         std::thread::scope(|s| {
-            s.spawn(|| {
-                handle.block_on(module.execute_async(&params, &context, connection))
-            }).join().unwrap()
+            s.spawn(|| handle.block_on(module.execute_async(&params, &context, connection)))
+                .join()
+                .unwrap()
         })
     }
 
@@ -1364,9 +1364,9 @@ impl Module for ServiceModule {
         let context = context.clone();
         let module = self;
         std::thread::scope(|s| {
-            s.spawn(|| {
-                handle.block_on(module.diff_async(&params, &context, connection))
-            }).join().unwrap()
+            s.spawn(|| handle.block_on(module.diff_async(&params, &context, connection)))
+                .join()
+                .unwrap()
         })
     }
 }

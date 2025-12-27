@@ -282,11 +282,9 @@ impl<'a> LoopResults<'a> {
     /// Iterate over loop results
     pub fn iter(&self) -> impl Iterator<Item = LoopResultItem<'a>> + 'a {
         let results = self.results;
-        (0..self.len()).map(move |i| {
-            LoopResultItem {
-                index: i,
-                result: results.and_then(|r| r.get(i)),
-            }
+        (0..self.len()).map(move |i| LoopResultItem {
+            index: i,
+            result: results.and_then(|r| r.get(i)),
         })
     }
 
@@ -380,7 +378,9 @@ impl<'a> LoopResultItem<'a> {
 
     /// Returns true if this iteration succeeded
     pub fn is_ok(&self) -> bool {
-        self.result.map(|r| !r.failed && !r.skipped).unwrap_or(false)
+        self.result
+            .map(|r| !r.failed && !r.skipped)
+            .unwrap_or(false)
     }
 
     /// Get the item value for this iteration (from ansible_loop.allitems[index])
@@ -472,15 +472,26 @@ impl FailedTaskInfo {
             host: host.to_string(),
             task_name: task_name.to_string(),
             module: module.to_string(),
-            error_message: result.msg.clone().unwrap_or_else(|| "Unknown error".to_string()),
+            error_message: result
+                .msg
+                .clone()
+                .unwrap_or_else(|| "Unknown error".to_string()),
             exit_code: result.rc,
             stderr: result.stderr.clone(),
             stdout: result.stdout.clone(),
             timestamp: SystemTime::now(),
             duration: None,
             ignored: false,
-            exception_type: result.data.get("exception_type").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            stack_trace: result.data.get("traceback").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            exception_type: result
+                .data
+                .get("exception_type")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            stack_trace: result
+                .data
+                .get("traceback")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             context: result.data.clone(),
         })
     }
@@ -1096,7 +1107,10 @@ mod tests {
         assert_eq!(result.rc, Some(0));
         assert_eq!(result.stdout, Some("line1\nline2".to_string()));
         assert_eq!(result.stdout_lines.as_ref().unwrap().len(), 2);
-        assert_eq!(result.msg, Some("Command executed successfully".to_string()));
+        assert_eq!(
+            result.msg,
+            Some("Command executed successfully".to_string())
+        );
         assert!(result.data.contains_key("cmd"));
     }
 

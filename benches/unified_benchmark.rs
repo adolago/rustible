@@ -415,9 +415,13 @@ fn bench_task_operations(c: &mut Criterion) {
         .when("condition == true")
         .notify("handler");
 
-    group.bench_function("clone_simple", |b| b.iter(|| black_box(simple_task.clone())));
+    group.bench_function("clone_simple", |b| {
+        b.iter(|| black_box(simple_task.clone()))
+    });
 
-    group.bench_function("clone_complex", |b| b.iter(|| black_box(complex_task.clone())));
+    group.bench_function("clone_complex", |b| {
+        b.iter(|| black_box(complex_task.clone()))
+    });
 
     group.finish();
 }
@@ -426,40 +430,19 @@ fn bench_task_operations(c: &mut Criterion) {
 // CRITERION GROUPS AND MAIN
 // ============================================================================
 
-criterion_group!(
-    playbook_benches,
-    bench_playbook_parsing,
-);
+criterion_group!(playbook_benches, bench_playbook_parsing,);
 
-criterion_group!(
-    inventory_benches,
-    bench_inventory_parsing,
-);
+criterion_group!(inventory_benches, bench_inventory_parsing,);
 
-criterion_group!(
-    module_benches,
-    bench_module_execution,
-);
+criterion_group!(module_benches, bench_module_execution,);
 
-criterion_group!(
-    connection_benches,
-    bench_connection_pool,
-);
+criterion_group!(connection_benches, bench_connection_pool,);
 
-criterion_group!(
-    template_benches,
-    bench_template_rendering,
-);
+criterion_group!(template_benches, bench_template_rendering,);
 
-criterion_group!(
-    full_run_benches,
-    bench_full_playbook_run,
-);
+criterion_group!(full_run_benches, bench_full_playbook_run,);
 
-criterion_group!(
-    task_benches,
-    bench_task_operations,
-);
+criterion_group!(task_benches, bench_task_operations,);
 
 criterion_main!(
     playbook_benches,

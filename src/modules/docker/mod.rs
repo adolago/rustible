@@ -65,8 +65,10 @@ pub use docker_network::DockerNetworkModule;
 pub use docker_volume::DockerVolumeModule;
 
 // Re-export common types
+pub use docker_compose::{ComposeConfig, ComposePullPolicy, ComposeState, RecreatePolicy};
 pub use docker_container::{ContainerConfig, ContainerState, PullPolicy};
 pub use docker_image::{BuildConfig, ImageConfig, ImageSource, ImageState};
-pub use docker_network::{IpamConfiguration, NetworkConfig, NetworkDriver, NetworkState, SubnetConfig};
+pub use docker_network::{
+    IpamConfiguration, NetworkConfig, NetworkDriver, NetworkState, SubnetConfig,
+};
 pub use docker_volume::{VolumeConfig, VolumeState};
-pub use docker_compose::{ComposeConfig, ComposeState, ComposePullPolicy, RecreatePolicy};

@@ -101,15 +101,12 @@ fn test_user_shell_escape_with_underscore() {
 
 #[test]
 fn test_user_command_injection_patterns() {
-    let dangerous_inputs = [
-        "; rm -rf /",
-        "$(whoami)",
-        "`id`",
-        "user && malicious",
-    ];
+    let dangerous_inputs = ["; rm -rf /", "$(whoami)", "`id`", "user && malicious"];
 
     for input in dangerous_inputs {
-        assert!(input.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-'));
+        assert!(input
+            .chars()
+            .any(|c| !c.is_alphanumeric() && c != '_' && c != '-'));
     }
 }
 
@@ -176,7 +173,10 @@ fn test_user_with_shell_parameter() {
 fn test_user_with_comment_parameter() {
     let mut params: HashMap<String, serde_json::Value> = HashMap::new();
     params.insert("name".to_string(), serde_json::json!("testuser"));
-    params.insert("comment".to_string(), serde_json::json!("Test User Account"));
+    params.insert(
+        "comment".to_string(),
+        serde_json::json!("Test User Account"),
+    );
 
     assert!(params.get("comment").is_some());
 }
@@ -203,7 +203,10 @@ fn test_user_with_system_parameter() {
 fn test_user_with_password_parameter() {
     let mut params: HashMap<String, serde_json::Value> = HashMap::new();
     params.insert("name".to_string(), serde_json::json!("testuser"));
-    params.insert("password".to_string(), serde_json::json!("$6$hashed$password"));
+    params.insert(
+        "password".to_string(),
+        serde_json::json!("$6$hashed$password"),
+    );
     params.insert("password_encrypted".to_string(), serde_json::json!(true));
 
     assert!(params.get("password").is_some());

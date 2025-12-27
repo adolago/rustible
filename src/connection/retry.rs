@@ -231,14 +231,12 @@ impl RetryPolicy {
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
         let base_delay = match self.strategy {
             BackoffStrategy::Fixed => self.initial_delay,
-            BackoffStrategy::Linear => {
-                self.initial_delay
-                    .mul_f64(1.0 + (attempt as f64 * (self.multiplier - 1.0)))
-            }
-            BackoffStrategy::Exponential | BackoffStrategy::ExponentialWithJitter => {
-                self.initial_delay
-                    .mul_f64(self.multiplier.powi(attempt as i32))
-            }
+            BackoffStrategy::Linear => self
+                .initial_delay
+                .mul_f64(1.0 + (attempt as f64 * (self.multiplier - 1.0))),
+            BackoffStrategy::Exponential | BackoffStrategy::ExponentialWithJitter => self
+                .initial_delay
+                .mul_f64(self.multiplier.powi(attempt as i32)),
             BackoffStrategy::Fibonacci => {
                 let fib = fibonacci(attempt);
                 self.initial_delay.mul_f64(fib as f64)
@@ -493,9 +491,8 @@ where
     }
 
     // All retries exhausted
-    let error = last_error.unwrap_or_else(|| {
-        ConnectionError::ConnectionFailed("Max retries exceeded".to_string())
-    });
+    let error = last_error
+        .unwrap_or_else(|| ConnectionError::ConnectionFailed("Max retries exceeded".to_string()));
 
     warn!(
         attempts = stats.total_attempts,
@@ -513,7 +510,10 @@ where
 /// Execute an operation with retry logic, returning just the result.
 ///
 /// This is a convenience wrapper around `retry` that discards the stats.
-pub async fn retry_simple<T, F, Fut>(policy: &RetryPolicy, operation: F) -> Result<T, ConnectionError>
+pub async fn retry_simple<T, F, Fut>(
+    policy: &RetryPolicy,
+    operation: F,
+) -> Result<T, ConnectionError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, ConnectionError>>,
@@ -604,7 +604,8 @@ mod tests {
         assert!(!policy.is_retryable(&ConnectionError::AuthenticationFailed("test".to_string())));
 
         let policy_with_auth = policy.retry_auth_failures(true);
-        assert!(policy_with_auth.is_retryable(&ConnectionError::AuthenticationFailed("test".to_string())));
+        assert!(policy_with_auth
+            .is_retryable(&ConnectionError::AuthenticationFailed("test".to_string())));
     }
 
     #[tokio::test]

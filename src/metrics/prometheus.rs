@@ -299,56 +299,44 @@ impl PrometheusExporter {
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_connection_attempts_total",
-                labels,
-                host.attempts
-            ).unwrap();
+                self.namespace, "host_connection_attempts_total", labels, host.attempts
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_connection_successes_total",
-                labels,
-                host.successes
-            ).unwrap();
+                self.namespace, "host_connection_successes_total", labels, host.successes
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_connection_failures_total",
-                labels,
-                host.failures
-            ).unwrap();
+                self.namespace, "host_connection_failures_total", labels, host.failures
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_active_connections",
-                labels,
-                host.active
-            ).unwrap();
+                self.namespace, "host_active_connections", labels, host.active
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_connection_latency_avg_ms",
-                labels,
-                host.avg_latency_ms
-            ).unwrap();
+                self.namespace, "host_connection_latency_avg_ms", labels, host.avg_latency_ms
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_connection_latency_p95_ms",
-                labels,
-                host.p95_latency_ms
-            ).unwrap();
+                self.namespace, "host_connection_latency_p95_ms", labels, host.p95_latency_ms
+            )
+            .unwrap();
         }
         writeln!(output).unwrap();
     }
@@ -368,29 +356,23 @@ impl PrometheusExporter {
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_pool_checkouts_total",
-                labels,
-                host.checkouts
-            ).unwrap();
+                self.namespace, "host_pool_checkouts_total", labels, host.checkouts
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_pool_checkins_total",
-                labels,
-                host.checkins
-            ).unwrap();
+                self.namespace, "host_pool_checkins_total", labels, host.checkins
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_pool_active",
-                labels,
-                host.active
-            ).unwrap();
+                self.namespace, "host_pool_active", labels, host.active
+            )
+            .unwrap();
         }
         writeln!(output).unwrap();
     }
@@ -410,47 +392,37 @@ impl PrometheusExporter {
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "module_executed_total",
-                labels,
-                module.executed
-            ).unwrap();
+                self.namespace, "module_executed_total", labels, module.executed
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "module_succeeded_total",
-                labels,
-                module.succeeded
-            ).unwrap();
+                self.namespace, "module_succeeded_total", labels, module.succeeded
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "module_failed_total",
-                labels,
-                module.failed
-            ).unwrap();
+                self.namespace, "module_failed_total", labels, module.failed
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "module_duration_avg_ms",
-                labels,
-                module.avg_duration_ms
-            ).unwrap();
+                self.namespace, "module_duration_avg_ms", labels, module.avg_duration_ms
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "module_duration_p95_ms",
-                labels,
-                module.p95_duration_ms
-            ).unwrap();
+                self.namespace, "module_duration_p95_ms", labels, module.p95_duration_ms
+            )
+            .unwrap();
         }
         writeln!(output).unwrap();
     }
@@ -470,38 +442,30 @@ impl PrometheusExporter {
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_commands_executed_total",
-                labels,
-                host.executed
-            ).unwrap();
+                self.namespace, "host_commands_executed_total", labels, host.executed
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_commands_succeeded_total",
-                labels,
-                host.succeeded
-            ).unwrap();
+                self.namespace, "host_commands_succeeded_total", labels, host.succeeded
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_commands_failed_total",
-                labels,
-                host.failed
-            ).unwrap();
+                self.namespace, "host_commands_failed_total", labels, host.failed
+            )
+            .unwrap();
 
             writeln!(
                 output,
                 "{}_{}{{{}}}\t{}",
-                self.namespace,
-                "host_command_duration_avg_ms",
-                labels,
-                host.avg_duration_ms
-            ).unwrap();
+                self.namespace, "host_command_duration_avg_ms", labels, host.avg_duration_ms
+            )
+            .unwrap();
         }
         writeln!(output).unwrap();
     }
@@ -543,7 +507,11 @@ impl PrometheusExporter {
             let le_label = if base_labels.is_empty() {
                 format!("{{le=\"{}\"}}", bucket)
             } else {
-                format!("{{{},le=\"{}\"}}", &base_labels[1..base_labels.len()-1], bucket)
+                format!(
+                    "{{{},le=\"{}\"}}",
+                    &base_labels[1..base_labels.len() - 1],
+                    bucket
+                )
             };
             writeln!(output, "{}_bucket{}\t{}", full_name, le_label, count).unwrap();
         }
@@ -552,13 +520,34 @@ impl PrometheusExporter {
         let inf_label = if base_labels.is_empty() {
             "{le=\"+Inf\"}".to_string()
         } else {
-            format!("{{{},le=\"+Inf\"}}", &base_labels[1..base_labels.len()-1])
+            format!("{{{},le=\"+Inf\"}}", &base_labels[1..base_labels.len() - 1])
         };
-        writeln!(output, "{}_bucket{}\t{}", full_name, inf_label, histogram.count()).unwrap();
+        writeln!(
+            output,
+            "{}_bucket{}\t{}",
+            full_name,
+            inf_label,
+            histogram.count()
+        )
+        .unwrap();
 
         // Export sum and count
-        writeln!(output, "{}_sum{}\t{}", full_name, base_labels, histogram.sum()).unwrap();
-        writeln!(output, "{}_count{}\t{}", full_name, base_labels, histogram.count()).unwrap();
+        writeln!(
+            output,
+            "{}_sum{}\t{}",
+            full_name,
+            base_labels,
+            histogram.sum()
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "{}_count{}\t{}",
+            full_name,
+            base_labels,
+            histogram.count()
+        )
+        .unwrap();
         writeln!(output).unwrap();
     }
 

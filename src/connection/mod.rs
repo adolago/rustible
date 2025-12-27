@@ -702,7 +702,11 @@ impl ConnectionFactory {
                 let conn = docker::DockerConnection::new(container.clone());
                 Ok(Arc::new(conn))
             }
-            ConnectionType::Kubernetes { namespace, pod, container } => {
+            ConnectionType::Kubernetes {
+                namespace,
+                pod,
+                container,
+            } => {
                 // Kubernetes connection requires the kubernetes feature
                 #[cfg(feature = "kubernetes")]
                 {
@@ -710,14 +714,16 @@ impl ConnectionFactory {
                         namespace.clone(),
                         pod.clone(),
                         container.clone(),
-                    ).await?;
+                    )
+                    .await?;
                     Ok(Arc::new(conn))
                 }
                 #[cfg(not(feature = "kubernetes"))]
                 {
                     let _ = (namespace, pod, container);
                     Err(ConnectionError::InvalidConfig(
-                        "Kubernetes support not available. Enable 'kubernetes' feature.".to_string(),
+                        "Kubernetes support not available. Enable 'kubernetes' feature."
+                            .to_string(),
                     ))
                 }
             }
@@ -944,22 +950,24 @@ impl ConnectionBuilder {
             ConnectionType::Docker { container } => {
                 Ok(Arc::new(docker::DockerConnection::new(container)))
             }
-            ConnectionType::Kubernetes { namespace, pod, container } => {
+            ConnectionType::Kubernetes {
+                namespace,
+                pod,
+                container,
+            } => {
                 // Kubernetes connection requires the kubernetes feature
                 #[cfg(feature = "kubernetes")]
                 {
-                    let conn = kubernetes::KubernetesConnection::new(
-                        namespace,
-                        pod,
-                        container,
-                    ).await?;
+                    let conn =
+                        kubernetes::KubernetesConnection::new(namespace, pod, container).await?;
                     Ok(Arc::new(conn))
                 }
                 #[cfg(not(feature = "kubernetes"))]
                 {
                     let _ = (namespace, pod, container);
                     Err(ConnectionError::InvalidConfig(
-                        "Kubernetes support not available. Enable 'kubernetes' feature.".to_string(),
+                        "Kubernetes support not available. Enable 'kubernetes' feature."
+                            .to_string(),
                     ))
                 }
             }

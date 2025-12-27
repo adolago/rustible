@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-
 use super::{Cache, CacheConfig, CacheDependency, CacheMetrics, CacheType};
 use crate::executor::playbook::Playbook;
 
@@ -23,9 +22,7 @@ pub struct PlaybookCacheKey {
 
 impl From<PathBuf> for PlaybookCacheKey {
     fn from(path: PathBuf) -> Self {
-        let modified_at = std::fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .ok();
+        let modified_at = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
         Self { path, modified_at }
     }
 }
@@ -54,7 +51,8 @@ pub struct CachedPlaybook {
 impl CachedPlaybook {
     /// Create a new cached playbook
     pub fn new(playbook: Playbook, source_path: Option<PathBuf>) -> Self {
-        let source_modified = source_path.as_ref()
+        let source_modified = source_path
+            .as_ref()
             .and_then(|p| std::fs::metadata(p).ok())
             .and_then(|m| m.modified().ok());
 
@@ -110,7 +108,10 @@ impl CachedPlaybook {
     /// Estimate memory size
     pub fn size_bytes(&self) -> usize {
         // Rough estimation based on playbook content
-        let plays_size: usize = self.playbook.plays.iter()
+        let plays_size: usize = self
+            .playbook
+            .plays
+            .iter()
             .map(|p| {
                 p.name.len() +
                 p.hosts.len() +
@@ -119,9 +120,7 @@ impl CachedPlaybook {
             })
             .sum();
 
-        self.playbook.name.len() +
-        plays_size +
-        self.dependencies.len() * 100 // Path strings
+        self.playbook.name.len() + plays_size + self.dependencies.len() * 100 // Path strings
     }
 }
 
@@ -176,7 +175,8 @@ impl PlaybookCache {
 
     /// Get a cached playbook by path
     pub fn get(&self, path: &PathBuf) -> Option<Playbook> {
-        self.cache.get(path)
+        self.cache
+            .get(path)
             .filter(|cached| {
                 if self.config.validate_dependencies {
                     !cached.is_source_modified() && !cached.are_dependencies_modified()
@@ -204,13 +204,14 @@ impl PlaybookCache {
             .flatten()
             .collect();
 
-        self.cache.insert_with_dependencies(path, cached, deps, size);
+        self.cache
+            .insert_with_dependencies(path, cached, deps, size);
     }
 
     /// Store a parsed playbook with timing information
     pub fn insert_with_timing(&self, path: PathBuf, playbook: Playbook, parse_time_ms: u64) {
-        let cached = CachedPlaybook::new(playbook, Some(path.clone()))
-            .with_parse_time(parse_time_ms);
+        let cached =
+            CachedPlaybook::new(playbook, Some(path.clone())).with_parse_time(parse_time_ms);
         let size = cached.size_bytes();
 
         let deps = vec![CacheDependency::file(path.clone())]
@@ -218,7 +219,8 @@ impl PlaybookCache {
             .flatten()
             .collect();
 
-        self.cache.insert_with_dependencies(path, cached, deps, size);
+        self.cache
+            .insert_with_dependencies(path, cached, deps, size);
     }
 
     /// Store a playbook parsed from inline content
@@ -280,7 +282,8 @@ impl PlaybookCache {
 
     /// Check if a playbook is cached and valid
     pub fn is_valid(&self, path: &PathBuf) -> bool {
-        self.cache.get(path)
+        self.cache
+            .get(path)
             .map(|cached| !cached.is_source_modified())
             .unwrap_or(false)
     }

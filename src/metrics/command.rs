@@ -51,7 +51,10 @@ impl CommandMetrics {
             execution_duration: Histogram::with_buckets(
                 "rustible_command_duration_ms",
                 "Command execution duration in milliseconds",
-                &[10.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 30000.0, 60000.0],
+                &[
+                    10.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 30000.0,
+                    60000.0,
+                ],
             ),
             commands_executed: Counter::new(
                 "rustible_commands_executed_total",
@@ -95,7 +98,8 @@ impl CommandMetrics {
         let module = timer.module.clone();
 
         // Record global metrics
-        self.execution_duration.observe(duration.as_secs_f64() * 1000.0);
+        self.execution_duration
+            .observe(duration.as_secs_f64() * 1000.0);
         self.commands_executed.inc();
         self.commands_succeeded.inc();
         self.commands_in_progress.dec();
@@ -104,13 +108,17 @@ impl CommandMetrics {
 
         // Record per-module metrics
         let module_metrics = self.get_or_create_module_metrics(&module);
-        module_metrics.duration.observe(duration.as_secs_f64() * 1000.0);
+        module_metrics
+            .duration
+            .observe(duration.as_secs_f64() * 1000.0);
         module_metrics.executed.inc();
         module_metrics.succeeded.inc();
 
         // Record per-host metrics
         let host_metrics = self.get_or_create_host_metrics(&host);
-        host_metrics.duration.observe(duration.as_secs_f64() * 1000.0);
+        host_metrics
+            .duration
+            .observe(duration.as_secs_f64() * 1000.0);
         host_metrics.executed.inc();
         host_metrics.succeeded.inc();
     }
@@ -122,7 +130,8 @@ impl CommandMetrics {
         let module = timer.module.clone();
 
         // Record global metrics
-        self.execution_duration.observe(duration.as_secs_f64() * 1000.0);
+        self.execution_duration
+            .observe(duration.as_secs_f64() * 1000.0);
         self.commands_executed.inc();
         self.commands_failed.inc();
         self.commands_in_progress.dec();
@@ -130,14 +139,18 @@ impl CommandMetrics {
 
         // Record per-module metrics
         let module_metrics = self.get_or_create_module_metrics(&module);
-        module_metrics.duration.observe(duration.as_secs_f64() * 1000.0);
+        module_metrics
+            .duration
+            .observe(duration.as_secs_f64() * 1000.0);
         module_metrics.executed.inc();
         module_metrics.failed.inc();
         module_metrics.last_exit_code.set(exit_code as f64);
 
         // Record per-host metrics
         let host_metrics = self.get_or_create_host_metrics(&host);
-        host_metrics.duration.observe(duration.as_secs_f64() * 1000.0);
+        host_metrics
+            .duration
+            .observe(duration.as_secs_f64() * 1000.0);
         host_metrics.executed.inc();
         host_metrics.failed.inc();
     }
@@ -182,7 +195,11 @@ impl CommandMetrics {
 
     /// Get all module metrics
     pub fn all_module_metrics(&self) -> Vec<ModuleMetricsSnapshot> {
-        self.per_module.read().values().map(|m| m.snapshot()).collect()
+        self.per_module
+            .read()
+            .values()
+            .map(|m| m.snapshot())
+            .collect()
     }
 
     /// Get metrics for a specific host
@@ -192,7 +209,11 @@ impl CommandMetrics {
 
     /// Get all host command metrics
     pub fn all_host_metrics(&self) -> Vec<HostCommandMetricsSnapshot> {
-        self.per_host.read().values().map(|m| m.snapshot()).collect()
+        self.per_host
+            .read()
+            .values()
+            .map(|m| m.snapshot())
+            .collect()
     }
 
     /// Get or create per-module metrics
@@ -280,7 +301,9 @@ impl ModuleMetrics {
             duration: Histogram::with_labels(
                 "rustible_module_duration_ms",
                 "Module execution duration in milliseconds",
-                &[10.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0],
+                &[
+                    10.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0,
+                ],
                 labels.clone(),
             ),
             executed: Counter::with_labels(
@@ -403,7 +426,9 @@ impl HostCommandMetrics {
             duration: Histogram::with_labels(
                 "rustible_host_command_duration_ms",
                 "Command execution duration per host in milliseconds",
-                &[10.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0],
+                &[
+                    10.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0,
+                ],
                 labels.clone(),
             ),
             executed: Counter::with_labels(

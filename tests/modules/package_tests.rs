@@ -47,10 +47,22 @@ fn test_package_state_latest() {
 
 #[test]
 fn test_package_state_case_insensitive() {
-    assert_eq!(PackageState::from_str("PRESENT").unwrap(), PackageState::Present);
-    assert_eq!(PackageState::from_str("Present").unwrap(), PackageState::Present);
-    assert_eq!(PackageState::from_str("ABSENT").unwrap(), PackageState::Absent);
-    assert_eq!(PackageState::from_str("LATEST").unwrap(), PackageState::Latest);
+    assert_eq!(
+        PackageState::from_str("PRESENT").unwrap(),
+        PackageState::Present
+    );
+    assert_eq!(
+        PackageState::from_str("Present").unwrap(),
+        PackageState::Present
+    );
+    assert_eq!(
+        PackageState::from_str("ABSENT").unwrap(),
+        PackageState::Absent
+    );
+    assert_eq!(
+        PackageState::from_str("LATEST").unwrap(),
+        PackageState::Latest
+    );
 }
 
 #[test]
@@ -65,39 +77,66 @@ fn test_package_state_invalid() {
 
 #[test]
 fn test_package_manager_apt() {
-    assert_eq!(PackageManager::from_str("apt").unwrap(), PackageManager::Apt);
-    assert_eq!(PackageManager::from_str("apt-get").unwrap(), PackageManager::Apt);
+    assert_eq!(
+        PackageManager::from_str("apt").unwrap(),
+        PackageManager::Apt
+    );
+    assert_eq!(
+        PackageManager::from_str("apt-get").unwrap(),
+        PackageManager::Apt
+    );
 }
 
 #[test]
 fn test_package_manager_dnf() {
-    assert_eq!(PackageManager::from_str("dnf").unwrap(), PackageManager::Dnf);
+    assert_eq!(
+        PackageManager::from_str("dnf").unwrap(),
+        PackageManager::Dnf
+    );
 }
 
 #[test]
 fn test_package_manager_yum() {
-    assert_eq!(PackageManager::from_str("yum").unwrap(), PackageManager::Yum);
+    assert_eq!(
+        PackageManager::from_str("yum").unwrap(),
+        PackageManager::Yum
+    );
 }
 
 #[test]
 fn test_package_manager_pacman() {
-    assert_eq!(PackageManager::from_str("pacman").unwrap(), PackageManager::Pacman);
+    assert_eq!(
+        PackageManager::from_str("pacman").unwrap(),
+        PackageManager::Pacman
+    );
 }
 
 #[test]
 fn test_package_manager_zypper() {
-    assert_eq!(PackageManager::from_str("zypper").unwrap(), PackageManager::Zypper);
+    assert_eq!(
+        PackageManager::from_str("zypper").unwrap(),
+        PackageManager::Zypper
+    );
 }
 
 #[test]
 fn test_package_manager_apk() {
-    assert_eq!(PackageManager::from_str("apk").unwrap(), PackageManager::Apk);
+    assert_eq!(
+        PackageManager::from_str("apk").unwrap(),
+        PackageManager::Apk
+    );
 }
 
 #[test]
 fn test_package_manager_brew() {
-    assert_eq!(PackageManager::from_str("brew").unwrap(), PackageManager::Brew);
-    assert_eq!(PackageManager::from_str("homebrew").unwrap(), PackageManager::Brew);
+    assert_eq!(
+        PackageManager::from_str("brew").unwrap(),
+        PackageManager::Brew
+    );
+    assert_eq!(
+        PackageManager::from_str("homebrew").unwrap(),
+        PackageManager::Brew
+    );
 }
 
 #[test]

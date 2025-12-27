@@ -29,8 +29,14 @@ fn test_group_state_absent() {
 
 #[test]
 fn test_group_state_case_insensitive() {
-    assert_eq!(GroupState::from_str("PRESENT").unwrap(), GroupState::Present);
-    assert_eq!(GroupState::from_str("Present").unwrap(), GroupState::Present);
+    assert_eq!(
+        GroupState::from_str("PRESENT").unwrap(),
+        GroupState::Present
+    );
+    assert_eq!(
+        GroupState::from_str("Present").unwrap(),
+        GroupState::Present
+    );
     assert_eq!(GroupState::from_str("ABSENT").unwrap(), GroupState::Absent);
     assert_eq!(GroupState::from_str("Absent").unwrap(), GroupState::Absent);
 }
@@ -117,12 +123,7 @@ fn test_group_shell_escape_alphanumeric_and_allowed() {
 
 #[test]
 fn test_group_command_injection_patterns() {
-    let dangerous_inputs = [
-        "; rm -rf /",
-        "$(whoami)",
-        "`id`",
-        "group && malicious",
-    ];
+    let dangerous_inputs = ["; rm -rf /", "$(whoami)", "`id`", "group && malicious"];
 
     for input in dangerous_inputs {
         let escaped = shell_escape(input);

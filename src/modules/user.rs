@@ -75,11 +75,9 @@ impl UserModule {
         let connection = connection.clone();
         let command = command.to_string();
         let result = std::thread::scope(|s| {
-            s.spawn(|| {
-                handle.block_on(async { connection.execute(&command, Some(options)).await })
-            })
-            .join()
-            .unwrap()
+            s.spawn(|| handle.block_on(async { connection.execute(&command, Some(options)).await }))
+                .join()
+                .unwrap()
         })
         .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
 

@@ -62,8 +62,8 @@ impl FactVolatility {
         match self {
             FactVolatility::Static => Duration::from_secs(3600), // 1 hour
             FactVolatility::SemiStatic => Duration::from_secs(600), // 10 minutes
-            FactVolatility::Dynamic => Duration::from_secs(60), // 1 minute
-            FactVolatility::Volatile => Duration::ZERO, // Don't cache
+            FactVolatility::Dynamic => Duration::from_secs(60),  // 1 minute
+            FactVolatility::Volatile => Duration::ZERO,          // Don't cache
         }
     }
 
@@ -127,16 +127,14 @@ pub fn classify_fact_volatility(fact_key: &str) -> FactVolatility {
         || fact_key.contains("swapfree")
         || fact_key.contains("loadavg")
         || fact_key.contains("processor_threads")
-        || fact_key.contains("local_") // local facts set during play
+        || fact_key.contains("local_")
+    // local facts set during play
     {
         return FactVolatility::Dynamic;
     }
 
     // Volatile facts - always changing
-    if fact_key.contains("date_time")
-        || fact_key.contains("uptime")
-        || fact_key.contains("epoch")
-    {
+    if fact_key.contains("date_time") || fact_key.contains("uptime") || fact_key.contains("epoch") {
         return FactVolatility::Volatile;
     }
 
@@ -187,7 +185,11 @@ pub struct PartitionedFacts {
 
 impl PartitionedFacts {
     /// Create partitioned facts from a flat fact map
-    pub fn from_flat(hostname: &str, facts: IndexMap<String, JsonValue>, subsets: Vec<String>) -> Self {
+    pub fn from_flat(
+        hostname: &str,
+        facts: IndexMap<String, JsonValue>,
+        subsets: Vec<String>,
+    ) -> Self {
         let mut static_facts = IndexMap::new();
         let mut semi_static_facts = IndexMap::new();
         let mut dynamic_facts = IndexMap::new();
@@ -484,7 +486,7 @@ impl TieredCacheConfig {
             l2_max_entries: 50_000,
             l2_cache_path: PathBuf::from("/var/cache/rustible/facts"),
             l3_enabled: true,
-            l3_redis_url: None, // Set via environment
+            l3_redis_url: None,  // Set via environment
             ttl_multiplier: 1.5, // Longer TTLs for production
             demotion_idle_threshold: Duration::from_secs(600), // 10 minutes
             promotion_access_threshold: 10,
@@ -732,7 +734,9 @@ impl TieredFactCache {
         self.metrics
             .l1_entries
             .store(self.l1_cache.len(), Ordering::Relaxed);
-        self.metrics.l1_memory_bytes.fetch_add(size, Ordering::Relaxed);
+        self.metrics
+            .l1_memory_bytes
+            .fetch_add(size, Ordering::Relaxed);
     }
 
     /// Insert with custom tier
@@ -778,7 +782,9 @@ impl TieredFactCache {
         }
 
         // Broadcast invalidation event
-        let _ = self.invalidation_tx.send(InvalidationEvent::Host(hostname.to_string()));
+        let _ = self
+            .invalidation_tx
+            .send(InvalidationEvent::Host(hostname.to_string()));
 
         self.update_entry_counts();
     }
@@ -900,7 +906,8 @@ impl TieredFactCache {
                 if path.extension().map(|e| e == "json").unwrap_or(false) {
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         if let Ok(facts) = serde_json::from_str::<PartitionedFacts>(&content) {
-                            let cache_entry = TieredCacheEntry::new(facts.clone(), CacheTier::L2Warm);
+                            let cache_entry =
+                                TieredCacheEntry::new(facts.clone(), CacheTier::L2Warm);
                             if !cache_entry.expiry.all_expired() {
                                 self.l2_cache.insert(facts.hostname.clone(), cache_entry);
                                 loaded += 1;
@@ -992,10 +999,13 @@ impl TieredFactCache {
                 self.metrics.evictions.fetch_add(1, Ordering::Relaxed);
 
                 // Demote to L2 instead of discarding
-                self.l2_cache.insert(hostname.clone(), TieredCacheEntry {
-                    tier: CacheTier::L2Warm,
-                    ..entry
-                });
+                self.l2_cache.insert(
+                    hostname.clone(),
+                    TieredCacheEntry {
+                        tier: CacheTier::L2Warm,
+                        ..entry
+                    },
+                );
 
                 return true;
             }
@@ -1074,7 +1084,9 @@ impl TieredFactCache {
         } else {
             (current * 9 + latency_us) / 10
         };
-        self.metrics.avg_latency_us.store(new_avg, Ordering::Relaxed);
+        self.metrics
+            .avg_latency_us
+            .store(new_avg, Ordering::Relaxed);
     }
 
     fn update_entry_counts(&self) {
@@ -1088,7 +1100,10 @@ impl TieredFactCache {
 }
 
 /// Start background tier management task
-pub fn start_tier_management(cache: Arc<TieredFactCache>, interval: Duration) -> tokio::task::JoinHandle<()> {
+pub fn start_tier_management(
+    cache: Arc<TieredFactCache>,
+    interval: Duration,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         loop {
@@ -1194,10 +1209,7 @@ mod tests {
         let cache = TieredFactCache::new(config);
 
         let mut facts = IndexMap::new();
-        facts.insert(
-            "test".to_string(),
-            JsonValue::String("value".to_string()),
-        );
+        facts.insert("test".to_string(), JsonValue::String("value".to_string()));
 
         cache.insert("host1", facts.clone(), vec![]);
         cache.insert("host2", facts, vec![]);

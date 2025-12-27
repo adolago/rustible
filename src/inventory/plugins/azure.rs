@@ -59,7 +59,7 @@
 //! - Support for VM Scale Sets
 //! - Network interface discovery
 
-use super::config::{PluginConfig, PluginConfigError, sanitize_group_name};
+use super::config::{sanitize_group_name, PluginConfig, PluginConfigError};
 use super::{DynamicInventoryPlugin, PluginOption, PluginOptionType};
 use crate::inventory::{Group, Host, Inventory, InventoryError, InventoryResult};
 use async_trait::async_trait;
@@ -160,7 +160,10 @@ impl AzureVm {
                 "private_ip" | "private_ip_address" => self.primary_private_ip().map(String::from),
                 "fqdn" => {
                     // Construct FQDN from name and location
-                    Some(format!("{}.{}.cloudapp.azure.com", self.name, self.location))
+                    Some(format!(
+                        "{}.{}.cloudapp.azure.com",
+                        self.name, self.location
+                    ))
                 }
                 s if s.starts_with("tag:") => {
                     let tag_name = &s[4..];
@@ -377,7 +380,12 @@ impl AzurePlugin {
     /// Get hostname preferences
     fn get_hostname_preferences(&self) -> Vec<String> {
         if !self.config.hostnames.is_empty() {
-            return self.config.hostnames.iter().map(|h| h.name().to_string()).collect();
+            return self
+                .config
+                .hostnames
+                .iter()
+                .map(|h| h.name().to_string())
+                .collect();
         }
 
         // Default preferences
@@ -440,10 +448,7 @@ impl AzurePlugin {
         groups.push(format!("location_{}", sanitize_group_name(&vm.location)));
 
         // Add resource group
-        groups.push(format!(
-            "rg_{}",
-            sanitize_group_name(&vm.resource_group)
-        ));
+        groups.push(format!("rg_{}", sanitize_group_name(&vm.resource_group)));
 
         // Add VM size group
         groups.push(format!("size_{}", sanitize_group_name(&vm.vm_size)));
@@ -731,12 +736,8 @@ impl DynamicInventoryPlugin for AzurePlugin {
 
     fn options_documentation(&self) -> Vec<PluginOption> {
         vec![
-            PluginOption::optional_string(
-                "subscription_id",
-                "Azure subscription ID",
-                "",
-            )
-            .with_env_var("AZURE_SUBSCRIPTION_ID"),
+            PluginOption::optional_string("subscription_id", "Azure subscription ID", "")
+                .with_env_var("AZURE_SUBSCRIPTION_ID"),
             PluginOption::optional_string("client_id", "Service principal client ID", "")
                 .with_env_var("AZURE_CLIENT_ID"),
             PluginOption::optional_string("secret", "Service principal secret", "")
@@ -757,15 +758,8 @@ impl DynamicInventoryPlugin for AzurePlugin {
                 "include_vm_resource_groups",
                 "Resource groups to include (empty = all)",
             ),
-            PluginOption::optional_list(
-                "exclude_vm_resource_groups",
-                "Resource groups to exclude",
-            ),
-            PluginOption::optional_bool(
-                "include_running_only",
-                "Only include running VMs",
-                false,
-            ),
+            PluginOption::optional_list("exclude_vm_resource_groups", "Resource groups to exclude"),
+            PluginOption::optional_bool("include_running_only", "Only include running VMs", false),
             PluginOption::optional_list(
                 "hostnames",
                 "Hostname preferences in order (name, private_ip, public_ip)",

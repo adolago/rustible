@@ -442,7 +442,14 @@ impl VariableInspector {
             .keys()
             .map(|name| {
                 let result = Self::inspect_vars(name, vars);
-                (name.clone(), if result.found { Some(result.value) } else { None })
+                (
+                    name.clone(),
+                    if result.found {
+                        Some(result.value)
+                    } else {
+                        None
+                    },
+                )
             })
             .collect();
 
@@ -454,7 +461,10 @@ impl VariableInspector {
         }
 
         // Return watches that changed
-        self.watches.values().filter(|w| w.change_count > 0).collect()
+        self.watches
+            .values()
+            .filter(|w| w.change_count > 0)
+            .collect()
     }
 
     // Static helper to inspect variables without borrowing self
@@ -496,7 +506,11 @@ impl VariableInspector {
     }
 
     // Internal inspect without borrowing self
-    fn inspect_impl(&self, name: &str, vars: &HashMap<String, JsonValue>) -> Option<InspectionResult> {
+    fn inspect_impl(
+        &self,
+        name: &str,
+        vars: &HashMap<String, JsonValue>,
+    ) -> Option<InspectionResult> {
         let parts: Vec<&str> = name.split('.').collect();
         let root_name = parts[0];
 
@@ -643,10 +657,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), JsonValue::String("test".to_string()));
         vars.insert("count".to_string(), serde_json::json!(42));
-        vars.insert(
-            "items".to_string(),
-            serde_json::json!(["a", "b", "c"]),
-        );
+        vars.insert("items".to_string(), serde_json::json!(["a", "b", "c"]));
         vars.insert(
             "config".to_string(),
             serde_json::json!({"host": "localhost", "port": 8080}),

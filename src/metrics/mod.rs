@@ -39,7 +39,9 @@ mod prometheus;
 mod types;
 
 // Re-export main types
-pub use collector::{global, init_global, HealthStatus, MetricsCollector, MetricsConfig, MetricsSnapshot};
+pub use collector::{
+    global, init_global, HealthStatus, MetricsCollector, MetricsConfig, MetricsSnapshot,
+};
 pub use command::{
     CommandMetrics, CommandMetricsSummary, CommandTimer, HostCommandMetrics,
     HostCommandMetricsSnapshot, ModuleMetrics, ModuleMetricsSnapshot,
@@ -48,13 +50,11 @@ pub use connection::{
     ConnectionMetrics, ConnectionMetricsSummary, ConnectionTimer, HostConnectionMetrics,
     HostConnectionMetricsSnapshot,
 };
-pub use pool::{
-    HostPoolMetrics, HostPoolMetricsSnapshot, PoolMetrics, PoolMetricsSummary,
-};
+pub use pool::{HostPoolMetrics, HostPoolMetricsSnapshot, PoolMetrics, PoolMetricsSummary};
 pub use prometheus::{export_openmetrics, PrometheusExporter};
 pub use types::{
-    Counter, CounterSnapshot, Gauge, GaugeSnapshot, Histogram, HistogramSnapshot, Labeled,
-    Labels, TimerGuard, DEFAULT_BUCKETS, LATENCY_BUCKETS_MS,
+    Counter, CounterSnapshot, Gauge, GaugeSnapshot, Histogram, HistogramSnapshot, Labeled, Labels,
+    TimerGuard, DEFAULT_BUCKETS, LATENCY_BUCKETS_MS,
 };
 
 #[cfg(test)]

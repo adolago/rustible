@@ -109,14 +109,12 @@ impl JumpHostConfig {
                     let port = if bracket_end + 1 < host_port.len()
                         && host_port.chars().nth(bracket_end + 1) == Some(':')
                     {
-                        host_port[bracket_end + 2..]
-                            .parse()
-                            .map_err(|_| {
-                                ConnectionError::InvalidConfig(format!(
-                                    "Invalid port in jump host: {}",
-                                    spec
-                                ))
-                            })?
+                        host_port[bracket_end + 2..].parse().map_err(|_| {
+                            ConnectionError::InvalidConfig(format!(
+                                "Invalid port in jump host: {}",
+                                spec
+                            ))
+                        })?
                     } else {
                         22
                     };
@@ -134,10 +132,7 @@ impl JumpHostConfig {
                 // Regular host:port
                 let host = &host_port[..colon_pos];
                 let port = host_port[colon_pos + 1..].parse().map_err(|_| {
-                    ConnectionError::InvalidConfig(format!(
-                        "Invalid port in jump host: {}",
-                        spec
-                    ))
+                    ConnectionError::InvalidConfig(format!("Invalid port in jump host: {}", spec))
                 })?;
                 (host.to_string(), port)
             }
@@ -166,7 +161,9 @@ impl JumpHostConfig {
 
     /// Get the effective user, falling back to a default.
     pub fn effective_user(&self, default_user: &str) -> String {
-        self.user.clone().unwrap_or_else(|| default_user.to_string())
+        self.user
+            .clone()
+            .unwrap_or_else(|| default_user.to_string())
     }
 }
 
@@ -388,7 +385,10 @@ impl<'a> JumpHostResolver<'a> {
     }
 
     /// Resolve jump chain from a HostConfig directly.
-    pub fn resolve_from_config(&mut self, host_config: &HostConfig) -> ConnectionResult<JumpHostChain> {
+    pub fn resolve_from_config(
+        &mut self,
+        host_config: &HostConfig,
+    ) -> ConnectionResult<JumpHostChain> {
         match &host_config.proxy_jump {
             Some(pj) if !pj.is_empty() && !pj.eq_ignore_ascii_case("none") => {
                 let chain = JumpHostChain::parse(pj)?;

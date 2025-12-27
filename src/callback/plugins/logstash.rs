@@ -618,9 +618,7 @@ impl LogstashCallback {
                         socket.send(json.as_bytes())?;
                     }
                     ConnectionState::Disconnected => {
-                        return Err(LogstashError::ConnectionFailed(
-                            "Not connected".to_string(),
-                        ));
+                        return Err(LogstashError::ConnectionFailed("Not connected".to_string()));
                     }
                 }
             }
@@ -667,9 +665,10 @@ impl LogstashCallback {
             return Ok(());
         }
 
-        let client = self.http_client.as_ref().ok_or_else(|| {
-            LogstashError::ConfigError("HTTP client not initialized".to_string())
-        })?;
+        let client = self
+            .http_client
+            .as_ref()
+            .ok_or_else(|| LogstashError::ConfigError("HTTP client not initialized".to_string()))?;
 
         let url = format!(
             "{}://{}",
@@ -920,10 +919,7 @@ impl ExecutionCallback for LogstashCallback {
 
         let mut event = self.create_event(
             "task_complete",
-            format!(
-                "Task {}: {} on {}",
-                status, result.task_name, result.host
-            ),
+            format!("Task {}: {} on {}", status, result.task_name, result.host),
             level,
             Some(&result.host),
         );
@@ -983,9 +979,10 @@ impl ExecutionCallback for LogstashCallback {
             Some(host),
         );
 
-        event
-            .extra
-            .insert("fact_count".to_string(), serde_json::json!(facts.all().len()));
+        event.extra.insert(
+            "fact_count".to_string(),
+            serde_json::json!(facts.all().len()),
+        );
 
         if let Err(e) = self.send_event(event) {
             warn!("Failed to send facts_gathered event to Logstash: {}", e);
@@ -1023,10 +1020,7 @@ mod tests {
         assert_eq!(config.index, "test-index");
         assert_eq!(config.application, "test-app");
         assert_eq!(config.environment, Some("production".to_string()));
-        assert_eq!(
-            config.extra_fields.get("team"),
-            Some(&"devops".to_string())
-        );
+        assert_eq!(config.extra_fields.get("team"), Some(&"devops".to_string()));
         assert_eq!(config.batch_size, 50);
         assert!(config.log_task_start);
     }

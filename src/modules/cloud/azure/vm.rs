@@ -175,10 +175,7 @@ impl AzureVmPowerState {
     }
 
     fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            Self::Running | Self::Stopped | Self::Deallocated
-        )
+        matches!(self, Self::Running | Self::Stopped | Self::Deallocated)
     }
 
     fn matches_desired(&self, desired: &VmState) -> bool {
@@ -210,10 +207,16 @@ impl ImageReference {
     fn from_params(value: &serde_json::Value) -> ModuleResult<Self> {
         if let Some(obj) = value.as_object() {
             Ok(Self {
-                publisher: obj.get("publisher").and_then(|v| v.as_str()).map(String::from),
+                publisher: obj
+                    .get("publisher")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
                 offer: obj.get("offer").and_then(|v| v.as_str()).map(String::from),
                 sku: obj.get("sku").and_then(|v| v.as_str()).map(String::from),
-                version: obj.get("version").and_then(|v| v.as_str()).map(String::from),
+                version: obj
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
                 id: obj.get("id").and_then(|v| v.as_str()).map(String::from),
             })
         } else if let Some(s) = value.as_str() {
@@ -306,9 +309,7 @@ impl ManagedIdentityConfig {
                 .get("type")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
-                    ModuleError::InvalidParameter(
-                        "managed_identity.type is required".to_string(),
-                    )
+                    ModuleError::InvalidParameter("managed_identity.type is required".to_string())
                 })?
                 .to_string();
 
@@ -526,10 +527,7 @@ pub struct AzureVmModule;
 
 impl AzureVmModule {
     /// Find VM by name in resource group
-    async fn find_vm(
-        _name: &str,
-        _resource_group: &str,
-    ) -> ModuleResult<Option<VmInfo>> {
+    async fn find_vm(_name: &str, _resource_group: &str) -> ModuleResult<Option<VmInfo>> {
         // In a real implementation using azure_mgmt_compute:
         //
         // use azure_identity::DefaultAzureCredential;
@@ -559,15 +557,11 @@ impl AzureVmModule {
     async fn create_vm(config: &AzureVmConfig) -> ModuleResult<VmInfo> {
         // Validate required parameters for creation
         let location = config.location.as_ref().ok_or_else(|| {
-            ModuleError::MissingParameter(
-                "location is required when creating a new VM".to_string(),
-            )
+            ModuleError::MissingParameter("location is required when creating a new VM".to_string())
         })?;
 
         let _image = config.image.as_ref().ok_or_else(|| {
-            ModuleError::MissingParameter(
-                "image is required when creating a new VM".to_string(),
-            )
+            ModuleError::MissingParameter("image is required when creating a new VM".to_string())
         })?;
 
         // In a real implementation:
@@ -631,24 +625,27 @@ impl AzureVmModule {
             config.vm_size
         );
 
-        let managed_identity = config.managed_identity.as_ref().map(|mi| ManagedIdentityInfo {
-            principal_id: Some(format!("{:032x}", rand::random::<u128>())),
-            tenant_id: Some(format!("{:032x}", rand::random::<u128>())),
-            identity_type: mi.identity_type.clone(),
-            user_assigned_identities: mi.user_assigned_identities.as_ref().map(|ids| {
-                ids.iter()
-                    .map(|id| {
-                        (
-                            id.clone(),
-                            UserAssignedIdentityInfo {
-                                principal_id: format!("{:032x}", rand::random::<u128>()),
-                                client_id: format!("{:032x}", rand::random::<u128>()),
-                            },
-                        )
-                    })
-                    .collect()
-            }),
-        });
+        let managed_identity = config
+            .managed_identity
+            .as_ref()
+            .map(|mi| ManagedIdentityInfo {
+                principal_id: Some(format!("{:032x}", rand::random::<u128>())),
+                tenant_id: Some(format!("{:032x}", rand::random::<u128>())),
+                identity_type: mi.identity_type.clone(),
+                user_assigned_identities: mi.user_assigned_identities.as_ref().map(|ids| {
+                    ids.iter()
+                        .map(|id| {
+                            (
+                                id.clone(),
+                                UserAssignedIdentityInfo {
+                                    principal_id: format!("{:032x}", rand::random::<u128>()),
+                                    client_id: format!("{:032x}", rand::random::<u128>()),
+                                },
+                            )
+                        })
+                        .collect()
+                }),
+            });
 
         Ok(VmInfo {
             id: vm_id,
@@ -719,11 +716,7 @@ impl AzureVmModule {
     /// Deallocate a VM (releases resources)
     async fn deallocate_vm(_name: &str, _resource_group: &str) -> ModuleResult<()> {
         // client.virtual_machines_client().deallocate(resource_group, name, None).await?;
-        tracing::info!(
-            "Would deallocate Azure VM: {}/{}",
-            _resource_group,
-            _name
-        );
+        tracing::info!("Would deallocate Azure VM: {}/{}", _resource_group, _name);
         Ok(())
     }
 
@@ -835,9 +828,7 @@ impl AzureVmModule {
                     .await
             }
             VmState::Stopped => self.ensure_stopped(&config, &existing, context).await,
-            VmState::Deallocated => {
-                self.ensure_deallocated(&config, &existing, context).await
-            }
+            VmState::Deallocated => self.ensure_deallocated(&config, &existing, context).await,
             VmState::Absent => self.ensure_absent(&config, &existing, context).await,
             VmState::Restarted => self.ensure_restarted(&config, &existing, context).await,
         }
@@ -890,11 +881,10 @@ impl AzureVmModule {
                 && !matches!(power_state, AzureVmPowerState::Running)
             {
                 if context.check_mode {
-                    return Ok(ModuleOutput::changed(format!(
-                        "Would start VM '{}'",
-                        config.name
-                    ))
-                    .with_data("action", serde_json::json!("start")));
+                    return Ok(
+                        ModuleOutput::changed(format!("Would start VM '{}'", config.name))
+                            .with_data("action", serde_json::json!("start")),
+                    );
                 }
 
                 Self::start_vm(&config.name, &config.resource_group).await?;
@@ -911,8 +901,10 @@ impl AzureVmModule {
                     vm.clone()
                 };
 
-                Ok(ModuleOutput::changed(format!("Started VM '{}'", config.name))
-                    .with_data("vm", serde_json::to_value(&final_vm).unwrap()))
+                Ok(
+                    ModuleOutput::changed(format!("Started VM '{}'", config.name))
+                        .with_data("vm", serde_json::to_value(&final_vm).unwrap()),
+                )
             } else {
                 // VM already exists and is in desired state
                 Ok(ModuleOutput::ok(format!(
@@ -941,16 +933,17 @@ impl AzureVmModule {
         let power_state = AzureVmPowerState::from_api_state(&vm.power_state);
 
         if matches!(power_state, AzureVmPowerState::Stopped) {
-            return Ok(ModuleOutput::ok(format!("VM '{}' is already stopped", config.name))
-                .with_data("vm", serde_json::to_value(vm).unwrap()));
+            return Ok(
+                ModuleOutput::ok(format!("VM '{}' is already stopped", config.name))
+                    .with_data("vm", serde_json::to_value(vm).unwrap()),
+            );
         }
 
         if context.check_mode {
-            return Ok(ModuleOutput::changed(format!(
-                "Would stop VM '{}'",
-                config.name
-            ))
-            .with_data("action", serde_json::json!("stop")));
+            return Ok(
+                ModuleOutput::changed(format!("Would stop VM '{}'", config.name))
+                    .with_data("action", serde_json::json!("stop")),
+            );
         }
 
         Self::stop_vm(&config.name, &config.resource_group).await?;
@@ -967,8 +960,10 @@ impl AzureVmModule {
             vm.clone()
         };
 
-        Ok(ModuleOutput::changed(format!("Stopped VM '{}'", config.name))
-            .with_data("vm", serde_json::to_value(&final_vm).unwrap()))
+        Ok(
+            ModuleOutput::changed(format!("Stopped VM '{}'", config.name))
+                .with_data("vm", serde_json::to_value(&final_vm).unwrap()),
+        )
     }
 
     /// Ensure VM is deallocated
@@ -995,11 +990,10 @@ impl AzureVmModule {
         }
 
         if context.check_mode {
-            return Ok(ModuleOutput::changed(format!(
-                "Would deallocate VM '{}'",
-                config.name
-            ))
-            .with_data("action", serde_json::json!("deallocate")));
+            return Ok(
+                ModuleOutput::changed(format!("Would deallocate VM '{}'", config.name))
+                    .with_data("action", serde_json::json!("deallocate")),
+            );
         }
 
         Self::deallocate_vm(&config.name, &config.resource_group).await?;
@@ -1016,8 +1010,10 @@ impl AzureVmModule {
             vm.clone()
         };
 
-        Ok(ModuleOutput::changed(format!("Deallocated VM '{}'", config.name))
-            .with_data("vm", serde_json::to_value(&final_vm).unwrap()))
+        Ok(
+            ModuleOutput::changed(format!("Deallocated VM '{}'", config.name))
+                .with_data("vm", serde_json::to_value(&final_vm).unwrap()),
+        )
     }
 
     /// Ensure VM is absent
@@ -1035,11 +1031,10 @@ impl AzureVmModule {
         }
 
         if context.check_mode {
-            return Ok(ModuleOutput::changed(format!(
-                "Would delete VM '{}'",
-                config.name
-            ))
-            .with_data("action", serde_json::json!("delete")));
+            return Ok(
+                ModuleOutput::changed(format!("Would delete VM '{}'", config.name))
+                    .with_data("action", serde_json::json!("delete")),
+            );
         }
 
         Self::delete_vm(&config.name, &config.resource_group, true).await?;
@@ -1065,11 +1060,10 @@ impl AzureVmModule {
         })?;
 
         if context.check_mode {
-            return Ok(ModuleOutput::changed(format!(
-                "Would restart VM '{}'",
-                config.name
-            ))
-            .with_data("action", serde_json::json!("restart")));
+            return Ok(
+                ModuleOutput::changed(format!("Would restart VM '{}'", config.name))
+                    .with_data("action", serde_json::json!("restart")),
+            );
         }
 
         Self::restart_vm(&config.name, &config.resource_group).await?;
@@ -1086,8 +1080,10 @@ impl AzureVmModule {
             vm.clone()
         };
 
-        Ok(ModuleOutput::changed(format!("Restarted VM '{}'", config.name))
-            .with_data("vm", serde_json::to_value(&final_vm).unwrap()))
+        Ok(
+            ModuleOutput::changed(format!("Restarted VM '{}'", config.name))
+                .with_data("vm", serde_json::to_value(&final_vm).unwrap()),
+        )
     }
 }
 
@@ -1249,7 +1245,9 @@ impl AzureResourceGroupModule {
     }
 
     /// Create resource group
-    async fn create_resource_group(config: &ResourceGroupConfig) -> ModuleResult<ResourceGroupInfo> {
+    async fn create_resource_group(
+        config: &ResourceGroupConfig,
+    ) -> ModuleResult<ResourceGroupInfo> {
         let location = config.location.as_ref().ok_or_else(|| {
             ModuleError::MissingParameter(
                 "location is required when creating a resource group".to_string(),
@@ -1292,11 +1290,13 @@ impl AzureResourceGroupModule {
         match config.state {
             ResourceGroupState::Present => {
                 if let Some(rg) = existing {
-                    Ok(ModuleOutput::ok(format!(
-                        "Resource group '{}' already exists",
-                        config.name
-                    ))
-                    .with_data("resource_group", serde_json::to_value(&rg).unwrap()))
+                    Ok(
+                        ModuleOutput::ok(format!(
+                            "Resource group '{}' already exists",
+                            config.name
+                        ))
+                        .with_data("resource_group", serde_json::to_value(&rg).unwrap()),
+                    )
                 } else {
                     if context.check_mode {
                         return Ok(ModuleOutput::changed(format!(
@@ -1306,11 +1306,10 @@ impl AzureResourceGroupModule {
                     }
 
                     let rg = Self::create_resource_group(&config).await?;
-                    Ok(ModuleOutput::changed(format!(
-                        "Created resource group '{}'",
-                        config.name
-                    ))
-                    .with_data("resource_group", serde_json::to_value(&rg).unwrap()))
+                    Ok(
+                        ModuleOutput::changed(format!("Created resource group '{}'", config.name))
+                            .with_data("resource_group", serde_json::to_value(&rg).unwrap()),
+                    )
                 }
             }
             ResourceGroupState::Absent => {
@@ -1509,7 +1508,11 @@ impl AzureNetworkInterfaceModule {
         let private_ip = if config.private_ip_allocation == "Static" {
             config.private_ip_address.clone()
         } else {
-            Some(format!("10.0.{}.{}", rand::random::<u8>(), rand::random::<u8>()))
+            Some(format!(
+                "10.0.{}.{}",
+                rand::random::<u8>(),
+                rand::random::<u8>()
+            ))
         };
 
         Ok(NetworkInterfaceInfo {
@@ -1543,7 +1546,11 @@ impl AzureNetworkInterfaceModule {
 
     /// Delete network interface
     async fn delete_nic(_name: &str, _resource_group: &str) -> ModuleResult<()> {
-        tracing::info!("Would delete network interface: {}/{}", _resource_group, _name);
+        tracing::info!(
+            "Would delete network interface: {}/{}",
+            _resource_group,
+            _name
+        );
         Ok(())
     }
 
@@ -1658,7 +1665,10 @@ mod tests {
         assert_eq!(VmState::from_str("absent").unwrap(), VmState::Absent);
         assert_eq!(VmState::from_str("running").unwrap(), VmState::Running);
         assert_eq!(VmState::from_str("stopped").unwrap(), VmState::Stopped);
-        assert_eq!(VmState::from_str("deallocated").unwrap(), VmState::Deallocated);
+        assert_eq!(
+            VmState::from_str("deallocated").unwrap(),
+            VmState::Deallocated
+        );
         assert_eq!(VmState::from_str("restarted").unwrap(), VmState::Restarted);
         assert!(VmState::from_str("invalid").is_err());
     }
@@ -1747,7 +1757,10 @@ mod tests {
         let config = AzureVmConfig::from_params(&params).unwrap();
         let image = config.image.unwrap();
         assert_eq!(image.publisher, Some("Canonical".to_string()));
-        assert_eq!(image.offer, Some("0001-com-ubuntu-server-jammy".to_string()));
+        assert_eq!(
+            image.offer,
+            Some("0001-com-ubuntu-server-jammy".to_string())
+        );
         assert_eq!(image.sku, Some("22_04-lts-gen2".to_string()));
         assert_eq!(image.version, Some("latest".to_string()));
     }
@@ -1809,8 +1822,14 @@ mod tests {
         params.insert("name".to_string(), serde_json::json!("test-nic"));
         params.insert("resource_group".to_string(), serde_json::json!("test-rg"));
         params.insert("location".to_string(), serde_json::json!("eastus"));
-        params.insert("subnet_id".to_string(), serde_json::json!("/subscriptions/.../subnets/default"));
-        params.insert("enable_accelerated_networking".to_string(), serde_json::json!(true));
+        params.insert(
+            "subnet_id".to_string(),
+            serde_json::json!("/subscriptions/.../subnets/default"),
+        );
+        params.insert(
+            "enable_accelerated_networking".to_string(),
+            serde_json::json!(true),
+        );
 
         let config = NetworkInterfaceConfig::from_params(&params).unwrap();
         assert_eq!(config.name, "test-nic");

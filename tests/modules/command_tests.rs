@@ -408,7 +408,10 @@ fn shell_escape(s: &str) -> String {
 fn test_command_output_capture() {
     let module = CommandModule;
     let mut params: HashMap<String, serde_json::Value> = HashMap::new();
-    params.insert("cmd".to_string(), serde_json::json!("echo stdout && echo stderr >&2"));
+    params.insert(
+        "cmd".to_string(),
+        serde_json::json!("echo stdout && echo stderr >&2"),
+    );
 
     // This uses shell-like redirection which won't work with command module
     // Instead test simpler output

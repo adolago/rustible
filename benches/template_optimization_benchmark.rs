@@ -7,16 +7,13 @@
 //! - Profiling overhead
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::collections::HashMap;
 use serde_json::json;
+use std::collections::HashMap;
 
 // Import the optimized template engine
 use rustible::template::{
-    TemplateEngine, TemplateEngineConfig,
-    TemplateCache, TemplateCacheConfig, CompiledTemplate,
-    VariableTrie, PathResolver,
-    LazyProviderBuilder,
-    TemplateProfiler,
+    CompiledTemplate, LazyProviderBuilder, PathResolver, TemplateCache, TemplateCacheConfig,
+    TemplateEngine, TemplateEngineConfig, TemplateProfiler, VariableTrie,
 };
 
 // ============================================================================
@@ -51,31 +48,34 @@ fn generate_many_vars(count: usize) -> HashMap<String, serde_json::Value> {
 
 fn generate_complex_nested() -> HashMap<String, serde_json::Value> {
     let mut vars = HashMap::new();
-    vars.insert("config".to_string(), json!({
-        "database": {
-            "primary": {
-                "host": "localhost",
-                "port": 5432,
-                "username": "admin"
+    vars.insert(
+        "config".to_string(),
+        json!({
+            "database": {
+                "primary": {
+                    "host": "localhost",
+                    "port": 5432,
+                    "username": "admin"
+                },
+                "replica": {
+                    "host": "replica.local",
+                    "port": 5432
+                }
             },
-            "replica": {
-                "host": "replica.local",
-                "port": 5432
+            "cache": {
+                "redis": {
+                    "host": "redis.local",
+                    "port": 6379
+                }
+            },
+            "api": {
+                "endpoints": {
+                    "users": "/api/v1/users",
+                    "orders": "/api/v1/orders"
+                }
             }
-        },
-        "cache": {
-            "redis": {
-                "host": "redis.local",
-                "port": 6379
-            }
-        },
-        "api": {
-            "endpoints": {
-                "users": "/api/v1/users",
-                "orders": "/api/v1/orders"
-            }
-        }
-    }));
+        }),
+    );
     vars
 }
 
@@ -173,7 +173,10 @@ fn bench_cache_lru_eviction(c: &mut Criterion) {
         let mut counter = 100;
         b.iter(|| {
             let template = format!("new_template{}", counter);
-            cache.insert(black_box(&template), CompiledTemplate::new(template.clone()));
+            cache.insert(
+                black_box(&template),
+                CompiledTemplate::new(template.clone()),
+            );
             counter += 1;
         })
     });
@@ -202,7 +205,10 @@ fn bench_trie_vs_naive_lookup(c: &mut Criterion) {
     let trie = VariableTrie::from_json_map(&vars);
 
     // Naive lookup path
-    fn naive_lookup<'a>(vars: &'a HashMap<String, serde_json::Value>, path: &str) -> Option<&'a serde_json::Value> {
+    fn naive_lookup<'a>(
+        vars: &'a HashMap<String, serde_json::Value>,
+        path: &str,
+    ) -> Option<&'a serde_json::Value> {
         let parts: Vec<&str> = path.split('.').collect();
         let mut current = vars.get(parts[0])?;
         for part in &parts[1..] {
@@ -250,7 +256,10 @@ fn bench_trie_depth(c: &mut Criterion) {
         let trie = VariableTrie::from_json_map(&vars);
 
         // Build path to leaf
-        let path: String = (0..depth).map(|i| format!("level{}", i)).collect::<Vec<_>>().join(".");
+        let path: String = (0..depth)
+            .map(|i| format!("level{}", i))
+            .collect::<Vec<_>>()
+            .join(".");
         let full_path = format!("config.{}", path);
 
         group.throughput(Throughput::Elements(depth as u64));
@@ -529,10 +538,7 @@ criterion_group!(
     bench_trie_construction,
 );
 
-criterion_group!(
-    lazy_benches,
-    bench_lazy_vs_eager,
-);
+criterion_group!(lazy_benches, bench_lazy_vs_eager,);
 
 criterion_group!(
     profiling_benches,

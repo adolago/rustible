@@ -511,26 +511,14 @@ mod tests {
 
     #[test]
     fn test_step_action_from_command() {
-        assert_eq!(
-            StepAction::from_command("step"),
-            Some(StepAction::Step)
-        );
-        assert_eq!(
-            StepAction::from_command("c"),
-            Some(StepAction::Continue)
-        );
-        assert_eq!(
-            StepAction::from_command("skip"),
-            Some(StepAction::Skip)
-        );
+        assert_eq!(StepAction::from_command("step"), Some(StepAction::Step));
+        assert_eq!(StepAction::from_command("c"), Some(StepAction::Continue));
+        assert_eq!(StepAction::from_command("skip"), Some(StepAction::Skip));
         assert_eq!(
             StepAction::from_command("repeat 5"),
             Some(StepAction::Repeat(5))
         );
-        assert_eq!(
-            StepAction::from_command("r3"),
-            Some(StepAction::Repeat(3))
-        );
+        assert_eq!(StepAction::from_command("r3"), Some(StepAction::Repeat(3)));
         assert_eq!(StepAction::from_command("unknown"), None);
     }
 

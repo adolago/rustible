@@ -2169,7 +2169,10 @@ mod shell_command_injection {
     #[test]
     fn test_removes_null_byte_rejected() {
         let result = validate_path_param("/tmp/file\x00.txt", "removes");
-        assert!(result.is_err(), "Null byte in removes path should be rejected");
+        assert!(
+            result.is_err(),
+            "Null byte in removes path should be rejected"
+        );
     }
 
     /// Test that newline injection in path parameters is rejected
@@ -2188,7 +2191,10 @@ mod shell_command_injection {
     #[test]
     fn test_path_carriage_return_rejected() {
         let result = validate_path_param("/tmp/file\r\n/bad", "removes");
-        assert!(result.is_err(), "Carriage return in path should be rejected");
+        assert!(
+            result.is_err(),
+            "Carriage return in path should be rejected"
+        );
     }
 
     /// Test that empty path is rejected
@@ -2422,10 +2428,7 @@ mod shell_command_injection {
     fn test_command_argv_dollar_safe() {
         let module = CommandModule;
         let mut params: ModuleParams = HashMap::new();
-        params.insert(
-            "argv".to_string(),
-            serde_json::json!(["echo", "$(whoami)"]),
-        );
+        params.insert("argv".to_string(), serde_json::json!(["echo", "$(whoami)"]));
 
         let context = ModuleContext::default();
         let result = module.execute(&params, &context).unwrap();

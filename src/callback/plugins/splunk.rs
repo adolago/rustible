@@ -447,14 +447,11 @@ impl SplunkCallback {
             .danger_accept_invalid_certs(!config.verify_tls)
             .build()?;
 
-        let hostname = config
-            .host
-            .clone()
-            .unwrap_or_else(|| {
-                hostname::get()
-                    .map(|h| h.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| "unknown".to_string())
-            });
+        let hostname = config.host.clone().unwrap_or_else(|| {
+            hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string())
+        });
 
         Ok(Self {
             config,
@@ -557,11 +554,7 @@ impl SplunkCallback {
                     return;
                 }
                 Err(e) => {
-                    warn!(
-                        "Splunk HEC send attempt {} failed: {}",
-                        attempt + 1,
-                        e
-                    );
+                    warn!("Splunk HEC send attempt {} failed: {}", attempt + 1, e);
                 }
             }
         }
@@ -754,10 +747,7 @@ impl ExecutionCallback for SplunkCallback {
 
         let mut event = self.create_event(
             "task_complete",
-            format!(
-                "Task {}: {} on {}",
-                status, result.task_name, result.host
-            ),
+            format!("Task {}: {} on {}", status, result.task_name, result.host),
             severity,
         );
 
@@ -807,10 +797,10 @@ impl ExecutionCallback for SplunkCallback {
         );
 
         event.event.target_host = Some(host.to_string());
-        event
-            .event
-            .extra
-            .insert("fact_count".to_string(), serde_json::json!(facts.all().len()));
+        event.event.extra.insert(
+            "fact_count".to_string(),
+            serde_json::json!(facts.all().len()),
+        );
 
         self.buffer_event(event).await;
     }

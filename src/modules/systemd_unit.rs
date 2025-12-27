@@ -64,7 +64,7 @@
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
-    ModuleResult, ParamExt, ParallelizationHint,
+    ModuleResult, ParallelizationHint, ParamExt,
 };
 use crate::connection::{Connection, ExecuteOptions, TransferOptions};
 use once_cell::sync::Lazy;
@@ -77,8 +77,10 @@ use tera::{Context as TeraContext, Tera};
 
 /// Regex for validating unit names
 static UNIT_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[a-zA-Z0-9_@.-]+\.(service|socket|timer|path|mount|automount|swap|slice|scope|target)$")
-        .expect("Invalid unit name regex")
+    Regex::new(
+        r"^[a-zA-Z0-9_@.-]+\.(service|socket|timer|path|mount|automount|swap|slice|scope|target)$",
+    )
+    .expect("Invalid unit name regex")
 });
 
 /// Regex for validating template instance names (e.g., myapp@instance.service)
@@ -247,7 +249,10 @@ impl SystemdUnitConfig {
         let name = params.get_string_required("name")?;
 
         // Validate unit name
-        if !UNIT_NAME_REGEX.is_match(&name) && !INSTANCE_NAME_REGEX.is_match(&name) && !name.contains("@.") {
+        if !UNIT_NAME_REGEX.is_match(&name)
+            && !INSTANCE_NAME_REGEX.is_match(&name)
+            && !name.contains("@.")
+        {
             // Allow template files like myapp@.service
             if !name.ends_with(".service")
                 && !name.ends_with(".socket")
@@ -290,7 +295,9 @@ impl SystemdUnitConfig {
         };
 
         // Parse state
-        let state_str = params.get_string("state")?.unwrap_or_else(|| "present".to_string());
+        let state_str = params
+            .get_string("state")?
+            .unwrap_or_else(|| "present".to_string());
         let state = UnitState::from_str(&state_str)?;
 
         // Get content sources (mutually exclusive)
@@ -380,7 +387,10 @@ static UNIT_TERA: Lazy<Tera> = Lazy::new(|| {
     tera.register_filter(
         "quote",
         |value: &tera::Value, _args: &HashMap<String, tera::Value>| match value {
-            tera::Value::String(s) => Ok(tera::Value::String(format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")))),
+            tera::Value::String(s) => Ok(tera::Value::String(format!(
+                "\"{}\"",
+                s.replace('\\', "\\\\").replace('"', "\\\"")
+            ))),
             _ => Ok(value.clone()),
         },
     );
@@ -524,10 +534,12 @@ impl SystemdUnitModule {
 
         match config.state {
             UnitState::Present => {
-                self.ensure_present(&config, context, connection, unit_path).await
+                self.ensure_present(&config, context, connection, unit_path)
+                    .await
             }
             UnitState::Absent => {
-                self.ensure_absent(&config, context, connection, unit_path).await
+                self.ensure_absent(&config, context, connection, unit_path)
+                    .await
             }
         }
     }
@@ -568,7 +580,8 @@ impl SystemdUnitModule {
             if context.check_mode {
                 messages.push("Would re-execute systemd daemon".to_string());
             } else {
-                self.systemd_daemon_reexec(connection.as_ref(), context).await?;
+                self.systemd_daemon_reexec(connection.as_ref(), context)
+                    .await?;
                 messages.push("Re-executed systemd daemon".to_string());
                 changed = true;
             }
@@ -591,7 +604,10 @@ impl SystemdUnitModule {
                     let options = Self::build_execute_options(context);
                     let mkdir_cmd = format!("mkdir -p '{}'", config.unit_path);
                     connection.execute(&mkdir_cmd, options).await.map_err(|e| {
-                        ModuleError::ExecutionFailed(format!("Failed to create unit directory: {}", e))
+                        ModuleError::ExecutionFailed(format!(
+                            "Failed to create unit directory: {}",
+                            e
+                        ))
                     })?;
                 }
 
@@ -628,7 +644,8 @@ impl SystemdUnitModule {
             if context.check_mode {
                 messages.push("Would reload systemd daemon".to_string());
             } else {
-                self.systemd_daemon_reload(connection.as_ref(), context).await?;
+                self.systemd_daemon_reload(connection.as_ref(), context)
+                    .await?;
                 messages.push("Reloaded systemd daemon".to_string());
                 changed = true;
             }
@@ -648,8 +665,13 @@ impl SystemdUnitModule {
                     changed = true;
                 } else {
                     let action = if should_enable { "enable" } else { "disable" };
-                    self.systemctl_action(connection.as_ref(), config.systemctl_name(), action, context)
-                        .await?;
+                    self.systemctl_action(
+                        connection.as_ref(),
+                        config.systemctl_name(),
+                        action,
+                        context,
+                    )
+                    .await?;
                     messages.push(format!("{}d unit '{}'", action, config.name));
                     changed = true;
                 }
@@ -670,8 +692,13 @@ impl SystemdUnitModule {
                             messages.push(format!("Would start unit '{}'", config.name));
                             changed = true;
                         } else {
-                            self.systemctl_action(connection.as_ref(), config.systemctl_name(), "start", context)
-                                .await?;
+                            self.systemctl_action(
+                                connection.as_ref(),
+                                config.systemctl_name(),
+                                "start",
+                                context,
+                            )
+                            .await?;
                             messages.push(format!("Started unit '{}'", config.name));
                             changed = true;
                         }
@@ -683,8 +710,13 @@ impl SystemdUnitModule {
                             messages.push(format!("Would stop unit '{}'", config.name));
                             changed = true;
                         } else {
-                            self.systemctl_action(connection.as_ref(), config.systemctl_name(), "stop", context)
-                                .await?;
+                            self.systemctl_action(
+                                connection.as_ref(),
+                                config.systemctl_name(),
+                                "stop",
+                                context,
+                            )
+                            .await?;
                             messages.push(format!("Stopped unit '{}'", config.name));
                             changed = true;
                         }
@@ -695,8 +727,13 @@ impl SystemdUnitModule {
                         messages.push(format!("Would restart unit '{}'", config.name));
                         changed = true;
                     } else {
-                        self.systemctl_action(connection.as_ref(), config.systemctl_name(), "restart", context)
-                            .await?;
+                        self.systemctl_action(
+                            connection.as_ref(),
+                            config.systemctl_name(),
+                            "restart",
+                            context,
+                        )
+                        .await?;
                         messages.push(format!("Restarted unit '{}'", config.name));
                         changed = true;
                     }
@@ -708,7 +745,12 @@ impl SystemdUnitModule {
                     } else {
                         // Try reload, fall back to restart
                         if self
-                            .systemctl_action(connection.as_ref(), config.systemctl_name(), "reload", context)
+                            .systemctl_action(
+                                connection.as_ref(),
+                                config.systemctl_name(),
+                                "reload",
+                                context,
+                            )
                             .await
                             .is_err()
                         {
@@ -719,7 +761,10 @@ impl SystemdUnitModule {
                                 context,
                             )
                             .await?;
-                            messages.push(format!("Restarted unit '{}' (reload not supported)", config.name));
+                            messages.push(format!(
+                                "Restarted unit '{}' (reload not supported)",
+                                config.name
+                            ));
                         } else {
                             messages.push(format!("Reloaded unit '{}'", config.name));
                         }
@@ -772,12 +817,11 @@ impl SystemdUnitModule {
         let exists = connection.path_exists(unit_path).await.unwrap_or(false);
 
         if !exists {
-            return Ok(ModuleOutput::ok(format!(
-                "Unit file '{}' already absent",
-                unit_file_path
-            ))
-            .with_data("unit_name", serde_json::json!(config.name))
-            .with_data("unit_path", serde_json::json!(unit_file_path)));
+            return Ok(
+                ModuleOutput::ok(format!("Unit file '{}' already absent", unit_file_path))
+                    .with_data("unit_name", serde_json::json!(config.name))
+                    .with_data("unit_path", serde_json::json!(unit_file_path)),
+            );
         }
 
         let mut messages = Vec::new();
@@ -794,8 +838,13 @@ impl SystemdUnitModule {
             if context.check_mode {
                 messages.push(format!("Would stop unit '{}'", config.name));
             } else {
-                self.systemctl_action(connection.as_ref(), config.systemctl_name(), "stop", context)
-                    .await?;
+                self.systemctl_action(
+                    connection.as_ref(),
+                    config.systemctl_name(),
+                    "stop",
+                    context,
+                )
+                .await?;
                 messages.push(format!("Stopped unit '{}'", config.name));
             }
             // Note: changed will be set to true below when unit file is removed
@@ -811,8 +860,13 @@ impl SystemdUnitModule {
             if context.check_mode {
                 messages.push(format!("Would disable unit '{}'", config.name));
             } else {
-                self.systemctl_action(connection.as_ref(), config.systemctl_name(), "disable", context)
-                    .await?;
+                self.systemctl_action(
+                    connection.as_ref(),
+                    config.systemctl_name(),
+                    "disable",
+                    context,
+                )
+                .await?;
                 messages.push(format!("Disabled unit '{}'", config.name));
             }
             // Note: changed will be set to true below when unit file is removed
@@ -836,7 +890,8 @@ impl SystemdUnitModule {
         if context.check_mode {
             messages.push("Would reload systemd daemon".to_string());
         } else {
-            self.systemd_daemon_reload(connection.as_ref(), context).await?;
+            self.systemd_daemon_reload(connection.as_ref(), context)
+                .await?;
             messages.push("Reloaded systemd daemon".to_string());
         }
 
@@ -1069,7 +1124,10 @@ pub mod templates {
         }
         content.push_str("Restart=on-failure\n");
         content.push_str("\n[Install]\n");
-        content.push_str(&format!("WantedBy={}\n", wanted_by.unwrap_or("multi-user.target")));
+        content.push_str(&format!(
+            "WantedBy={}\n",
+            wanted_by.unwrap_or("multi-user.target")
+        ));
         content
     }
 
@@ -1235,7 +1293,10 @@ mod tests {
     fn test_config_from_params_basic() {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!("myapp.service"));
-        params.insert("content".to_string(), serde_json::json!("[Unit]\nDescription=Test"));
+        params.insert(
+            "content".to_string(),
+            serde_json::json!("[Unit]\nDescription=Test"),
+        );
 
         let config = SystemdUnitConfig::from_params(&params).unwrap();
         assert_eq!(config.name, "myapp.service");
@@ -1249,7 +1310,10 @@ mod tests {
     fn test_config_from_params_template_unit() {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!("myapp@.service"));
-        params.insert("content".to_string(), serde_json::json!("[Unit]\nDescription=Test"));
+        params.insert(
+            "content".to_string(),
+            serde_json::json!("[Unit]\nDescription=Test"),
+        );
 
         let config = SystemdUnitConfig::from_params(&params).unwrap();
         assert_eq!(config.name, "myapp@.service");
@@ -1259,8 +1323,14 @@ mod tests {
     #[test]
     fn test_config_from_params_instance_unit() {
         let mut params = ModuleParams::new();
-        params.insert("name".to_string(), serde_json::json!("myapp@instance1.service"));
-        params.insert("content".to_string(), serde_json::json!("[Unit]\nDescription=Test"));
+        params.insert(
+            "name".to_string(),
+            serde_json::json!("myapp@instance1.service"),
+        );
+        params.insert(
+            "content".to_string(),
+            serde_json::json!("[Unit]\nDescription=Test"),
+        );
 
         let config = SystemdUnitConfig::from_params(&params).unwrap();
         assert_eq!(config.name, "myapp@instance1.service");
@@ -1314,10 +1384,16 @@ mod tests {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!("myapp.service"));
         params.insert("content".to_string(), serde_json::json!("[Unit]"));
-        params.insert("unit_path".to_string(), serde_json::json!("/usr/lib/systemd/system"));
+        params.insert(
+            "unit_path".to_string(),
+            serde_json::json!("/usr/lib/systemd/system"),
+        );
 
         let config = SystemdUnitConfig::from_params(&params).unwrap();
-        assert_eq!(config.unit_file_path(), "/usr/lib/systemd/system/myapp.service");
+        assert_eq!(
+            config.unit_file_path(),
+            "/usr/lib/systemd/system/myapp.service"
+        );
     }
 
     #[test]
@@ -1351,12 +1427,7 @@ mod tests {
 
     #[test]
     fn test_template_socket() {
-        let content = templates::socket(
-            "My Application Socket",
-            Some("0.0.0.0:8080"),
-            None,
-            false,
-        );
+        let content = templates::socket("My Application Socket", Some("0.0.0.0:8080"), None, false);
         assert!(content.contains("Description=My Application Socket"));
         assert!(content.contains("ListenStream=0.0.0.0:8080"));
         assert!(content.contains("Accept=no"));
@@ -1409,7 +1480,9 @@ mod tests {
         assert!(INSTANCE_NAME_REGEX.is_match("my-app@test123.timer"));
 
         // Check captures
-        let caps = INSTANCE_NAME_REGEX.captures("myapp@instance.service").unwrap();
+        let caps = INSTANCE_NAME_REGEX
+            .captures("myapp@instance.service")
+            .unwrap();
         assert_eq!(caps.get(1).unwrap().as_str(), "myapp");
         assert_eq!(caps.get(2).unwrap().as_str(), "instance");
         assert_eq!(caps.get(3).unwrap().as_str(), "service");

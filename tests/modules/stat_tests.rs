@@ -32,7 +32,10 @@ fn test_stat_module_description() {
 #[test]
 fn test_stat_module_classification() {
     let module = StatModule;
-    assert_eq!(module.classification(), ModuleClassification::NativeTransport);
+    assert_eq!(
+        module.classification(),
+        ModuleClassification::NativeTransport
+    );
 }
 
 #[test]
@@ -222,7 +225,10 @@ fn test_stat_with_checksum_sha256() {
         serde_json::json!(path.to_str().unwrap()),
     );
     params.insert("checksum".to_string(), serde_json::json!(true));
-    params.insert("checksum_algorithm".to_string(), serde_json::json!("sha256"));
+    params.insert(
+        "checksum_algorithm".to_string(),
+        serde_json::json!("sha256"),
+    );
 
     let context = ModuleContext::default();
     let result = module.execute(&params, &context).unwrap();

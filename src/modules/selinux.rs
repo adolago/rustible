@@ -48,29 +48,24 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 /// Regex pattern for validating SELinux type names
-static SELINUX_TYPE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*_t$").expect("Invalid SELinux type regex")
-});
+static SELINUX_TYPE_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*_t$").expect("Invalid SELinux type regex"));
 
 /// Regex pattern for validating SELinux user names
-static SELINUX_USER_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*_u$").expect("Invalid SELinux user regex")
-});
+static SELINUX_USER_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*_u$").expect("Invalid SELinux user regex"));
 
 /// Regex pattern for validating SELinux role names
-static SELINUX_ROLE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*_r$").expect("Invalid SELinux role regex")
-});
+static SELINUX_ROLE_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*_r$").expect("Invalid SELinux role regex"));
 
 /// Regex pattern for validating SELinux boolean names
-static SELINUX_BOOLEAN_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").expect("Invalid SELinux boolean regex")
-});
+static SELINUX_BOOLEAN_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").expect("Invalid SELinux boolean regex"));
 
 /// Regex pattern for validating port numbers
-static PORT_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[0-9]+(-[0-9]+)?$").expect("Invalid port regex")
-});
+static PORT_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[0-9]+(-[0-9]+)?$").expect("Invalid port regex"));
 
 /// SELinux enforcement modes
 #[derive(Debug, Clone, PartialEq)]
@@ -278,8 +273,7 @@ impl SELinuxModule {
         connection: &Arc<dyn Connection + Send + Sync>,
         context: &ModuleContext,
     ) -> ModuleResult<SELinuxMode> {
-        let (success, stdout, stderr) =
-            Self::execute_command(connection, "getenforce", context)?;
+        let (success, stdout, stderr) = Self::execute_command(connection, "getenforce", context)?;
 
         if !success {
             return Err(ModuleError::ExecutionFailed(format!(
@@ -446,7 +440,10 @@ impl SELinuxModule {
         context: &ModuleContext,
     ) -> ModuleResult<Option<(String, String, String, String)>> {
         // Use ls -Z to get context
-        let cmd = format!("ls -Zd {} 2>/dev/null | awk '{{print $1}}'", shell_escape(path));
+        let cmd = format!(
+            "ls -Zd {} 2>/dev/null | awk '{{print $1}}'",
+            shell_escape(path)
+        );
         let (success, stdout, _) = Self::execute_command(connection, &cmd, context)?;
 
         if !success || stdout.trim().is_empty() || stdout.trim() == "?" {
@@ -689,14 +686,13 @@ impl SELinuxModule {
                     return Ok(false); // Already absent
                 }
 
-                let cmd = format!(
-                    "semanage port -d -p {} {}",
-                    proto.as_str(),
-                    port
-                );
+                let cmd = format!("semanage port -d -p {} {}", proto.as_str(), port);
                 let (success, _, stderr) = Self::execute_command(connection, &cmd, context)?;
 
-                if !success && !stderr.contains("does not exist") && !stderr.contains("is defined in policy") {
+                if !success
+                    && !stderr.contains("does not exist")
+                    && !stderr.contains("is defined in policy")
+                {
                     return Err(ModuleError::ExecutionFailed(format!(
                         "Failed to remove port: {}",
                         stderr
@@ -725,7 +721,8 @@ impl SELinuxModule {
             Ok(SELinuxOperation::Mode)
         } else {
             Err(ModuleError::InvalidParameter(
-                "Must specify one of: state (for mode), boolean, target (for context), or ports".to_string(),
+                "Must specify one of: state (for mode), boolean, target (for context), or ports"
+                    .to_string(),
             ))
         }
     }
@@ -783,7 +780,11 @@ impl SELinuxModule {
                 policy.as_deref(),
                 context,
             )?;
-            messages.push(format!("Updated {} with mode '{}'", configfile, desired_mode.as_str()));
+            messages.push(format!(
+                "Updated {} with mode '{}'",
+                configfile,
+                desired_mode.as_str()
+            ));
         }
 
         // Try to change runtime mode if not switching to/from disabled
@@ -870,7 +871,13 @@ impl SELinuxModule {
             )));
         }
 
-        Self::set_boolean_value(connection, &boolean_name, desired_value, persistent, context)?;
+        Self::set_boolean_value(
+            connection,
+            &boolean_name,
+            desired_value,
+            persistent,
+            context,
+        )?;
 
         Ok(ModuleOutput::changed(format!(
             "Set boolean '{}' to {}{}",
@@ -900,7 +907,9 @@ impl SELinuxModule {
         let selevel = params.get_string("selevel")?;
         let recursive = params.get_bool_or("recursive", false);
         let reload = params.get_bool_or("reload", true);
-        let ftype_str = params.get_string("ftype")?.unwrap_or_else(|| "a".to_string());
+        let ftype_str = params
+            .get_string("ftype")?
+            .unwrap_or_else(|| "a".to_string());
         let ftype = SELinuxFileType::from_str(&ftype_str)?;
 
         // Validate type names if provided
@@ -1047,7 +1056,10 @@ impl SELinuxModule {
 
         // Parse ports (can be single, range, or comma-separated)
         let ports: Vec<String> = if ports_param.contains(',') {
-            ports_param.split(',').map(|s| s.trim().to_string()).collect()
+            ports_param
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect()
         } else {
             vec![ports_param.clone()]
         };
@@ -1075,7 +1087,8 @@ impl SELinuxModule {
         let mut changed_ports = Vec::new();
 
         for port in &ports {
-            let port_changed = Self::manage_port(connection, port, &proto, &port_type, &state, context)?;
+            let port_changed =
+                Self::manage_port(connection, port, &proto, &port_type, &state, context)?;
             if port_changed {
                 changed = true;
                 changed_ports.push(port.clone());
@@ -1321,9 +1334,9 @@ impl Module for SELinuxModule {
             }
             Some(SELinuxOperation::Boolean) => {
                 let name = params.get_string("boolean")?.unwrap_or_default();
-                let state = params.get_string("boolean_state")?.or_else(|| {
-                    params.get_string("state").ok().flatten()
-                });
+                let state = params
+                    .get_string("boolean_state")?
+                    .or_else(|| params.get_string("state").ok().flatten());
                 let desired = match state.as_deref() {
                     Some("on") | Some("true") | Some("1") => Some(true),
                     Some("off") | Some("false") | Some("0") => Some(false),
@@ -1331,7 +1344,9 @@ impl Module for SELinuxModule {
                 };
 
                 if let (Some(current), Some(desired)) = (
-                    Self::get_boolean_value(connection, &name, context).ok().flatten(),
+                    Self::get_boolean_value(connection, &name, context)
+                        .ok()
+                        .flatten(),
                     desired,
                 ) {
                     if current == desired {
@@ -1346,7 +1361,9 @@ impl Module for SELinuxModule {
             Some(SELinuxOperation::Context) => {
                 let target = params.get_string("target")?.unwrap_or_default();
                 let setype = params.get_string("setype")?;
-                let current = Self::get_file_context(connection, &target, context).ok().flatten();
+                let current = Self::get_file_context(connection, &target, context)
+                    .ok()
+                    .flatten();
 
                 if let (Some((_, _, t, _)), Some(ref desired)) = (&current, &setype) {
                     if t == desired {
@@ -1555,7 +1572,10 @@ mod tests {
 
         // Boolean operation
         params.clear();
-        params.insert("boolean".to_string(), serde_json::json!("httpd_can_network_connect"));
+        params.insert(
+            "boolean".to_string(),
+            serde_json::json!("httpd_can_network_connect"),
+        );
         assert_eq!(
             SELinuxModule::determine_operation(&params).unwrap(),
             SELinuxOperation::Boolean

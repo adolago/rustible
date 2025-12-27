@@ -78,7 +78,11 @@ pub struct TaskDependency {
 
 impl TaskDependency {
     /// Create a new task dependency
-    pub fn new(from_id: impl Into<String>, to_id: impl Into<String>, dep_type: DependencyType) -> Self {
+    pub fn new(
+        from_id: impl Into<String>,
+        to_id: impl Into<String>,
+        dep_type: DependencyType,
+    ) -> Self {
         Self {
             from_id: from_id.into(),
             to_id: to_id.into(),
@@ -168,9 +172,13 @@ impl DependencyGraph {
 
     /// Add an explicit dependency between tasks
     pub fn add_dependency(&mut self, dependency: TaskDependency) -> StateResult<()> {
-        let from_idx = self.node_indices.get(&dependency.from_id)
+        let from_idx = self
+            .node_indices
+            .get(&dependency.from_id)
             .ok_or_else(|| StateError::StateNotFound(dependency.from_id.clone()))?;
-        let to_idx = self.node_indices.get(&dependency.to_id)
+        let to_idx = self
+            .node_indices
+            .get(&dependency.to_id)
             .ok_or_else(|| StateError::StateNotFound(dependency.to_id.clone()))?;
 
         self.graph.add_edge(*from_idx, *to_idx, dependency);
@@ -178,7 +186,12 @@ impl DependencyGraph {
     }
 
     /// Add a variable dependency (task registers a variable that another uses)
-    pub fn add_variable_dependency(&mut self, producer_id: &str, consumer_id: &str, variable: &str) -> StateResult<()> {
+    pub fn add_variable_dependency(
+        &mut self,
+        producer_id: &str,
+        consumer_id: &str,
+        variable: &str,
+    ) -> StateResult<()> {
         let dep = TaskDependency::new(producer_id, consumer_id, DependencyType::Variable)
             .with_description(format!("Variable: {}", variable));
         self.add_dependency(dep)
@@ -192,7 +205,11 @@ impl DependencyGraph {
     }
 
     /// Add a block dependency (rescue/always blocks)
-    pub fn add_block_dependency(&mut self, block_task_id: &str, related_task_id: &str) -> StateResult<()> {
+    pub fn add_block_dependency(
+        &mut self,
+        block_task_id: &str,
+        related_task_id: &str,
+    ) -> StateResult<()> {
         let dep = TaskDependency::new(block_task_id, related_task_id, DependencyType::Block);
         self.add_dependency(dep)
     }
@@ -327,7 +344,9 @@ impl DependencyGraph {
             }
         }
 
-        let task_node = self.node_indices.get(task_id)
+        let task_node = self
+            .node_indices
+            .get(task_id)
             .and_then(|idx| self.graph.node_weight(*idx).cloned());
 
         ImpactAnalysis {
@@ -363,7 +382,8 @@ impl DependencyGraph {
 
     /// Get a node by ID
     pub fn get_node(&self, task_id: &str) -> Option<&DependencyNode> {
-        self.node_indices.get(task_id)
+        self.node_indices
+            .get(task_id)
             .and_then(|idx| self.graph.node_weight(*idx))
     }
 
@@ -396,10 +416,16 @@ impl DependencyGraph {
 
         // Add edges
         for edge in self.graph.edge_references() {
-            let source = self.graph.node_weight(edge.source())
-                .map(|n| n.id.as_str()).unwrap_or("?");
-            let target = self.graph.node_weight(edge.target())
-                .map(|n| n.id.as_str()).unwrap_or("?");
+            let source = self
+                .graph
+                .node_weight(edge.source())
+                .map(|n| n.id.as_str())
+                .unwrap_or("?");
+            let target = self
+                .graph
+                .node_weight(edge.target())
+                .map(|n| n.id.as_str())
+                .unwrap_or("?");
             let dep = edge.weight();
 
             let style = match dep.dependency_type {
@@ -554,9 +580,27 @@ mod tests {
         graph.add_node(node3);
 
         // Create a cycle: task1 -> task2 -> task3 -> task1
-        graph.add_dependency(TaskDependency::new("task1", "task2", DependencyType::Explicit)).unwrap();
-        graph.add_dependency(TaskDependency::new("task2", "task3", DependencyType::Explicit)).unwrap();
-        graph.add_dependency(TaskDependency::new("task3", "task1", DependencyType::Explicit)).unwrap();
+        graph
+            .add_dependency(TaskDependency::new(
+                "task1",
+                "task2",
+                DependencyType::Explicit,
+            ))
+            .unwrap();
+        graph
+            .add_dependency(TaskDependency::new(
+                "task2",
+                "task3",
+                DependencyType::Explicit,
+            ))
+            .unwrap();
+        graph
+            .add_dependency(TaskDependency::new(
+                "task3",
+                "task1",
+                DependencyType::Explicit,
+            ))
+            .unwrap();
 
         assert!(graph.has_cycles());
 

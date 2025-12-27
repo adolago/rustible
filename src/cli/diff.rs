@@ -121,15 +121,16 @@ impl ColorizedDiff {
         }
 
         // Get unified diff with context
-        for hunk in diff.unified_diff().context_radius(self.options.context_lines).iter_hunks() {
+        for hunk in diff
+            .unified_diff()
+            .context_radius(self.options.context_lines)
+            .iter_hunks()
+        {
             // Hunk header - extract ranges from operations
             let (old_start, old_len, new_start, new_len) = hunk_ranges(hunk.ops());
             let header = format!(
                 "@@ -{},{} +{},{} @@",
-                old_start,
-                old_len,
-                new_start,
-                new_len
+                old_start, old_len, new_start, new_len
             );
 
             if self.options.use_color {
@@ -207,7 +208,8 @@ impl ColorizedDiff {
                 ChangeTag::Equal => {
                     let formatted = format!("{:<width$}", truncated, width = width);
                     if self.options.use_color {
-                        writeln!(output, "{} | {}", formatted.dimmed(), formatted.dimmed()).unwrap();
+                        writeln!(output, "{} | {}", formatted.dimmed(), formatted.dimmed())
+                            .unwrap();
                     } else {
                         writeln!(output, "{} | {}", formatted, formatted).unwrap();
                     }
@@ -236,14 +238,14 @@ impl ColorizedDiff {
             writeln!(output, "--- {}", new_name).unwrap();
         }
 
-        for hunk in diff.unified_diff().context_radius(self.options.context_lines).iter_hunks() {
+        for hunk in diff
+            .unified_diff()
+            .context_radius(self.options.context_lines)
+            .iter_hunks()
+        {
             // Old section - extract ranges from operations
             let (old_start, old_len, new_start, new_len) = hunk_ranges(hunk.ops());
-            let old_header = format!(
-                "*** {},{} ****",
-                old_start,
-                old_start + old_len
-            );
+            let old_header = format!("*** {},{} ****", old_start, old_start + old_len);
             if self.options.use_color {
                 writeln!(output, "{}", old_header.yellow()).unwrap();
             } else {
@@ -266,11 +268,7 @@ impl ColorizedDiff {
             }
 
             // New section
-            let new_header = format!(
-                "--- {},{} ----",
-                new_start,
-                new_start + new_len
-            );
+            let new_header = format!("--- {},{} ----", new_start, new_start + new_len);
             if self.options.use_color {
                 writeln!(output, "{}", new_header.yellow()).unwrap();
             } else {
@@ -363,8 +361,7 @@ impl ColorizedDiff {
     /// Check if there are any differences
     pub fn has_changes(&self, old: &str, new: &str) -> bool {
         let diff = TextDiff::from_lines(old, new);
-        diff.iter_all_changes()
-            .any(|c| c.tag() != ChangeTag::Equal)
+        diff.iter_all_changes().any(|c| c.tag() != ChangeTag::Equal)
     }
 }
 
@@ -402,11 +399,7 @@ impl DiffSummary {
 
         if self.additions > 0 {
             let s = format!("+{}", self.additions);
-            parts.push(if use_color {
-                s.green().to_string()
-            } else {
-                s
-            });
+            parts.push(if use_color { s.green().to_string() } else { s });
         }
 
         if self.deletions > 0 {
@@ -416,11 +409,7 @@ impl DiffSummary {
 
         if self.changes > 0 {
             let s = format!("~{}", self.changes);
-            parts.push(if use_color {
-                s.yellow().to_string()
-            } else {
-                s
-            });
+            parts.push(if use_color { s.yellow().to_string() } else { s });
         }
 
         if parts.is_empty() {

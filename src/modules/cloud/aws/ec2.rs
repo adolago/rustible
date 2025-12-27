@@ -269,8 +269,8 @@ pub struct NetworkInterface {
 
 impl NetworkInterface {
     fn to_sdk_network_interface(&self) -> InstanceNetworkInterfaceSpecification {
-        let mut builder = InstanceNetworkInterfaceSpecification::builder()
-            .device_index(self.device_index);
+        let mut builder =
+            InstanceNetworkInterfaceSpecification::builder().device_index(self.device_index);
 
         if let Some(ref subnet_id) = self.subnet_id {
             builder = builder.subnet_id(subnet_id);
@@ -510,9 +510,7 @@ impl Ec2InstanceModule {
                 .load()
                 .await
         } else {
-            aws_config::defaults(BehaviorVersion::latest())
-                .load()
-                .await
+            aws_config::defaults(BehaviorVersion::latest()).load().await
         };
 
         Ok(Client::new(&config))
@@ -541,7 +539,9 @@ impl Ec2InstanceModule {
             )
             .send()
             .await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to describe instances: {}", e)))?;
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to describe instances: {}", e))
+            })?;
 
         let mut instances = Vec::new();
 
@@ -611,7 +611,9 @@ impl Ec2InstanceModule {
             .instance_ids(instance_id)
             .send()
             .await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to describe instance: {}", e)))?;
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to describe instance: {}", e))
+            })?;
 
         for reservation in resp.reservations() {
             for instance in reservation.instances() {
@@ -717,7 +719,10 @@ impl Ec2InstanceModule {
         // Add user data
         if let Some(ref user_data) = config.user_data {
             // Encode user data to base64 if not already encoded
-            let encoded = if user_data.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=') {
+            let encoded = if user_data
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+            {
                 user_data.clone()
             } else {
                 base64::Engine::encode(&base64::engine::general_purpose::STANDARD, user_data)
@@ -787,10 +792,9 @@ impl Ec2InstanceModule {
         );
 
         // Execute the request
-        let resp = run_instances
-            .send()
-            .await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to create instances: {}", e)))?;
+        let resp = run_instances.send().await.map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to create instances: {}", e))
+        })?;
 
         // Extract instance information
         let mut instances = Vec::new();
@@ -855,7 +859,9 @@ impl Ec2InstanceModule {
             .set_instance_ids(Some(instance_ids.to_vec()))
             .send()
             .await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to start instances: {}", e)))?;
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to start instances: {}", e))
+            })?;
 
         tracing::info!("Started instances: {:?}", instance_ids);
         Ok(())
@@ -879,14 +885,19 @@ impl Ec2InstanceModule {
             .force(force)
             .send()
             .await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to stop instances: {}", e)))?;
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to stop instances: {}", e))
+            })?;
 
         tracing::info!("Stopped instances: {:?}", instance_ids);
         Ok(())
     }
 
     /// Terminate instances
-    async fn terminate_instances(instance_ids: &[String], region: Option<&str>) -> ModuleResult<()> {
+    async fn terminate_instances(
+        instance_ids: &[String],
+        region: Option<&str>,
+    ) -> ModuleResult<()> {
         if instance_ids.is_empty() {
             return Ok(());
         }
@@ -898,7 +909,9 @@ impl Ec2InstanceModule {
             .set_instance_ids(Some(instance_ids.to_vec()))
             .send()
             .await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to terminate instances: {}", e)))?;
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to terminate instances: {}", e))
+            })?;
 
         tracing::info!("Terminated instances: {:?}", instance_ids);
         Ok(())
@@ -917,7 +930,9 @@ impl Ec2InstanceModule {
             .set_instance_ids(Some(instance_ids.to_vec()))
             .send()
             .await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to reboot instances: {}", e)))?;
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to reboot instances: {}", e))
+            })?;
 
         tracing::info!("Rebooted instances: {:?}", instance_ids);
         Ok(())
@@ -958,7 +973,9 @@ impl Ec2InstanceModule {
                 .set_instance_ids(Some(instance_ids.to_vec()))
                 .send()
                 .await
-                .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to describe instances: {}", e)))?;
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to describe instances: {}", e))
+                })?;
 
             let mut all_ready = true;
             let mut instances = Vec::new();
@@ -1043,12 +1060,8 @@ impl Ec2InstanceModule {
 
         // Determine actions based on current and desired state
         let result = match config.state {
-            InstanceState::Running => {
-                self.ensure_running(&config, &existing, context).await?
-            }
-            InstanceState::Stopped => {
-                self.ensure_stopped(&config, &existing, context).await?
-            }
+            InstanceState::Running => self.ensure_running(&config, &existing, context).await?,
+            InstanceState::Stopped => self.ensure_stopped(&config, &existing, context).await?,
             InstanceState::Terminated | InstanceState::Absent => {
                 self.ensure_terminated(&config, &existing, context).await?
             }
@@ -1108,8 +1121,7 @@ impl Ec2InstanceModule {
 
             if stopped.is_empty() {
                 // All instances already running
-                let instance_ids: Vec<_> =
-                    existing.iter().map(|i| i.instance_id.clone()).collect();
+                let instance_ids: Vec<_> = existing.iter().map(|i| i.instance_id.clone()).collect();
                 return Ok(ModuleOutput::ok(format!(
                     "{} instance(s) named '{}' already running",
                     existing.len(),
@@ -1504,9 +1516,7 @@ impl Ec2SecurityGroupModule {
                 .load()
                 .await
         } else {
-            aws_config::defaults(BehaviorVersion::latest())
-                .load()
-                .await
+            aws_config::defaults(BehaviorVersion::latest()).load().await
         };
 
         Ok(Client::new(&config))
@@ -1520,25 +1530,17 @@ impl Ec2SecurityGroupModule {
     ) -> ModuleResult<Option<SecurityGroupInfo>> {
         let client = Self::create_client(region).await?;
 
-        let mut req = client.describe_security_groups()
-            .filters(
-                Filter::builder()
-                    .name("group-name")
-                    .values(name)
-                    .build(),
-            );
+        let mut req = client
+            .describe_security_groups()
+            .filters(Filter::builder().name("group-name").values(name).build());
 
         if let Some(vpc) = vpc_id {
-            req = req.filters(
-                Filter::builder()
-                    .name("vpc-id")
-                    .values(vpc)
-                    .build(),
-            );
+            req = req.filters(Filter::builder().name("vpc-id").values(vpc).build());
         }
 
-        let resp = req.send().await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to describe security groups: {}", e)))?;
+        let resp = req.send().await.map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to describe security groups: {}", e))
+        })?;
 
         for sg in resp.security_groups() {
             let mut tags = HashMap::new();
@@ -1562,7 +1564,9 @@ impl Ec2SecurityGroupModule {
     }
 
     /// Create security group
-    async fn create_security_group(config: &SecurityGroupConfig) -> ModuleResult<SecurityGroupInfo> {
+    async fn create_security_group(
+        config: &SecurityGroupConfig,
+    ) -> ModuleResult<SecurityGroupInfo> {
         let client = Self::create_client(config.region.as_deref()).await?;
 
         let description = config
@@ -1591,8 +1595,9 @@ impl Ec2SecurityGroupModule {
                 .build(),
         );
 
-        let resp = req.send().await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to create security group: {}", e)))?;
+        let resp = req.send().await.map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to create security group: {}", e))
+        })?;
 
         let group_id = resp.group_id().unwrap_or_default().to_string();
 
@@ -1628,7 +1633,9 @@ impl Ec2SecurityGroupModule {
             .group_id(group_id)
             .send()
             .await
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to delete security group: {}", e)))?;
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to delete security group: {}", e))
+            })?;
 
         tracing::info!("Deleted security group: {}", group_id);
         Ok(())
@@ -1648,7 +1655,8 @@ impl Ec2SecurityGroupModule {
 
         let client = Self::create_client(region).await?;
 
-        let ip_permissions: Vec<IpPermission> = rules.iter().map(|r| r.to_ip_permission()).collect();
+        let ip_permissions: Vec<IpPermission> =
+            rules.iter().map(|r| r.to_ip_permission()).collect();
 
         if is_egress {
             client
@@ -1657,7 +1665,9 @@ impl Ec2SecurityGroupModule {
                 .set_ip_permissions(Some(ip_permissions))
                 .send()
                 .await
-                .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to authorize egress rules: {}", e)))?;
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to authorize egress rules: {}", e))
+                })?;
         } else {
             client
                 .authorize_security_group_ingress()
@@ -1665,7 +1675,12 @@ impl Ec2SecurityGroupModule {
                 .set_ip_permissions(Some(ip_permissions))
                 .send()
                 .await
-                .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to authorize ingress rules: {}", e)))?;
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!(
+                        "Failed to authorize ingress rules: {}",
+                        e
+                    ))
+                })?;
         }
 
         Ok(true)
@@ -1679,8 +1694,12 @@ impl Ec2SecurityGroupModule {
     ) -> ModuleResult<ModuleOutput> {
         let config = SecurityGroupConfig::from_params(params)?;
 
-        let existing =
-            Self::find_security_group(&config.name, config.vpc_id.as_deref(), config.region.as_deref()).await?;
+        let existing = Self::find_security_group(
+            &config.name,
+            config.vpc_id.as_deref(),
+            config.region.as_deref(),
+        )
+        .await?;
 
         match config.state {
             SecurityGroupState::Present => {
@@ -1765,11 +1784,10 @@ impl Ec2SecurityGroupModule {
                     )
                     .await?;
 
-                    Ok(ModuleOutput::changed(format!(
-                        "Created security group '{}'",
-                        config.name
-                    ))
-                    .with_data("security_group", serde_json::to_value(&sg).unwrap()))
+                    Ok(
+                        ModuleOutput::changed(format!("Created security group '{}'", config.name))
+                            .with_data("security_group", serde_json::to_value(&sg).unwrap()),
+                    )
                 }
             }
             SecurityGroupState::Absent => {
@@ -1935,9 +1953,7 @@ impl Ec2VpcModule {
                 .load()
                 .await
         } else {
-            aws_config::defaults(BehaviorVersion::latest())
-                .load()
-                .await
+            aws_config::defaults(BehaviorVersion::latest()).load().await
         };
 
         Ok(Client::new(&config))
@@ -1949,12 +1965,7 @@ impl Ec2VpcModule {
 
         let resp = client
             .describe_vpcs()
-            .filters(
-                Filter::builder()
-                    .name("tag:Name")
-                    .values(name)
-                    .build(),
-            )
+            .filters(Filter::builder().name("tag:Name").values(name).build())
             .send()
             .await
             .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to describe VPCs: {}", e)))?;
@@ -1970,7 +1981,10 @@ impl Ec2VpcModule {
             return Ok(Some(VpcInfo {
                 vpc_id: vpc.vpc_id().unwrap_or_default().to_string(),
                 cidr_block: vpc.cidr_block().unwrap_or_default().to_string(),
-                state: vpc.state().map(|s| s.as_str().to_string()).unwrap_or_default(),
+                state: vpc
+                    .state()
+                    .map(|s| s.as_str().to_string())
+                    .unwrap_or_default(),
                 is_default: vpc.is_default().unwrap_or(false),
                 enable_dns_support: true, // Would need additional API call
                 enable_dns_hostnames: false, // Would need additional API call
@@ -2021,23 +2035,40 @@ impl Ec2VpcModule {
             client
                 .modify_vpc_attribute()
                 .vpc_id(&vpc_id)
-                .enable_dns_support(aws_sdk_ec2::types::AttributeBooleanValue::builder().value(true).build())
+                .enable_dns_support(
+                    aws_sdk_ec2::types::AttributeBooleanValue::builder()
+                        .value(true)
+                        .build(),
+                )
                 .send()
                 .await
-                .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to enable DNS support: {}", e)))?;
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to enable DNS support: {}", e))
+                })?;
         }
 
         if config.enable_dns_hostnames {
             client
                 .modify_vpc_attribute()
                 .vpc_id(&vpc_id)
-                .enable_dns_hostnames(aws_sdk_ec2::types::AttributeBooleanValue::builder().value(true).build())
+                .enable_dns_hostnames(
+                    aws_sdk_ec2::types::AttributeBooleanValue::builder()
+                        .value(true)
+                        .build(),
+                )
                 .send()
                 .await
-                .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to enable DNS hostnames: {}", e)))?;
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to enable DNS hostnames: {}", e))
+                })?;
         }
 
-        tracing::info!("Created VPC '{}' ({}) with CIDR {}", config.name, vpc_id, cidr);
+        tracing::info!(
+            "Created VPC '{}' ({}) with CIDR {}",
+            config.name,
+            vpc_id,
+            cidr
+        );
 
         let mut tags = HashMap::new();
         tags.insert("Name".to_string(), config.name.clone());
@@ -2101,8 +2132,10 @@ impl Ec2VpcModule {
 
                     let vpc = Self::create_vpc(&config).await?;
 
-                    Ok(ModuleOutput::changed(format!("Created VPC '{}'", config.name))
-                        .with_data("vpc", serde_json::to_value(&vpc).unwrap()))
+                    Ok(
+                        ModuleOutput::changed(format!("Created VPC '{}'", config.name))
+                            .with_data("vpc", serde_json::to_value(&vpc).unwrap()),
+                    )
                 }
             }
             VpcState::Absent => {
@@ -2259,10 +2292,7 @@ mod tests {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!("test-instance"));
         params.insert("instance_type".to_string(), serde_json::json!("t3.small"));
-        params.insert(
-            "image_id".to_string(),
-            serde_json::json!("ami-12345678"),
-        );
+        params.insert("image_id".to_string(), serde_json::json!("ami-12345678"));
         params.insert("state".to_string(), serde_json::json!("running"));
 
         let config = Ec2InstanceConfig::from_params(&params).unwrap();
@@ -2285,7 +2315,10 @@ mod tests {
         );
 
         let config = Ec2InstanceConfig::from_params(&params).unwrap();
-        assert_eq!(config.tags.get("Environment"), Some(&"production".to_string()));
+        assert_eq!(
+            config.tags.get("Environment"),
+            Some(&"production".to_string())
+        );
         assert_eq!(config.tags.get("Team"), Some(&"web".to_string()));
     }
 

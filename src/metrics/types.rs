@@ -243,9 +243,7 @@ impl Clone for Gauge {
     fn clone(&self) -> Self {
         Self {
             value: AtomicU64::new(self.value.load(Ordering::Relaxed)),
-            negative: std::sync::atomic::AtomicBool::new(
-                self.negative.load(Ordering::Relaxed),
-            ),
+            negative: std::sync::atomic::AtomicBool::new(self.negative.load(Ordering::Relaxed)),
             name: self.name.clone(),
             help: self.help.clone(),
             labels: self.labels.clone(),
@@ -296,11 +294,7 @@ impl Histogram {
     }
 
     /// Create a histogram with custom buckets
-    pub fn with_buckets(
-        name: impl Into<String>,
-        help: impl Into<String>,
-        buckets: &[f64],
-    ) -> Self {
+    pub fn with_buckets(name: impl Into<String>, help: impl Into<String>, buckets: &[f64]) -> Self {
         let counts = buckets.iter().map(|_| AtomicU64::new(0)).collect();
         Self {
             buckets: buckets.to_vec(),
@@ -574,11 +568,8 @@ mod tests {
 
     #[test]
     fn test_histogram_basic() {
-        let histogram = Histogram::with_buckets(
-            "test_histogram",
-            "A test histogram",
-            &[1.0, 5.0, 10.0],
-        );
+        let histogram =
+            Histogram::with_buckets("test_histogram", "A test histogram", &[1.0, 5.0, 10.0]);
 
         histogram.observe(0.5);
         histogram.observe(3.0);
@@ -590,15 +581,12 @@ mod tests {
 
     #[test]
     fn test_histogram_buckets() {
-        let histogram = Histogram::with_buckets(
-            "test_histogram",
-            "A test histogram",
-            &[1.0, 5.0, 10.0],
-        );
+        let histogram =
+            Histogram::with_buckets("test_histogram", "A test histogram", &[1.0, 5.0, 10.0]);
 
-        histogram.observe(0.5);  // <= 1.0, <= 5.0, <= 10.0
-        histogram.observe(3.0);  // <= 5.0, <= 10.0
-        histogram.observe(7.0);  // <= 10.0
+        histogram.observe(0.5); // <= 1.0, <= 5.0, <= 10.0
+        histogram.observe(3.0); // <= 5.0, <= 10.0
+        histogram.observe(7.0); // <= 10.0
         histogram.observe(15.0); // > 10.0
 
         let counts = histogram.bucket_counts();

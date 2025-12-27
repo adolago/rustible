@@ -139,10 +139,9 @@ impl ExecutionCallback for TrackingCallback {
 
     async fn on_playbook_end(&self, name: &str, success: bool) {
         self.playbook_end_count.fetch_add(1, Ordering::SeqCst);
-        self.events.write().push(format!(
-            "{}:playbook_end:{}:{}",
-            self.name, name, success
-        ));
+        self.events
+            .write()
+            .push(format!("{}:playbook_end:{}:{}", self.name, name, success));
     }
 
     async fn on_play_start(&self, name: &str, hosts: &[String]) {
@@ -202,7 +201,12 @@ impl ExecutionCallback for TrackingCallback {
 // ============================================================================
 
 /// Create a test ExecutionResult for task completion testing.
-fn create_test_result(task_name: &str, host: &str, success: bool, changed: bool) -> ExecutionResult {
+fn create_test_result(
+    task_name: &str,
+    host: &str,
+    success: bool,
+    changed: bool,
+) -> ExecutionResult {
     ExecutionResult {
         host: host.to_string(),
         task_name: task_name.to_string(),
@@ -463,7 +467,9 @@ async fn test_callback_manager_dispatch_playbook_end() {
     assert!(callback.has_event("playbook_end:my-playbook:true"));
 
     // Dispatch playbook_end with success=false
-    manager.dispatch_playbook_end("failed-playbook", false).await;
+    manager
+        .dispatch_playbook_end("failed-playbook", false)
+        .await;
 
     assert_eq!(callback.playbook_end_count.load(Ordering::SeqCst), 2);
     assert!(callback.has_event("playbook_end:failed-playbook:false"));
@@ -479,10 +485,16 @@ async fn test_callback_manager_dispatch_play_start() {
     let callback = Arc::new(TrackingCallback::new("test"));
     manager.add_callback(callback.clone());
 
-    let hosts = vec!["host1".to_string(), "host2".to_string(), "host3".to_string()];
+    let hosts = vec![
+        "host1".to_string(),
+        "host2".to_string(),
+        "host3".to_string(),
+    ];
 
     // Dispatch play_start event
-    manager.dispatch_play_start("Configure webservers", &hosts).await;
+    manager
+        .dispatch_play_start("Configure webservers", &hosts)
+        .await;
 
     assert_eq!(callback.play_start_count.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -507,7 +519,9 @@ async fn test_callback_manager_dispatch_play_end() {
     manager.add_callback(callback.clone());
 
     // Dispatch play_end with success
-    manager.dispatch_play_end("Configure webservers", true).await;
+    manager
+        .dispatch_play_end("Configure webservers", true)
+        .await;
 
     assert_eq!(callback.play_end_count.load(Ordering::SeqCst), 1);
     assert!(callback.has_event("play_end:Configure webservers:true"));
@@ -530,22 +544,25 @@ async fn test_callback_manager_dispatch_task_start() {
     manager.add_callback(callback.clone());
 
     // Dispatch task_start event
-    manager.dispatch_task_start("Install nginx", "webserver1").await;
+    manager
+        .dispatch_task_start("Install nginx", "webserver1")
+        .await;
 
     assert_eq!(callback.task_start_count.load(Ordering::SeqCst), 1);
     assert_eq!(
         callback.last_task_name.read().as_deref(),
         Some("Install nginx")
     );
-    assert_eq!(
-        callback.last_host.read().as_deref(),
-        Some("webserver1")
-    );
+    assert_eq!(callback.last_host.read().as_deref(), Some("webserver1"));
     assert!(callback.has_event("task_start:Install nginx:webserver1"));
 
     // Dispatch task on multiple hosts
-    manager.dispatch_task_start("Install nginx", "webserver2").await;
-    manager.dispatch_task_start("Install nginx", "webserver3").await;
+    manager
+        .dispatch_task_start("Install nginx", "webserver2")
+        .await;
+    manager
+        .dispatch_task_start("Install nginx", "webserver3")
+        .await;
 
     assert_eq!(callback.task_start_count.load(Ordering::SeqCst), 3);
 }
@@ -603,7 +620,9 @@ async fn test_callback_manager_dispatch_handler_triggered() {
 
     // Dispatch multiple handlers
     manager.dispatch_handler_triggered("Reload systemd").await;
-    manager.dispatch_handler_triggered("Restart postgresql").await;
+    manager
+        .dispatch_handler_triggered("Restart postgresql")
+        .await;
 
     assert_eq!(callback.handler_triggered_count.load(Ordering::SeqCst), 3);
 }
@@ -662,11 +681,15 @@ async fn test_callback_manager_multiple_callbacks() {
     manager.dispatch_facts_gathered("host2", &facts).await;
 
     // Execute a task on each host
-    manager.dispatch_task_start("Install package", "host1").await;
+    manager
+        .dispatch_task_start("Install package", "host1")
+        .await;
     let result1 = create_test_result("Install package", "host1", true, true);
     manager.dispatch_task_complete(&result1).await;
 
-    manager.dispatch_task_start("Install package", "host2").await;
+    manager
+        .dispatch_task_start("Install package", "host2")
+        .await;
     let result2 = create_test_result("Install package", "host2", true, true);
     manager.dispatch_task_complete(&result2).await;
 
@@ -675,7 +698,9 @@ async fn test_callback_manager_multiple_callbacks() {
 
     // End play and playbook
     manager.dispatch_play_end("Test play", true).await;
-    manager.dispatch_playbook_end("multi-callback-test", true).await;
+    manager
+        .dispatch_playbook_end("multi-callback-test", true)
+        .await;
 
     // Verify all callbacks received all events
     for (i, callback) in [&callback1, &callback2, &callback3].iter().enumerate() {

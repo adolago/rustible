@@ -83,8 +83,7 @@ const SHELL_NS: &str = "http://schemas.microsoft.com/wbem/wsman/1/windows/shell"
 const PWSH_NS: &str = "http://schemas.microsoft.com/powershell";
 
 /// WinRM resource URIs
-const SHELL_RESOURCE_URI: &str =
-    "http://schemas.microsoft.com/wbem/wsman/1/windows/shell/cmd";
+const SHELL_RESOURCE_URI: &str = "http://schemas.microsoft.com/wbem/wsman/1/windows/shell/cmd";
 const POWERSHELL_RESOURCE_URI: &str =
     "http://schemas.microsoft.com/powershell/Microsoft.PowerShell";
 
@@ -136,10 +135,7 @@ pub enum WinRmAuth {
 
 impl WinRmAuth {
     /// Create NTLM authentication
-    pub fn ntlm(
-        username: impl Into<String>,
-        password: impl Into<String>,
-    ) -> Self {
+    pub fn ntlm(username: impl Into<String>, password: impl Into<String>) -> Self {
         let username = username.into();
         let (domain, user) = if username.contains('\\') {
             let parts: Vec<&str> = username.splitn(2, '\\').collect();
@@ -159,10 +155,7 @@ impl WinRmAuth {
     }
 
     /// Create Kerberos authentication
-    pub fn kerberos(
-        username: impl Into<String>,
-        realm: impl Into<String>,
-    ) -> Self {
+    pub fn kerberos(username: impl Into<String>, realm: impl Into<String>) -> Self {
         WinRmAuth::Kerberos {
             username: username.into(),
             realm: realm.into(),
@@ -267,8 +260,8 @@ impl NtlmAuthenticator {
         // NTLMSSP_NEGOTIATE_UNICODE | NTLMSSP_NEGOTIATE_OEM |
         // NTLMSSP_REQUEST_TARGET | NTLMSSP_NEGOTIATE_NTLM |
         // NTLMSSP_NEGOTIATE_ALWAYS_SIGN | NTLMSSP_NEGOTIATE_EXTENDED_SESSIONSECURITY
-        let flags: u32 = 0x00000001 | 0x00000002 | 0x00000004 | 0x00000200
-            | 0x00008000 | 0x00080000;
+        let flags: u32 =
+            0x00000001 | 0x00000002 | 0x00000004 | 0x00000200 | 0x00008000 | 0x00080000;
         message.extend_from_slice(&flags.to_le_bytes());
 
         // Domain name security buffer (offset, length, max length)
@@ -322,13 +315,19 @@ impl NtlmAuthenticator {
         // Calculate offsets
         let lm_len = lm_response.len() as u16;
         let nt_len = nt_response.len() as u16;
-        let domain_unicode: Vec<u8> = self.domain.encode_utf16()
+        let domain_unicode: Vec<u8> = self
+            .domain
+            .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
-        let user_unicode: Vec<u8> = self.username.encode_utf16()
+        let user_unicode: Vec<u8> = self
+            .username
+            .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
-        let workstation_unicode: Vec<u8> = self.workstation.encode_utf16()
+        let workstation_unicode: Vec<u8> = self
+            .workstation
+            .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
 
@@ -405,7 +404,8 @@ impl NtlmAuthenticator {
             self.username.to_uppercase(),
             self.domain.to_uppercase()
         );
-        let identity_unicode: Vec<u8> = identity.encode_utf16()
+        let identity_unicode: Vec<u8> = identity
+            .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
 
@@ -419,7 +419,7 @@ impl NtlmAuthenticator {
         blob.extend_from_slice(&timestamp.to_le_bytes());
         blob.extend_from_slice(client_challenge);
         blob.extend_from_slice(&0u32.to_le_bytes()); // Unknown
-        // Target info would go here in a full implementation
+                                                     // Target info would go here in a full implementation
 
         // NTProofStr = HMAC-MD5(NTLMv2 Hash, server_challenge + blob)
         let mut data = server_challenge.to_vec();
@@ -446,7 +446,8 @@ impl NtlmAuthenticator {
             self.username.to_uppercase(),
             self.domain.to_uppercase()
         );
-        let identity_unicode: Vec<u8> = identity.encode_utf16()
+        let identity_unicode: Vec<u8> = identity
+            .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
 
@@ -468,7 +469,9 @@ impl NtlmAuthenticator {
     fn compute_nt_hash(&self) -> [u8; 16] {
         use md4::{Digest, Md4};
 
-        let password_unicode: Vec<u8> = self.password.expose_secret()
+        let password_unicode: Vec<u8> = self
+            .password
+            .expose_secret()
             .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
@@ -660,9 +663,8 @@ impl WinRmConnection {
             let ca_cert = std::fs::read(ca_path).map_err(|e| {
                 ConnectionError::InvalidConfig(format!("Failed to read CA cert: {}", e))
             })?;
-            let cert = reqwest::Certificate::from_pem(&ca_cert).map_err(|e| {
-                ConnectionError::InvalidConfig(format!("Invalid CA cert: {}", e))
-            })?;
+            let cert = reqwest::Certificate::from_pem(&ca_cert)
+                .map_err(|e| ConnectionError::InvalidConfig(format!("Invalid CA cert: {}", e)))?;
             client_builder = client_builder.add_root_certificate(cert);
         }
 
@@ -726,25 +728,22 @@ impl WinRmConnection {
         let url = self.config.endpoint_url();
 
         match &self.config.auth {
-            WinRmAuth::Basic { username, password } => {
-                self.client
-                    .post(&url)
-                    .basic_auth(username, Some(password.expose_secret()))
-                    .header("Content-Type", "application/soap+xml;charset=UTF-8")
-                    .body(body.to_string())
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        ConnectionError::ConnectionFailed(format!("HTTP request failed: {}", e))
-                    })
-            }
+            WinRmAuth::Basic { username, password } => self
+                .client
+                .post(&url)
+                .basic_auth(username, Some(password.expose_secret()))
+                .header("Content-Type", "application/soap+xml;charset=UTF-8")
+                .body(body.to_string())
+                .send()
+                .await
+                .map_err(|e| {
+                    ConnectionError::ConnectionFailed(format!("HTTP request failed: {}", e))
+                }),
             WinRmAuth::Ntlm { .. } => self.send_ntlm_request(body).await,
             WinRmAuth::Kerberos { .. } => self.send_kerberos_request(body).await,
-            WinRmAuth::CredSSP { .. } => {
-                Err(ConnectionError::UnsupportedOperation(
-                    "CredSSP authentication not yet implemented".to_string(),
-                ))
-            }
+            WinRmAuth::CredSSP { .. } => Err(ConnectionError::UnsupportedOperation(
+                "CredSSP authentication not yet implemented".to_string(),
+            )),
             WinRmAuth::Certificate { .. } => {
                 // Certificate auth is handled at the TLS level
                 self.client
@@ -800,11 +799,9 @@ impl WinRmConnection {
                 )
             })?;
 
-        let challenge_b64 = www_auth
-            .strip_prefix("Negotiate ")
-            .ok_or_else(|| {
-                ConnectionError::AuthenticationFailed("Invalid Negotiate challenge".to_string())
-            })?;
+        let challenge_b64 = www_auth.strip_prefix("Negotiate ").ok_or_else(|| {
+            ConnectionError::AuthenticationFailed("Invalid Negotiate challenge".to_string())
+        })?;
 
         let challenge = BASE64_STANDARD.decode(challenge_b64).map_err(|e| {
             ConnectionError::AuthenticationFailed(format!("Invalid challenge encoding: {}", e))
@@ -1117,13 +1114,17 @@ impl WinRmConnection {
     }
 
     /// Parse output from receive response
-    fn parse_output(&self, response: &str) -> ConnectionResult<(String, String, Option<i32>, bool)> {
+    fn parse_output(
+        &self,
+        response: &str,
+    ) -> ConnectionResult<(String, String, Option<i32>, bool)> {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = None;
 
         // Check for command state
-        let done = response.contains("State=\"Done\"") || response.contains("CommandState=\"Done\"");
+        let done =
+            response.contains("State=\"Done\"") || response.contains("CommandState=\"Done\"");
 
         // Parse stdout
         let mut pos = 0;
@@ -1296,7 +1297,10 @@ impl WinRmConnection {
         let encoded = BASE64_STANDARD.encode(&script_unicode);
 
         // Execute with PowerShell -EncodedCommand
-        let command = format!("powershell.exe -NoProfile -NonInteractive -EncodedCommand {}", encoded);
+        let command = format!(
+            "powershell.exe -NoProfile -NonInteractive -EncodedCommand {}",
+            encoded
+        );
 
         self.execute(&command, None).await
     }
@@ -1408,7 +1412,8 @@ impl Connection for WinRmConnection {
             ConnectionError::TransferFailed(format!("Failed to read local file: {}", e))
         })?;
 
-        self.upload_content(&content, remote_path, Some(options)).await
+        self.upload_content(&content, remote_path, Some(options))
+            .await
     }
 
     async fn upload_content(
@@ -1798,9 +1803,7 @@ mod tests {
         let auth = WinRmAuth::ntlm("DOMAIN\\user", "password");
         match auth {
             WinRmAuth::Ntlm {
-                username,
-                domain,
-                ..
+                username, domain, ..
             } => {
                 assert_eq!(username, "user");
                 assert_eq!(domain, Some("DOMAIN".to_string()));
@@ -1814,9 +1817,7 @@ mod tests {
         let auth = WinRmAuth::ntlm("user@domain.local", "password");
         match auth {
             WinRmAuth::Ntlm {
-                username,
-                domain,
-                ..
+                username, domain, ..
             } => {
                 assert_eq!(username, "user");
                 assert_eq!(domain, Some("domain.local".to_string()));

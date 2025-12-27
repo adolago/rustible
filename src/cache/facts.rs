@@ -37,13 +37,16 @@ impl CachedFacts {
     /// Create new cached facts
     pub fn new(hostname: impl Into<String>, facts: IndexMap<String, JsonValue>) -> Self {
         let hostname = hostname.into();
-        let os_family = facts.get("ansible_os_family")
+        let os_family = facts
+            .get("ansible_os_family")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let distribution = facts.get("ansible_distribution")
+        let distribution = facts
+            .get("ansible_distribution")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let distribution_version = facts.get("ansible_distribution_version")
+        let distribution_version = facts
+            .get("ansible_distribution_version")
             .and_then(|v| v.as_str())
             .map(String::from);
 
@@ -85,10 +88,10 @@ impl CachedFacts {
     /// Estimate memory size of the cached facts
     pub fn size_bytes(&self) -> usize {
         // Rough estimation: hostname + JSON serialized facts
-        self.hostname.len() +
-        serde_json::to_string(&self.facts)
-            .map(|s| s.len())
-            .unwrap_or(1000) // Default estimate if serialization fails
+        self.hostname.len()
+            + serde_json::to_string(&self.facts)
+                .map(|s| s.len())
+                .unwrap_or(1000) // Default estimate if serialization fails
     }
 }
 
@@ -160,7 +163,8 @@ impl FactCache {
 
     /// Get facts for a host with specific subsets
     pub fn get_with_subsets(&self, hostname: &str, subsets: &[String]) -> Option<CachedFacts> {
-        self.get(hostname).filter(|facts| facts.covers_subsets(subsets))
+        self.get(hostname)
+            .filter(|facts| facts.covers_subsets(subsets))
     }
 
     /// Store facts for a host
@@ -168,11 +172,14 @@ impl FactCache {
         let size = facts.size_bytes();
 
         // Store IP to hostname mapping if available
-        if let Some(ip) = facts.facts.get("ansible_default_ipv4")
+        if let Some(ip) = facts
+            .facts
+            .get("ansible_default_ipv4")
             .and_then(|v| v.get("address"))
             .and_then(|v| v.as_str())
         {
-            self.ip_to_hostname.insert(ip.to_string(), hostname.to_string());
+            self.ip_to_hostname
+                .insert(ip.to_string(), hostname.to_string());
         }
 
         self.cache.insert_with_ttl(
@@ -205,7 +212,8 @@ impl FactCache {
         self.cache.remove(&hostname.to_string());
 
         // Also remove from IP mapping
-        let ips_to_remove: Vec<_> = self.ip_to_hostname
+        let ips_to_remove: Vec<_> = self
+            .ip_to_hostname
             .iter()
             .filter(|entry| entry.value() == hostname)
             .map(|entry| entry.key().clone())
@@ -262,20 +270,24 @@ impl FactCache {
     /// Check if facts need to be refreshed based on age
     pub fn needs_refresh(&self, hostname: &str, max_age: Duration) -> bool {
         match self.get(hostname) {
-            Some(facts) => {
-                facts.gathered_at
-                    .map(|t| t.elapsed() > max_age)
-                    .unwrap_or(true)
-            }
+            Some(facts) => facts
+                .gathered_at
+                .map(|t| t.elapsed() > max_age)
+                .unwrap_or(true),
             None => true,
         }
     }
 
     /// Get a list of hosts that need fact refresh
     pub fn hosts_needing_refresh(&self, max_age: Duration) -> Vec<String> {
-        self.cache.entries.iter()
+        self.cache
+            .entries
+            .iter()
             .filter(|entry| {
-                entry.value().value.gathered_at
+                entry
+                    .value()
+                    .value
+                    .gathered_at
                     .map(|t| t.elapsed() > max_age)
                     .unwrap_or(true)
             })
@@ -290,11 +302,26 @@ mod tests {
 
     fn sample_facts() -> IndexMap<String, JsonValue> {
         let mut facts = IndexMap::new();
-        facts.insert("ansible_os_family".to_string(), JsonValue::String("Debian".to_string()));
-        facts.insert("ansible_distribution".to_string(), JsonValue::String("Ubuntu".to_string()));
-        facts.insert("ansible_distribution_version".to_string(), JsonValue::String("22.04".to_string()));
-        facts.insert("ansible_hostname".to_string(), JsonValue::String("test-host".to_string()));
-        facts.insert("ansible_fqdn".to_string(), JsonValue::String("test-host.example.com".to_string()));
+        facts.insert(
+            "ansible_os_family".to_string(),
+            JsonValue::String("Debian".to_string()),
+        );
+        facts.insert(
+            "ansible_distribution".to_string(),
+            JsonValue::String("Ubuntu".to_string()),
+        );
+        facts.insert(
+            "ansible_distribution_version".to_string(),
+            JsonValue::String("22.04".to_string()),
+        );
+        facts.insert(
+            "ansible_hostname".to_string(),
+            JsonValue::String("test-host".to_string()),
+        );
+        facts.insert(
+            "ansible_fqdn".to_string(),
+            JsonValue::String("test-host.example.com".to_string()),
+        );
         facts
     }
 
@@ -313,7 +340,11 @@ mod tests {
     fn test_fact_cache_subsets() {
         let cache = FactCache::new(CacheConfig::default());
 
-        cache.insert_with_subsets("host1", sample_facts(), vec!["network".to_string(), "hardware".to_string()]);
+        cache.insert_with_subsets(
+            "host1",
+            sample_facts(),
+            vec!["network".to_string(), "hardware".to_string()],
+        );
 
         let cached = cache.get("host1").unwrap();
         assert!(cached.covers_subsets(&["network".to_string()]));
@@ -340,7 +371,10 @@ mod tests {
         cache.insert_raw("host1", sample_facts());
 
         let mut additional = IndexMap::new();
-        additional.insert("custom_fact".to_string(), JsonValue::String("custom_value".to_string()));
+        additional.insert(
+            "custom_fact".to_string(),
+            JsonValue::String("custom_value".to_string()),
+        );
 
         cache.merge_facts("host1", additional);
 

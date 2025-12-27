@@ -12,7 +12,7 @@
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
-    ModuleResult, ParamExt, ParallelizationHint,
+    ModuleResult, ParallelizationHint, ParamExt,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use once_cell::sync::Lazy;
@@ -44,8 +44,10 @@ static KNOWN_HOSTS_ENTRY_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// Regex for detecting hashed hostnames
-static HASHED_HOSTNAME_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\|1\|([A-Za-z0-9+/=]+)\|([A-Za-z0-9+/=]+)$").expect("Invalid hashed hostname regex"));
+static HASHED_HOSTNAME_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^\|1\|([A-Za-z0-9+/=]+)\|([A-Za-z0-9+/=]+)$")
+        .expect("Invalid hashed hostname regex")
+});
 
 /// Desired state for a known_hosts entry
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,8 +263,8 @@ fn match_hashed_hostname(hashed: &str, target: &str) -> bool {
 
 /// Compute HMAC-SHA1 hash of a hostname using a salt
 fn compute_hostname_hash(hostname: &str, salt: &[u8]) -> String {
-    use sha1::Sha1;
     use hmac::Hmac;
+    use sha1::Sha1;
 
     type HmacSha1 = Hmac<Sha1>;
 
@@ -463,7 +465,12 @@ impl KnownHostsFile {
     }
 
     /// Update an existing entry or add if not found
-    pub fn update_or_add(&mut self, hostname: &str, port: Option<u16>, entry: KnownHostsEntry) -> bool {
+    pub fn update_or_add(
+        &mut self,
+        hostname: &str,
+        port: Option<u16>,
+        entry: KnownHostsEntry,
+    ) -> bool {
         // Find and update existing entry with same hostname and key type
         for existing in &mut self.entries {
             if existing.matches_hostname(hostname, port) && existing.key_type == entry.key_type {
@@ -549,9 +556,9 @@ pub fn scan_host_keys(
 fn check_host_reachable(hostname: &str, port: u16, timeout: Duration) -> bool {
     let addr = format!("{}:{}", hostname, port);
     TcpStream::connect_timeout(
-        &addr.parse().unwrap_or_else(|_| {
-            format!("0.0.0.0:{}", port).parse().unwrap()
-        }),
+        &addr
+            .parse()
+            .unwrap_or_else(|_| format!("0.0.0.0:{}", port).parse().unwrap()),
         timeout,
     )
     .is_ok()
@@ -784,8 +791,11 @@ impl Module for KnownHostsModule {
                 for entry in entries_to_add {
                     if known_hosts.update_or_add(&hostname, port, entry) {
                         // Check if it was an update or add
-                        let kt = KeyType::from_openssh_str(&known_hosts.entries.last().unwrap().key_type);
-                        let existing_count = known_hosts.find_entries(&hostname, port, kt.as_ref()).len();
+                        let kt = KeyType::from_openssh_str(
+                            &known_hosts.entries.last().unwrap().key_type,
+                        );
+                        let existing_count =
+                            known_hosts.find_entries(&hostname, port, kt.as_ref()).len();
                         if existing_count == 1 {
                             added += 1;
                         } else {
@@ -933,7 +943,10 @@ mod tests {
 
     #[test]
     fn test_format_hostname() {
-        assert_eq!(format_hostname_for_storage("example.com", None), "example.com");
+        assert_eq!(
+            format_hostname_for_storage("example.com", None),
+            "example.com"
+        );
         assert_eq!(
             format_hostname_for_storage("example.com", Some(22)),
             "example.com"

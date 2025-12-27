@@ -333,7 +333,10 @@ mod tests {
     #[test]
     fn test_truncate_string() {
         assert_eq!(truncate_string("short", 10), "short");
-        assert_eq!(truncate_string("this is a very long string", 10), "this is...");
+        assert_eq!(
+            truncate_string("this is a very long string", 10),
+            "this is..."
+        );
     }
 
     #[test]

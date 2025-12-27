@@ -84,7 +84,7 @@
 use crate::connection::{CommandResult, Connection, ExecuteOptions};
 use crate::modules::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
-    ModuleResult, ParamExt, ParallelizationHint,
+    ModuleResult, ParallelizationHint, ParamExt,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -365,28 +365,29 @@ impl NxosConfig {
             MatchMode::default()
         };
 
-        let backup_options = if let Some(serde_json::Value::Object(opts)) =
-            params.get("backup_options")
-        {
-            Some(BackupOptions {
-                dir_path: opts
-                    .get("dir_path")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                filename: opts
-                    .get("filename")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-            })
-        } else {
-            None
-        };
+        let backup_options =
+            if let Some(serde_json::Value::Object(opts)) = params.get("backup_options") {
+                Some(BackupOptions {
+                    dir_path: opts
+                        .get("dir_path")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    filename: opts
+                        .get("filename")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                })
+            } else {
+                None
+            };
 
         let diff_ignore_lines = params
             .get_vec_string("diff_ignore_lines")?
             .unwrap_or_default();
 
-        let timeout = params.get_i64("timeout")?.unwrap_or(NXAPI_DEFAULT_TIMEOUT as i64) as u64;
+        let timeout = params
+            .get_i64("timeout")?
+            .unwrap_or(NXAPI_DEFAULT_TIMEOUT as i64) as u64;
 
         Ok(Self {
             lines: params.get_vec_string("lines")?,
@@ -482,7 +483,13 @@ impl NxosConfigModule {
         let username = config
             .nxapi_username
             .clone()
-            .or_else(|| context.vars.get("ansible_user").and_then(|v| v.as_str()).map(String::from))
+            .or_else(|| {
+                context
+                    .vars
+                    .get("ansible_user")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
             .ok_or_else(|| {
                 ModuleError::MissingParameter(
                     "nxapi_username is required for NX-API transport".to_string(),
@@ -492,7 +499,13 @@ impl NxosConfigModule {
         let password = config
             .nxapi_password
             .clone()
-            .or_else(|| context.vars.get("ansible_password").and_then(|v| v.as_str()).map(String::from))
+            .or_else(|| {
+                context
+                    .vars
+                    .get("ansible_password")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
             .ok_or_else(|| {
                 ModuleError::MissingParameter(
                     "nxapi_password is required for NX-API transport".to_string(),
@@ -500,7 +513,11 @@ impl NxosConfigModule {
             })?;
 
         let port = config.effective_nxapi_port();
-        let scheme = if config.nxapi_use_ssl { "https" } else { "http" };
+        let scheme = if config.nxapi_use_ssl {
+            "https"
+        } else {
+            "http"
+        };
         let url = format!("{}://{}:{}/ins", scheme, host, port);
 
         // Build client with appropriate SSL settings
@@ -542,9 +559,7 @@ impl NxosConfigModule {
             .json(&request)
             .send()
             .await
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("NX-API request failed: {}", e))
-            })?;
+            .map_err(|e| ModuleError::ExecutionFailed(format!("NX-API request failed: {}", e)))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -612,9 +627,10 @@ impl NxosConfigModule {
         };
 
         // For show commands, we need cli_show type
-        let host = config.nxapi_host.as_ref().ok_or_else(|| {
-            ModuleError::MissingParameter("nxapi_host is required".to_string())
-        })?;
+        let host = config
+            .nxapi_host
+            .as_ref()
+            .ok_or_else(|| ModuleError::MissingParameter("nxapi_host is required".to_string()))?;
 
         let username = config.nxapi_username.as_ref().ok_or_else(|| {
             ModuleError::MissingParameter("nxapi_username is required".to_string())
@@ -625,7 +641,11 @@ impl NxosConfigModule {
         })?;
 
         let port = config.effective_nxapi_port();
-        let scheme = if config.nxapi_use_ssl { "https" } else { "http" };
+        let scheme = if config.nxapi_use_ssl {
+            "https"
+        } else {
+            "http"
+        };
         let url = format!("{}://{}:{}/ins", scheme, host, port);
 
         let client = if config.nxapi_use_ssl && !config.nxapi_validate_certs {
@@ -663,9 +683,7 @@ impl NxosConfigModule {
             .json(&request)
             .send()
             .await
-            .map_err(|e| {
-                ModuleError::ExecutionFailed(format!("NX-API request failed: {}", e))
-            })?;
+            .map_err(|e| ModuleError::ExecutionFailed(format!("NX-API request failed: {}", e)))?;
 
         if !response.status().is_success() {
             return Err(ModuleError::ExecutionFailed(format!(
@@ -680,9 +698,10 @@ impl NxosConfigModule {
 
         let output = match api_response.ins_api.outputs.output {
             NxApiOutputWrapper::Single(out) => out,
-            NxApiOutputWrapper::Multiple(outs) => outs.into_iter().next().ok_or_else(|| {
-                ModuleError::ExecutionFailed("Empty NX-API response".to_string())
-            })?,
+            NxApiOutputWrapper::Multiple(outs) => outs
+                .into_iter()
+                .next()
+                .ok_or_else(|| ModuleError::ExecutionFailed("Empty NX-API response".to_string()))?,
         };
 
         // Extract config from body
@@ -718,8 +737,7 @@ impl NxosConfigModule {
         } else {
             Err(ModuleError::ExecutionFailed(format!(
                 "Failed to create checkpoint '{}': {}",
-                checkpoint_name,
-                result.stderr
+                checkpoint_name, result.stderr
             )))
         }
     }
@@ -771,8 +789,7 @@ impl NxosConfigModule {
         } else {
             Err(ModuleError::ExecutionFailed(format!(
                 "Failed to rollback to checkpoint '{}': {}",
-                checkpoint_name,
-                result.stderr
+                checkpoint_name, result.stderr
             )))
         }
     }
@@ -861,8 +878,7 @@ impl NxosConfigModule {
         } else {
             Err(ModuleError::ExecutionFailed(format!(
                 "Failed to delete checkpoint '{}': {}",
-                checkpoint_name,
-                result.stderr
+                checkpoint_name, result.stderr
             )))
         }
     }
@@ -911,10 +927,7 @@ impl NxosConfigModule {
         let mut applied_commands = Vec::new();
 
         // Use configure terminal mode
-        let conf_cmd = format!(
-            "configure terminal ; {} ; end",
-            commands.join(" ; ")
-        );
+        let conf_cmd = format!("configure terminal ; {} ; end", commands.join(" ; "));
 
         let result = Self::execute_ssh_command(connection, &conf_cmd, context).await?;
 
@@ -1024,10 +1037,7 @@ impl NxosConfigModule {
         }
 
         // Clear existing config sections and apply new
-        let conf_cmd = format!(
-            "configure terminal ; {} ; end",
-            commands.join(" ; ")
-        );
+        let conf_cmd = format!("configure terminal ; {} ; end", commands.join(" ; "));
 
         let result = Self::execute_ssh_command(connection, &conf_cmd, context).await?;
 
@@ -1056,7 +1066,10 @@ impl NxosConfigModule {
             Self::execute_ssh_command(connection, "copy running-config startup-config", context)
                 .await?;
 
-        if result.success || result.stdout.contains("[OK]") || result.stdout.contains("Copy complete") {
+        if result.success
+            || result.stdout.contains("[OK]")
+            || result.stdout.contains("Copy complete")
+        {
             Ok(())
         } else {
             Err(ModuleError::ExecutionFailed(format!(
@@ -1067,10 +1080,7 @@ impl NxosConfigModule {
     }
 
     /// Save configuration via NX-API
-    async fn save_config_nxapi(
-        config: &NxosConfig,
-        context: &ModuleContext,
-    ) -> ModuleResult<()> {
+    async fn save_config_nxapi(config: &NxosConfig, context: &ModuleContext) -> ModuleResult<()> {
         Self::execute_nxapi_commands(
             config,
             &["copy running-config startup-config".to_string()],
@@ -1091,12 +1101,8 @@ impl NxosConfigModule {
         }
 
         let running_config = match config.transport {
-            NxosTransport::Ssh => {
-                Self::get_running_config_ssh(connection, config, context).await?
-            }
-            NxosTransport::NxApi => {
-                Self::get_running_config_nxapi(config, context).await?
-            }
+            NxosTransport::Ssh => Self::get_running_config_ssh(connection, config, context).await?,
+            NxosTransport::NxApi => Self::get_running_config_nxapi(config, context).await?,
         };
 
         // Determine backup path
@@ -1122,10 +1128,7 @@ impl NxosConfigModule {
         // Create backup directory if it doesn't exist
         if let Some(parent) = std::path::Path::new(&backup_path).parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                ModuleError::ExecutionFailed(format!(
-                    "Failed to create backup directory: {}",
-                    e
-                ))
+                ModuleError::ExecutionFailed(format!("Failed to create backup directory: {}", e))
             })?;
         }
 
@@ -1288,8 +1291,7 @@ impl NxosConfigModule {
                 }
                 changed = true;
             } else {
-                let (config_changed, applied) =
-                    Self::apply_config_nxapi(config, context).await?;
+                let (config_changed, applied) = Self::apply_config_nxapi(config, context).await?;
                 if config_changed {
                     messages.push(format!("Applied {} configuration commands", applied.len()));
                     data.insert("commands".to_string(), serde_json::json!(applied));
@@ -1369,9 +1371,7 @@ impl NxosConfigModule {
                     return Ok(None);
                 }
             }
-            NxosTransport::NxApi => {
-                Self::get_running_config_nxapi(&config, context).await?
-            }
+            NxosTransport::NxApi => Self::get_running_config_nxapi(&config, context).await?,
         };
 
         // Build proposed config lines
@@ -1645,10 +1645,7 @@ mod tests {
         );
 
         let config = NxosConfig::from_params(&params).unwrap();
-        assert_eq!(
-            config.checkpoint.as_ref().unwrap(),
-            "before_changes"
-        );
+        assert_eq!(config.checkpoint.as_ref().unwrap(), "before_changes");
         assert!(config.is_checkpoint_only());
     }
 
@@ -1661,10 +1658,7 @@ mod tests {
         );
 
         let config = NxosConfig::from_params(&params).unwrap();
-        assert_eq!(
-            config.rollback_to.as_ref().unwrap(),
-            "before_changes"
-        );
+        assert_eq!(config.rollback_to.as_ref().unwrap(), "before_changes");
         assert!(config.is_checkpoint_only());
     }
 

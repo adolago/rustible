@@ -59,7 +59,11 @@ pub trait StatePersistence: Send + Sync {
     fn get_task_records(&self, session_id: &str) -> StateResult<Vec<TaskStateRecord>>;
 
     /// Get task records for a host in a session
-    fn get_host_task_records(&self, session_id: &str, host: &str) -> StateResult<Vec<TaskStateRecord>>;
+    fn get_host_task_records(
+        &self,
+        session_id: &str,
+        host: &str,
+    ) -> StateResult<Vec<TaskStateRecord>>;
 }
 
 // ============================================================================
@@ -160,7 +164,9 @@ impl StatePersistence for JsonPersistence {
                     file_path: file_path.clone(),
                 },
             );
-            index.latest_by_playbook.insert(snapshot.playbook.clone(), snapshot.id.clone());
+            index
+                .latest_by_playbook
+                .insert(snapshot.playbook.clone(), snapshot.id.clone());
         }
 
         self.save_index()?;
@@ -217,7 +223,9 @@ impl StatePersistence for JsonPersistence {
             let mut index = self.index.write();
             if let Some(metadata) = index.snapshots.remove(snapshot_id) {
                 // Update latest_by_playbook if necessary
-                if index.latest_by_playbook.get(&metadata.playbook) == Some(&snapshot_id.to_string()) {
+                if index.latest_by_playbook.get(&metadata.playbook)
+                    == Some(&snapshot_id.to_string())
+                {
                     // Find the next most recent snapshot for this playbook
                     let next_latest = index
                         .snapshots
@@ -301,7 +309,11 @@ impl StatePersistence for JsonPersistence {
         Ok(tasks)
     }
 
-    fn get_host_task_records(&self, session_id: &str, host: &str) -> StateResult<Vec<TaskStateRecord>> {
+    fn get_host_task_records(
+        &self,
+        session_id: &str,
+        host: &str,
+    ) -> StateResult<Vec<TaskStateRecord>> {
         let tasks = self.get_task_records(session_id)?;
         Ok(tasks.into_iter().filter(|t| t.host == host).collect())
     }
@@ -351,7 +363,13 @@ impl SqlitePersistence {
         })
     }
 
-    fn load_from_file(path: &PathBuf) -> StateResult<(DashMap<String, StateSnapshot>, DashMap<String, Vec<TaskStateRecord>>, SqliteMetadata)> {
+    fn load_from_file(
+        path: &PathBuf,
+    ) -> StateResult<(
+        DashMap<String, StateSnapshot>,
+        DashMap<String, Vec<TaskStateRecord>>,
+        SqliteMetadata,
+    )> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
 
@@ -389,12 +407,14 @@ impl SqlitePersistence {
             metadata: &'a SqliteMetadata,
         }
 
-        let snapshots: HashMap<String, StateSnapshot> = self.snapshots
+        let snapshots: HashMap<String, StateSnapshot> = self
+            .snapshots
             .iter()
             .map(|r| (r.key().clone(), r.value().clone()))
             .collect();
 
-        let tasks: HashMap<String, Vec<TaskStateRecord>> = self.tasks
+        let tasks: HashMap<String, Vec<TaskStateRecord>> = self
+            .tasks
             .iter()
             .map(|r| (r.key().clone(), r.value().clone()))
             .collect();
@@ -419,7 +439,9 @@ impl StatePersistence for SqlitePersistence {
 
         {
             let mut metadata = self.metadata.write();
-            metadata.latest_by_playbook.insert(snapshot.playbook.clone(), snapshot.id.clone());
+            metadata
+                .latest_by_playbook
+                .insert(snapshot.playbook.clone(), snapshot.id.clone());
             metadata.snapshot_count += 1;
         }
 
@@ -434,10 +456,8 @@ impl StatePersistence for SqlitePersistence {
     }
 
     fn list_snapshots(&self) -> StateResult<Vec<StateSnapshot>> {
-        let mut snapshots: Vec<StateSnapshot> = self.snapshots
-            .iter()
-            .map(|r| r.value().clone())
-            .collect();
+        let mut snapshots: Vec<StateSnapshot> =
+            self.snapshots.iter().map(|r| r.value().clone()).collect();
 
         snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         Ok(snapshots)
@@ -455,16 +475,20 @@ impl StatePersistence for SqlitePersistence {
     fn delete_snapshot(&self, snapshot_id: &str) -> StateResult<()> {
         if let Some((_, snapshot)) = self.snapshots.remove(snapshot_id) {
             let mut metadata = self.metadata.write();
-            if metadata.latest_by_playbook.get(&snapshot.playbook) == Some(&snapshot_id.to_string()) {
+            if metadata.latest_by_playbook.get(&snapshot.playbook) == Some(&snapshot_id.to_string())
+            {
                 // Find next latest
-                let next_latest = self.snapshots
+                let next_latest = self
+                    .snapshots
                     .iter()
                     .filter(|r| r.value().playbook == snapshot.playbook)
                     .max_by_key(|r| r.value().created_at)
                     .map(|r| r.key().clone());
 
                 if let Some(next_id) = next_latest {
-                    metadata.latest_by_playbook.insert(snapshot.playbook.clone(), next_id);
+                    metadata
+                        .latest_by_playbook
+                        .insert(snapshot.playbook.clone(), next_id);
                 } else {
                     metadata.latest_by_playbook.remove(&snapshot.playbook);
                 }
@@ -478,7 +502,8 @@ impl StatePersistence for SqlitePersistence {
         let before_dt: DateTime<Utc> = before.into();
         let mut removed = 0;
 
-        let to_remove: Vec<String> = self.snapshots
+        let to_remove: Vec<String> = self
+            .snapshots
             .iter()
             .filter(|r| r.value().created_at < before_dt)
             .map(|r| r.key().clone())
@@ -508,13 +533,18 @@ impl StatePersistence for SqlitePersistence {
     }
 
     fn get_task_records(&self, session_id: &str) -> StateResult<Vec<TaskStateRecord>> {
-        Ok(self.tasks
+        Ok(self
+            .tasks
             .get(session_id)
             .map(|r| r.value().clone())
             .unwrap_or_default())
     }
 
-    fn get_host_task_records(&self, session_id: &str, host: &str) -> StateResult<Vec<TaskStateRecord>> {
+    fn get_host_task_records(
+        &self,
+        session_id: &str,
+        host: &str,
+    ) -> StateResult<Vec<TaskStateRecord>> {
         let tasks = self.get_task_records(session_id)?;
         Ok(tasks.into_iter().filter(|t| t.host == host).collect())
     }
@@ -551,7 +581,8 @@ impl Default for MemoryPersistence {
 impl StatePersistence for MemoryPersistence {
     fn save_snapshot(&self, snapshot: &StateSnapshot) -> StateResult<()> {
         self.snapshots.insert(snapshot.id.clone(), snapshot.clone());
-        self.latest_by_playbook.insert(snapshot.playbook.clone(), snapshot.id.clone());
+        self.latest_by_playbook
+            .insert(snapshot.playbook.clone(), snapshot.id.clone());
         Ok(())
     }
 
@@ -563,10 +594,8 @@ impl StatePersistence for MemoryPersistence {
     }
 
     fn list_snapshots(&self) -> StateResult<Vec<StateSnapshot>> {
-        let mut snapshots: Vec<StateSnapshot> = self.snapshots
-            .iter()
-            .map(|r| r.value().clone())
-            .collect();
+        let mut snapshots: Vec<StateSnapshot> =
+            self.snapshots.iter().map(|r| r.value().clone()).collect();
 
         snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         Ok(snapshots)
@@ -574,7 +603,10 @@ impl StatePersistence for MemoryPersistence {
 
     fn get_latest_snapshot(&self, playbook: &str) -> StateResult<Option<StateSnapshot>> {
         if let Some(snapshot_id) = self.latest_by_playbook.get(playbook) {
-            Ok(self.snapshots.get(snapshot_id.value()).map(|r| r.value().clone()))
+            Ok(self
+                .snapshots
+                .get(snapshot_id.value())
+                .map(|r| r.value().clone()))
         } else {
             Ok(None)
         }
@@ -582,15 +614,22 @@ impl StatePersistence for MemoryPersistence {
 
     fn delete_snapshot(&self, snapshot_id: &str) -> StateResult<()> {
         if let Some((_, snapshot)) = self.snapshots.remove(snapshot_id) {
-            if self.latest_by_playbook.get(&snapshot.playbook).map(|r| r.value().clone()) == Some(snapshot_id.to_string()) {
-                let next_latest = self.snapshots
+            if self
+                .latest_by_playbook
+                .get(&snapshot.playbook)
+                .map(|r| r.value().clone())
+                == Some(snapshot_id.to_string())
+            {
+                let next_latest = self
+                    .snapshots
                     .iter()
                     .filter(|r| r.value().playbook == snapshot.playbook)
                     .max_by_key(|r| r.value().created_at)
                     .map(|r| r.key().clone());
 
                 if let Some(next_id) = next_latest {
-                    self.latest_by_playbook.insert(snapshot.playbook.clone(), next_id);
+                    self.latest_by_playbook
+                        .insert(snapshot.playbook.clone(), next_id);
                 } else {
                     self.latest_by_playbook.remove(&snapshot.playbook);
                 }
@@ -603,7 +642,8 @@ impl StatePersistence for MemoryPersistence {
         let before_dt: DateTime<Utc> = before.into();
         let mut removed = 0;
 
-        let to_remove: Vec<String> = self.snapshots
+        let to_remove: Vec<String> = self
+            .snapshots
             .iter()
             .filter(|r| r.value().created_at < before_dt)
             .map(|r| r.key().clone())
@@ -627,13 +667,18 @@ impl StatePersistence for MemoryPersistence {
     }
 
     fn get_task_records(&self, session_id: &str) -> StateResult<Vec<TaskStateRecord>> {
-        Ok(self.tasks
+        Ok(self
+            .tasks
             .get(session_id)
             .map(|r| r.value().clone())
             .unwrap_or_default())
     }
 
-    fn get_host_task_records(&self, session_id: &str, host: &str) -> StateResult<Vec<TaskStateRecord>> {
+    fn get_host_task_records(
+        &self,
+        session_id: &str,
+        host: &str,
+    ) -> StateResult<Vec<TaskStateRecord>> {
         let tasks = self.get_task_records(session_id)?;
         Ok(tasks.into_iter().filter(|t| t.host == host).collect())
     }
@@ -666,7 +711,9 @@ mod tests {
         let persistence = JsonPersistence::new(temp_dir.clone()).unwrap();
 
         let mut snapshot = StateSnapshot::new("session1", "test.yml");
-        snapshot.tasks.push(TaskStateRecord::new("task1", "host1", "apt"));
+        snapshot
+            .tasks
+            .push(TaskStateRecord::new("task1", "host1", "apt"));
 
         persistence.save_snapshot(&snapshot).unwrap();
 
@@ -715,7 +762,9 @@ mod tests {
         let all_tasks = persistence.get_task_records("session1").unwrap();
         assert_eq!(all_tasks.len(), 3);
 
-        let host1_tasks = persistence.get_host_task_records("session1", "host1").unwrap();
+        let host1_tasks = persistence
+            .get_host_task_records("session1", "host1")
+            .unwrap();
         assert_eq!(host1_tasks.len(), 2);
     }
 }

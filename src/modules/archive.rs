@@ -274,7 +274,9 @@ impl ArchiveModule {
                 total_size += meta.len();
 
                 zip.start_file(relative_str.as_ref(), options)
-                    .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to add file: {}", e)))?;
+                    .map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to add file: {}", e))
+                    })?;
 
                 let mut file = File::open(file_path)?;
                 let mut buffer = Vec::new();
@@ -283,8 +285,9 @@ impl ArchiveModule {
             } else if file_path.is_dir() && file_path != source {
                 // Add directory entries with trailing slash
                 let dir_name = format!("{}/", relative_str);
-                zip.add_directory(&dir_name, options)
-                    .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to add directory: {}", e)))?;
+                zip.add_directory(&dir_name, options).map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to add directory: {}", e))
+                })?;
             }
         }
 
@@ -452,9 +455,8 @@ impl Module for ArchiveModule {
         let force = params.get_bool_or("force", true);
 
         // Get exclusion patterns
-        let exclude_patterns: Vec<String> = params
-            .get_vec_string("exclude_path")?
-            .unwrap_or_default();
+        let exclude_patterns: Vec<String> =
+            params.get_vec_string("exclude_path")?.unwrap_or_default();
 
         // Check if destination already exists
         if dest.exists() && !force {
@@ -479,15 +481,29 @@ impl Module for ArchiveModule {
 
         // Create the archive
         let stats = match format {
-            ArchiveFormat::Tar => {
-                Self::create_tar_archive(source, dest, false, compression_level, &exclude_patterns, remove_source)?
-            }
-            ArchiveFormat::TarGz => {
-                Self::create_tar_archive(source, dest, true, compression_level, &exclude_patterns, remove_source)?
-            }
-            ArchiveFormat::Zip => {
-                Self::create_zip_archive(source, dest, compression_level, &exclude_patterns, remove_source)?
-            }
+            ArchiveFormat::Tar => Self::create_tar_archive(
+                source,
+                dest,
+                false,
+                compression_level,
+                &exclude_patterns,
+                remove_source,
+            )?,
+            ArchiveFormat::TarGz => Self::create_tar_archive(
+                source,
+                dest,
+                true,
+                compression_level,
+                &exclude_patterns,
+                remove_source,
+            )?,
+            ArchiveFormat::Zip => Self::create_zip_archive(
+                source,
+                dest,
+                compression_level,
+                &exclude_patterns,
+                remove_source,
+            )?,
         };
 
         // Compute checksum if requested
@@ -556,11 +572,15 @@ impl Module for ArchiveModule {
             "archive: absent".to_string()
         };
 
-        let exclude_patterns: Vec<String> = params.get_vec_string("exclude_path")?.unwrap_or_default();
+        let exclude_patterns: Vec<String> =
+            params.get_vec_string("exclude_path")?.unwrap_or_default();
 
         let after = if source.exists() {
             let file_count = Self::collect_files(source, &exclude_patterns)?.len();
-            format!("archive: {} ({} files from {})", dest_path, file_count, source_path)
+            format!(
+                "archive: {} ({} files from {})",
+                dest_path, file_count, source_path
+            )
         } else {
             format!("archive: {} (source not found)", dest_path)
         };

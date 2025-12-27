@@ -48,7 +48,7 @@
 //! - Caching for improved performance
 //! - Network and disk information
 
-use super::config::{PluginConfig, PluginConfigError, sanitize_group_name};
+use super::config::{sanitize_group_name, PluginConfig, PluginConfigError};
 use super::{DynamicInventoryPlugin, PluginOption, PluginOptionType};
 use crate::inventory::{Group, Host, Inventory, InventoryError, InventoryResult};
 use async_trait::async_trait;
@@ -451,7 +451,10 @@ impl GcpPlugin {
         let mut groups = vec!["gcp".to_string(), "gcp_compute".to_string()];
 
         // Add project group
-        groups.push(format!("project_{}", sanitize_group_name(&instance.project)));
+        groups.push(format!(
+            "project_{}",
+            sanitize_group_name(&instance.project)
+        ));
 
         // Add zone group
         groups.push(format!("zone_{}", sanitize_group_name(&instance.zone)));

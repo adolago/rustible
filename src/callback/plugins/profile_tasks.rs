@@ -319,8 +319,9 @@ impl ProfileState {
         let mut aggregated: HashMap<String, AggregatedTaskTiming> = HashMap::new();
 
         for timing in &self.task_timings {
-            let entry = aggregated.entry(timing.task_name.clone()).or_insert_with(|| {
-                AggregatedTaskTiming {
+            let entry = aggregated
+                .entry(timing.task_name.clone())
+                .or_insert_with(|| AggregatedTaskTiming {
                     task_name: timing.task_name.clone(),
                     total_duration: Duration::ZERO,
                     min_duration: timing.duration,
@@ -328,8 +329,7 @@ impl ProfileState {
                     host_count: 0,
                     first_completed: timing.completed_at,
                     host_timings: Vec::new(),
-                }
-            });
+                });
 
             entry.total_duration += timing.duration;
             entry.min_duration = entry.min_duration.min(timing.duration);
@@ -540,7 +540,12 @@ impl ProfileTasksCallback {
 
         // Timestamp
         if state.config.show_timestamp {
-            output.push_str(&timing.completed_at.format("%A %d %B %Y  %H:%M:%S %z").to_string());
+            output.push_str(
+                &timing
+                    .completed_at
+                    .format("%A %d %B %Y  %H:%M:%S %z")
+                    .to_string(),
+            );
         }
 
         // Duration with elapsed
@@ -590,9 +595,13 @@ impl ProfileTasksCallback {
                     .bold()
             );
         } else {
-            println!("===============================================================================");
+            println!(
+                "==============================================================================="
+            );
             println!("Profile Tasks Summary");
-            println!("===============================================================================");
+            println!(
+                "==============================================================================="
+            );
         }
 
         // Task timings
@@ -610,7 +619,12 @@ impl ProfileTasksCallback {
             if state.config.use_colors {
                 let colored_duration =
                     colorize_duration(task.max_duration, &duration_str, &state.config);
-                println!("{} {} {}", task_name, dashes.bright_black(), colored_duration);
+                println!(
+                    "{} {} {}",
+                    task_name,
+                    dashes.bright_black(),
+                    colored_duration
+                );
             } else {
                 println!("{} {} {}", task_name, dashes, duration_str);
             }
@@ -1217,7 +1231,10 @@ mod tests {
 
         let recommendations = profiler.get_recommendations();
         assert!(!recommendations.is_empty());
-        assert_eq!(recommendations[0].severity, RecommendationSeverity::Critical);
+        assert_eq!(
+            recommendations[0].severity,
+            RecommendationSeverity::Critical
+        );
     }
 
     #[test]

@@ -3562,14 +3562,19 @@ async fn test_user_check_root_exists() {
     // Mock id command to succeed (root exists)
     mock.set_command_result(
         "id 'root'",
-        CommandResult::success("uid=0(root) gid=0(root) groups=0(root)".to_string(), String::new()),
+        CommandResult::success(
+            "uid=0(root) gid=0(root) groups=0(root)".to_string(),
+            String::new(),
+        ),
     );
 
     let mut params = HashMap::new();
     params.insert("name".to_string(), serde_json::json!("root"));
     params.insert("state".to_string(), serde_json::json!("present"));
 
-    let context = ModuleContext::default().with_check_mode(true).with_connection(mock);
+    let context = ModuleContext::default()
+        .with_check_mode(true)
+        .with_connection(mock);
     let result = module.check(&params, &context).unwrap();
 
     // Root exists, so in check mode for present state should be ok
@@ -3635,7 +3640,9 @@ async fn test_user_with_all_params() {
     params.insert("create_home".to_string(), serde_json::json!(true));
     params.insert("system".to_string(), serde_json::json!(false));
 
-    let context = ModuleContext::default().with_check_mode(true).with_connection(mock);
+    let context = ModuleContext::default()
+        .with_check_mode(true)
+        .with_connection(mock);
     let result = module.check(&params, &context);
 
     // Should parse all params correctly
@@ -3662,7 +3669,9 @@ async fn test_user_state_values() {
     params.insert("name".to_string(), serde_json::json!("testuser"));
     params.insert("state".to_string(), serde_json::json!("present"));
 
-    let context = ModuleContext::default().with_check_mode(true).with_connection(mock);
+    let context = ModuleContext::default()
+        .with_check_mode(true)
+        .with_connection(mock);
     let result = module.check(&params, &context);
 
     assert!(result.is_ok());

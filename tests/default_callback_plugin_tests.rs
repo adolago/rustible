@@ -19,8 +19,8 @@ use std::time::Duration;
 use colored::control::{set_override, unset_override};
 use colored::{Color, Colorize};
 use parking_lot::RwLock;
-use serial_test::serial;
 use serde::{Deserialize, Serialize};
+use serial_test::serial;
 
 // ============================================================================
 // Mock Writer for Capturing Output

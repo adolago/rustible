@@ -94,7 +94,7 @@
 use crate::connection::{CommandResult, Connection, ExecuteOptions};
 use crate::modules::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
-    ModuleResult, ParamExt, ParallelizationHint,
+    ModuleResult, ParallelizationHint, ParamExt,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -441,22 +441,21 @@ impl EosConfig {
             DiffAgainst::default()
         };
 
-        let backup_options = if let Some(serde_json::Value::Object(opts)) =
-            params.get("backup_options")
-        {
-            Some(BackupOptions {
-                dir_path: opts
-                    .get("dir_path")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                filename: opts
-                    .get("filename")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-            })
-        } else {
-            None
-        };
+        let backup_options =
+            if let Some(serde_json::Value::Object(opts)) = params.get("backup_options") {
+                Some(BackupOptions {
+                    dir_path: opts
+                        .get("dir_path")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    filename: opts
+                        .get("filename")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                })
+            } else {
+                None
+            };
 
         let diff_ignore_lines = params
             .get_vec_string("diff_ignore_lines")?
@@ -673,9 +672,9 @@ impl EosConfigModule {
             )));
         }
 
-        eapi_response.result.ok_or_else(|| {
-            ModuleError::ExecutionFailed("eAPI returned no result".to_string())
-        })
+        eapi_response
+            .result
+            .ok_or_else(|| ModuleError::ExecutionFailed("eAPI returned no result".to_string()))
     }
 
     /// Execute a single eAPI command and return output
@@ -941,7 +940,9 @@ impl EosConfigModule {
                 session_name
             )));
         } else {
-            commands.push(EapiCommand::Simple("configure replace terminal:".to_string()));
+            commands.push(EapiCommand::Simple(
+                "configure replace terminal:".to_string(),
+            ));
         }
 
         // Add configuration lines
@@ -1240,7 +1241,10 @@ impl EosConfigModule {
                         // Include session diff if available
                         if let Some(diff_text) = session_diff {
                             if !diff_text.is_empty() {
-                                data.insert("session_diff".to_string(), serde_json::json!(diff_text));
+                                data.insert(
+                                    "session_diff".to_string(),
+                                    serde_json::json!(diff_text),
+                                );
                             }
                         }
                     }
@@ -1255,10 +1259,13 @@ impl EosConfigModule {
                 let diff_details = generate_unified_diff(&before, &after);
 
                 if !diff_details.is_empty() {
-                    diff_output = Some(Diff::new(
-                        format!("{} lines", before.lines().count()),
-                        format!("{} lines", after.lines().count()),
-                    ).with_details(diff_details));
+                    diff_output = Some(
+                        Diff::new(
+                            format!("{} lines", before.lines().count()),
+                            format!("{} lines", after.lines().count()),
+                        )
+                        .with_details(diff_details),
+                    );
                 }
             }
         }
@@ -1340,15 +1347,17 @@ impl EosConfigModule {
 
         // Generate diff output
         if changed && !context.check_mode {
-            let after =
-                Self::get_running_config_ssh(connection.as_ref(), config, context).await?;
+            let after = Self::get_running_config_ssh(connection.as_ref(), config, context).await?;
             let diff_details = generate_unified_diff(&before_config, &after);
 
             if !diff_details.is_empty() {
-                diff_output = Some(Diff::new(
-                    format!("{} lines", before_config.lines().count()),
-                    format!("{} lines", after.lines().count()),
-                ).with_details(diff_details));
+                diff_output = Some(
+                    Diff::new(
+                        format!("{} lines", before_config.lines().count()),
+                        format!("{} lines", after.lines().count()),
+                    )
+                    .with_details(diff_details),
+                );
             }
         }
 

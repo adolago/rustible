@@ -282,13 +282,7 @@ async fn test_russh_execute_batch() {
     };
 
     // Test batch execution with multiple commands
-    let commands: &[&str] = &[
-        "echo cmd1",
-        "echo cmd2",
-        "hostname",
-        "date +%s",
-        "whoami",
-    ];
+    let commands: &[&str] = &["echo cmd1", "echo cmd2", "hostname", "date +%s", "whoami"];
 
     println!("  Executing {} commands in parallel...", commands.len());
     let start = Instant::now();

@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 
-use super::{StateSnapshot, TaskStateRecord, TaskStatus, HostState, ExecutionStats};
+use super::{ExecutionStats, HostState, StateSnapshot, TaskStateRecord, TaskStatus};
 
 /// The diff engine for comparing state snapshots
 pub struct DiffEngine {
@@ -417,12 +417,36 @@ impl DiffReport {
     /// Calculate the summary from changes
     pub fn calculate_summary(&mut self) {
         self.summary = DiffSummary {
-            tasks_added: self.task_changes.iter().filter(|c| c.change_type == ChangeType::Added).count(),
-            tasks_removed: self.task_changes.iter().filter(|c| c.change_type == ChangeType::Removed).count(),
-            tasks_modified: self.task_changes.iter().filter(|c| c.change_type == ChangeType::Modified).count(),
-            hosts_added: self.host_changes.iter().filter(|c| c.change_type == ChangeType::Added).count(),
-            hosts_removed: self.host_changes.iter().filter(|c| c.change_type == ChangeType::Removed).count(),
-            hosts_modified: self.host_changes.iter().filter(|c| c.change_type == ChangeType::Modified).count(),
+            tasks_added: self
+                .task_changes
+                .iter()
+                .filter(|c| c.change_type == ChangeType::Added)
+                .count(),
+            tasks_removed: self
+                .task_changes
+                .iter()
+                .filter(|c| c.change_type == ChangeType::Removed)
+                .count(),
+            tasks_modified: self
+                .task_changes
+                .iter()
+                .filter(|c| c.change_type == ChangeType::Modified)
+                .count(),
+            hosts_added: self
+                .host_changes
+                .iter()
+                .filter(|c| c.change_type == ChangeType::Added)
+                .count(),
+            hosts_removed: self
+                .host_changes
+                .iter()
+                .filter(|c| c.change_type == ChangeType::Removed)
+                .count(),
+            hosts_modified: self
+                .host_changes
+                .iter()
+                .filter(|c| c.change_type == ChangeType::Modified)
+                .count(),
             has_changes: !self.task_changes.is_empty() || !self.host_changes.is_empty(),
         };
     }
@@ -525,7 +549,10 @@ impl DiffReport {
             output.push_str(&format!("  Skipped: {:+}\n", self.stats_diff.skipped_delta));
         }
         if self.stats_diff.duration_delta_ms != 0 {
-            output.push_str(&format!("  Duration: {:+}ms\n", self.stats_diff.duration_delta_ms));
+            output.push_str(&format!(
+                "  Duration: {:+}ms\n",
+                self.stats_diff.duration_delta_ms
+            ));
         }
 
         output
@@ -664,7 +691,8 @@ mod tests {
         let old = create_test_snapshot("old", "test.yml");
         let mut new = create_test_snapshot("new", "test.yml");
 
-        new.tasks.push(TaskStateRecord::new("task1", "host1", "apt"));
+        new.tasks
+            .push(TaskStateRecord::new("task1", "host1", "apt"));
 
         let report = engine.diff(&old, &new);
         assert!(report.has_changes());
@@ -678,7 +706,8 @@ mod tests {
         let mut old = create_test_snapshot("old", "test.yml");
         let new = create_test_snapshot("new", "test.yml");
 
-        old.tasks.push(TaskStateRecord::new("task1", "host1", "apt"));
+        old.tasks
+            .push(TaskStateRecord::new("task1", "host1", "apt"));
 
         let report = engine.diff(&old, &new);
         assert!(report.has_changes());
@@ -743,9 +772,12 @@ mod tests {
         let mut old = create_test_snapshot("old", "test.yml");
         let mut new = create_test_snapshot("new", "test.yml");
 
-        old.tasks.push(TaskStateRecord::new("task1", "host1", "apt"));
-        new.tasks.push(TaskStateRecord::new("task1", "host1", "apt"));
-        new.tasks.push(TaskStateRecord::new("task2", "host1", "service"));
+        old.tasks
+            .push(TaskStateRecord::new("task1", "host1", "apt"));
+        new.tasks
+            .push(TaskStateRecord::new("task1", "host1", "apt"));
+        new.tasks
+            .push(TaskStateRecord::new("task2", "host1", "service"));
 
         let report = engine.diff(&old, &new);
         let formatted = report.format_detailed();

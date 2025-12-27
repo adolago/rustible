@@ -69,9 +69,11 @@ impl BreakpointCondition {
     /// Evaluate the condition against the current context
     pub fn evaluate(&self, context: &BreakpointContext) -> bool {
         match self {
-            BreakpointCondition::VarEquals { name, value } => {
-                context.variables.get(name).map(|v| v == value).unwrap_or(false)
-            }
+            BreakpointCondition::VarEquals { name, value } => context
+                .variables
+                .get(name)
+                .map(|v| v == value)
+                .unwrap_or(false),
             BreakpointCondition::VarDefined(name) => context.variables.contains_key(name),
             BreakpointCondition::VarUndefined(name) => !context.variables.contains_key(name),
             BreakpointCondition::Expression(expr) => {
@@ -79,12 +81,8 @@ impl BreakpointCondition {
                 // For complex expressions, would need full template engine
                 Self::evaluate_simple_expression(expr, &context.variables)
             }
-            BreakpointCondition::All(conditions) => {
-                conditions.iter().all(|c| c.evaluate(context))
-            }
-            BreakpointCondition::Any(conditions) => {
-                conditions.iter().any(|c| c.evaluate(context))
-            }
+            BreakpointCondition::All(conditions) => conditions.iter().all(|c| c.evaluate(context)),
+            BreakpointCondition::Any(conditions) => conditions.iter().any(|c| c.evaluate(context)),
             BreakpointCondition::Not(condition) => !condition.evaluate(context),
             BreakpointCondition::Always => true,
         }
@@ -95,7 +93,10 @@ impl BreakpointCondition {
         let expr = expr.trim();
 
         // Handle simple variable checks
-        if let Some(var_name) = expr.strip_prefix("defined(").and_then(|s| s.strip_suffix(')')) {
+        if let Some(var_name) = expr
+            .strip_prefix("defined(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
             return vars.contains_key(var_name.trim());
         }
 
@@ -122,9 +123,7 @@ impl BreakpointCondition {
         }
 
         // Handle boolean variable
-        vars.get(expr)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+        vars.get(expr).and_then(|v| v.as_bool()).unwrap_or(false)
     }
 }
 
@@ -289,26 +288,30 @@ impl Breakpoint {
 
         // Check type-specific matching
         let type_matches = match &self.breakpoint_type {
-            BreakpointType::Task => {
-                self.pattern.as_ref().map_or(false, |p| {
-                    context.task.as_ref().map_or(false, |t| Self::pattern_matches(p, t))
-                })
-            }
-            BreakpointType::Host => {
-                self.pattern.as_ref().map_or(false, |p| {
-                    context.host.as_ref().map_or(false, |h| Self::pattern_matches(p, h))
-                })
-            }
-            BreakpointType::Module => {
-                self.pattern.as_ref().map_or(false, |p| {
-                    context.module.as_ref().map_or(false, |m| Self::pattern_matches(p, m))
-                })
-            }
-            BreakpointType::Play => {
-                self.pattern.as_ref().map_or(false, |p| {
-                    context.play.as_ref().map_or(false, |pl| Self::pattern_matches(p, pl))
-                })
-            }
+            BreakpointType::Task => self.pattern.as_ref().map_or(false, |p| {
+                context
+                    .task
+                    .as_ref()
+                    .map_or(false, |t| Self::pattern_matches(p, t))
+            }),
+            BreakpointType::Host => self.pattern.as_ref().map_or(false, |p| {
+                context
+                    .host
+                    .as_ref()
+                    .map_or(false, |h| Self::pattern_matches(p, h))
+            }),
+            BreakpointType::Module => self.pattern.as_ref().map_or(false, |p| {
+                context
+                    .module
+                    .as_ref()
+                    .map_or(false, |m| Self::pattern_matches(p, m))
+            }),
+            BreakpointType::Play => self.pattern.as_ref().map_or(false, |p| {
+                context
+                    .play
+                    .as_ref()
+                    .map_or(false, |pl| Self::pattern_matches(p, pl))
+            }),
             BreakpointType::TaskNumber => {
                 self.task_number.map_or(false, |n| context.task_number == n)
             }
@@ -324,7 +327,9 @@ impl Breakpoint {
         }
 
         // Check condition if present
-        self.condition.as_ref().map_or(true, |c| c.evaluate(context))
+        self.condition
+            .as_ref()
+            .map_or(true, |c| c.evaluate(context))
     }
 
     /// Check if a pattern matches a value (supports wildcards)
@@ -362,13 +367,31 @@ impl Breakpoint {
 
         match &self.breakpoint_type {
             BreakpointType::Task => {
-                format!("[{}] {} Task: {} {}", self.id, status, self.pattern.as_deref().unwrap_or("*"), desc)
+                format!(
+                    "[{}] {} Task: {} {}",
+                    self.id,
+                    status,
+                    self.pattern.as_deref().unwrap_or("*"),
+                    desc
+                )
             }
             BreakpointType::Host => {
-                format!("[{}] {} Host: {} {}", self.id, status, self.pattern.as_deref().unwrap_or("*"), desc)
+                format!(
+                    "[{}] {} Host: {} {}",
+                    self.id,
+                    status,
+                    self.pattern.as_deref().unwrap_or("*"),
+                    desc
+                )
             }
             BreakpointType::TaskNumber => {
-                format!("[{}] {} Task #: {} {}", self.id, status, self.task_number.unwrap_or(0), desc)
+                format!(
+                    "[{}] {} Task #: {} {}",
+                    self.id,
+                    status,
+                    self.task_number.unwrap_or(0),
+                    desc
+                )
             }
             BreakpointType::OnFailure => {
                 format!("[{}] {} On failure {}", self.id, status, desc)
@@ -377,7 +400,10 @@ impl Breakpoint {
                 format!("[{}] {} On change {}", self.id, status, desc)
             }
             _ => {
-                format!("[{}] {} {:?} {}", self.id, status, self.breakpoint_type, desc)
+                format!(
+                    "[{}] {} {:?} {}",
+                    self.id, status, self.breakpoint_type, desc
+                )
             }
         }
     }
@@ -569,7 +595,10 @@ mod tests {
     #[test]
     fn test_breakpoint_condition() {
         let mut vars = HashMap::new();
-        vars.insert("env".to_string(), JsonValue::String("production".to_string()));
+        vars.insert(
+            "env".to_string(),
+            JsonValue::String("production".to_string()),
+        );
 
         let context = BreakpointContext::new()
             .with_task("Deploy")

@@ -40,7 +40,7 @@ pub use config::{DebugConfig, DebugConfigBuilder, DebugMode};
 pub use inspector::{
     InspectionResult, VariableInspector, VariableScope, VariableSource, VariableWatch,
 };
-pub use state_dump::{FailureContext, StateDump, StateDumper, StateDumpFormat};
+pub use state_dump::{FailureContext, StateDump, StateDumpFormat, StateDumper};
 pub use step_executor::{StepAction, StepExecutor, StepResult, StepState};
 pub use tracer::{
     ConnectionEvent, ConnectionEventType, ConnectionTracer, TraceEntry, TraceLevel, TraceSink,

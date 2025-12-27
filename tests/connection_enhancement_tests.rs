@@ -14,11 +14,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rustible::connection::{
+    // Retry types
+    BackoffStrategy,
     // Circuit breaker types
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitBreakerRegistry,
     CircuitState,
+    // Base types
+    ConnectionConfig,
+    ConnectionError,
     // Health monitoring types
     DegradationConfig,
     DegradationResult,
@@ -26,19 +31,14 @@ use rustible::connection::{
     HealthConfig,
     HealthMonitor,
     HealthStatus,
+    HostConfig,
     // Jump host types
     JumpHostChain,
     JumpHostConfig,
     JumpHostResolver,
-    MAX_JUMP_DEPTH,
-    // Retry types
-    BackoffStrategy,
     RetryPolicy,
     RetryStats,
-    // Base types
-    ConnectionConfig,
-    ConnectionError,
-    HostConfig,
+    MAX_JUMP_DEPTH,
 };
 
 // ============================================================================
@@ -103,8 +103,7 @@ mod circuit_breaker_tests {
 
     #[test]
     fn test_circuit_breaker_config_slow_responses() {
-        let config = CircuitBreakerConfig::new()
-            .count_slow_responses(Duration::from_secs(5));
+        let config = CircuitBreakerConfig::new().count_slow_responses(Duration::from_secs(5));
 
         assert!(config.count_slow_as_failure);
         assert_eq!(config.slow_threshold, Duration::from_secs(5));
@@ -112,27 +111,23 @@ mod circuit_breaker_tests {
 
     #[test]
     fn test_circuit_breaker_config_failure_rate() {
-        let config = CircuitBreakerConfig::new()
-            .with_failure_rate_threshold(0.5);
+        let config = CircuitBreakerConfig::new().with_failure_rate_threshold(0.5);
 
         assert_eq!(config.failure_rate_threshold, Some(0.5));
     }
 
     #[test]
     fn test_circuit_breaker_config_failure_rate_clamping() {
-        let config_high = CircuitBreakerConfig::new()
-            .with_failure_rate_threshold(1.5);
+        let config_high = CircuitBreakerConfig::new().with_failure_rate_threshold(1.5);
         assert_eq!(config_high.failure_rate_threshold, Some(1.0));
 
-        let config_low = CircuitBreakerConfig::new()
-            .with_failure_rate_threshold(-0.5);
+        let config_low = CircuitBreakerConfig::new().with_failure_rate_threshold(-0.5);
         assert_eq!(config_low.failure_rate_threshold, Some(0.0));
     }
 
     #[test]
     fn test_circuit_breaker_trips_after_failures() {
-        let config = CircuitBreakerConfig::new()
-            .with_failure_threshold(3);
+        let config = CircuitBreakerConfig::new().with_failure_threshold(3);
         let breaker = CircuitBreaker::new("test", config);
         let error = ConnectionError::ConnectionFailed("test failure".to_string());
 
@@ -153,8 +148,7 @@ mod circuit_breaker_tests {
 
     #[test]
     fn test_circuit_breaker_success_resets_failure_count() {
-        let config = CircuitBreakerConfig::new()
-            .with_failure_threshold(3);
+        let config = CircuitBreakerConfig::new().with_failure_threshold(3);
         let breaker = CircuitBreaker::new("test", config);
         let error = ConnectionError::ConnectionFailed("test".to_string());
 
@@ -190,8 +184,7 @@ mod circuit_breaker_tests {
 
     #[test]
     fn test_circuit_breaker_manual_reset() {
-        let config = CircuitBreakerConfig::new()
-            .with_failure_threshold(2);
+        let config = CircuitBreakerConfig::new().with_failure_threshold(2);
         let breaker = CircuitBreaker::new("test", config);
         let error = ConnectionError::ConnectionFailed("test".to_string());
 
@@ -352,9 +345,8 @@ mod circuit_breaker_tests {
 
     #[test]
     fn test_circuit_breaker_registry_reset_all() {
-        let registry = CircuitBreakerRegistry::new(
-            CircuitBreakerConfig::new().with_failure_threshold(2)
-        );
+        let registry =
+            CircuitBreakerRegistry::new(CircuitBreakerConfig::new().with_failure_threshold(2));
 
         let breaker1 = registry.get_or_create("host1");
         let breaker2 = registry.get_or_create("host2");
@@ -389,9 +381,8 @@ mod circuit_breaker_tests {
 
     #[test]
     fn test_circuit_breaker_registry_open_circuits() {
-        let registry = CircuitBreakerRegistry::new(
-            CircuitBreakerConfig::new().with_failure_threshold(1)
-        );
+        let registry =
+            CircuitBreakerRegistry::new(CircuitBreakerConfig::new().with_failure_threshold(1));
 
         let breaker1 = registry.get_or_create("host1");
         let _ = registry.get_or_create("host2");
@@ -445,8 +436,7 @@ mod health_check_tests {
 
     #[test]
     fn test_health_config_disable_proactive_checks() {
-        let config = HealthConfig::new()
-            .disable_proactive_checks();
+        let config = HealthConfig::new().disable_proactive_checks();
 
         assert!(!config.enable_proactive_checks);
     }
@@ -520,11 +510,7 @@ mod health_check_tests {
             ..HealthConfig::default()
         };
 
-        let monitor = HealthMonitor::new(
-            "test",
-            config,
-            CircuitBreakerConfig::default(),
-        );
+        let monitor = HealthMonitor::new("test", config, CircuitBreakerConfig::default());
 
         // All successes -> Healthy
         for _ in 0..10 {
@@ -706,8 +692,14 @@ mod health_check_tests {
     fn test_degradation_config_default() {
         let config = DegradationConfig::default();
 
-        assert!(matches!(config.strategy, DegradationStrategy::RetryWithBackoff));
-        assert!(matches!(config.fallback_strategy, Some(DegradationStrategy::FailFast)));
+        assert!(matches!(
+            config.strategy,
+            DegradationStrategy::RetryWithBackoff
+        ));
+        assert!(matches!(
+            config.fallback_strategy,
+            Some(DegradationStrategy::FailFast)
+        ));
         assert_eq!(config.max_queue_size, 1000);
         assert_eq!(config.cache_timeout, Duration::from_secs(300));
         assert!(config.log_degradation);
@@ -720,7 +712,10 @@ mod health_check_tests {
             .with_fallback(DegradationStrategy::QueueForLater);
 
         assert!(matches!(config.strategy, DegradationStrategy::UseFallback));
-        assert!(matches!(config.fallback_strategy, Some(DegradationStrategy::QueueForLater)));
+        assert!(matches!(
+            config.fallback_strategy,
+            Some(DegradationStrategy::QueueForLater)
+        ));
     }
 
     #[test]
@@ -910,7 +905,10 @@ mod jump_host_tests {
 
         let host_config = jump_config.to_host_config();
 
-        assert_eq!(host_config.hostname, Some("bastion.example.com".to_string()));
+        assert_eq!(
+            host_config.hostname,
+            Some("bastion.example.com".to_string())
+        );
         assert_eq!(host_config.port, Some(2222));
         assert_eq!(host_config.user, Some("admin".to_string()));
         assert_eq!(host_config.identity_file, Some("/path/to/key".to_string()));
@@ -1195,7 +1193,10 @@ mod retry_tests {
         assert_eq!(policy.max_retries, 3);
         assert_eq!(policy.initial_delay, Duration::from_millis(500));
         assert_eq!(policy.max_delay, Duration::from_secs(30));
-        assert!(matches!(policy.strategy, BackoffStrategy::ExponentialWithJitter));
+        assert!(matches!(
+            policy.strategy,
+            BackoffStrategy::ExponentialWithJitter
+        ));
         assert!((policy.multiplier - 2.0).abs() < 0.001);
         assert!((policy.jitter - 0.25).abs() < 0.001);
         assert!(policy.attempt_timeout.is_none());
@@ -1494,9 +1495,7 @@ mod retry_tests {
     async fn test_retry_success_first_attempt() {
         let policy = RetryPolicy::new().with_max_retries(3);
 
-        let result = retry(&policy, || async {
-            Ok::<_, ConnectionError>(42)
-        }).await;
+        let result = retry(&policy, || async { Ok::<_, ConnectionError>(42) }).await;
 
         assert!(result.is_success());
         assert_eq!(result.attempts(), 1);
@@ -1522,7 +1521,8 @@ mod retry_tests {
                     Ok(42)
                 }
             }
-        }).await;
+        })
+        .await;
 
         assert!(result.is_success());
         assert_eq!(result.attempts(), 3); // 2 failures + 1 success
@@ -1538,7 +1538,8 @@ mod retry_tests {
 
         let result = retry(&policy, || async {
             Err::<i32, _>(ConnectionError::ConnectionFailed("permanent".to_string()))
-        }).await;
+        })
+        .await;
 
         assert!(!result.is_success());
         assert_eq!(result.attempts(), 3); // 1 initial + 2 retries
@@ -1551,7 +1552,8 @@ mod retry_tests {
 
         let result = retry(&policy, || async {
             Err::<i32, _>(ConnectionError::InvalidConfig("bad config".to_string()))
-        }).await;
+        })
+        .await;
 
         assert!(!result.is_success());
         assert_eq!(result.attempts(), 1); // Should stop immediately
@@ -1561,9 +1563,7 @@ mod retry_tests {
     async fn test_retry_simple() {
         let policy = RetryPolicy::new().with_max_retries(3);
 
-        let result = retry_simple(&policy, || async {
-            Ok::<_, ConnectionError>(42)
-        }).await;
+        let result = retry_simple(&policy, || async { Ok::<_, ConnectionError>(42) }).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 42);
@@ -1579,7 +1579,8 @@ mod retry_tests {
         let result = retry(&policy, || async {
             tokio::time::sleep(Duration::from_secs(1)).await;
             Ok::<_, ConnectionError>(42)
-        }).await;
+        })
+        .await;
 
         // Should timeout quickly
         assert!(start.elapsed() < Duration::from_secs(1));
@@ -1590,14 +1591,13 @@ mod retry_tests {
     async fn test_retry_result_into_result() {
         let policy = RetryPolicy::new();
 
-        let success = retry(&policy, || async {
-            Ok::<_, ConnectionError>(42)
-        }).await;
+        let success = retry(&policy, || async { Ok::<_, ConnectionError>(42) }).await;
         assert!(success.into_result().is_ok());
 
         let failure = retry(&policy, || async {
             Err::<i32, _>(ConnectionError::InvalidConfig("test".to_string()))
-        }).await;
+        })
+        .await;
         assert!(failure.into_result().is_err());
     }
 }
@@ -1613,8 +1613,7 @@ mod integration_tests {
     fn test_circuit_breaker_with_health_monitor() {
         // Create a health monitor that shares circuit breaker state
         let health_config = HealthConfig::default();
-        let cb_config = CircuitBreakerConfig::new()
-            .with_failure_threshold(3);
+        let cb_config = CircuitBreakerConfig::new().with_failure_threshold(3);
 
         let monitor = HealthMonitor::new("test-host", health_config, cb_config);
         let error = ConnectionError::ConnectionFailed("test".to_string());
@@ -1672,8 +1671,7 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_retry_with_circuit_breaker() {
-        let cb_config = CircuitBreakerConfig::new()
-            .with_failure_threshold(2);
+        let cb_config = CircuitBreakerConfig::new().with_failure_threshold(2);
         let breaker = Arc::new(CircuitBreaker::new("test", cb_config));
 
         let retry_policy = RetryPolicy::new()
@@ -1689,7 +1687,7 @@ mod integration_tests {
             async move {
                 if !breaker.can_attempt() {
                     return Err(ConnectionError::ConnectionFailed(
-                        "Circuit breaker open".to_string()
+                        "Circuit breaker open".to_string(),
                     ));
                 }
 
@@ -1698,7 +1696,8 @@ mod integration_tests {
                 breaker.record_failure(&error);
                 Err::<i32, _>(error)
             }
-        }).await;
+        })
+        .await;
 
         // After 2 failures, circuit should be open
         assert!(!result.is_success());
@@ -1807,11 +1806,7 @@ mod edge_case_tests {
             ..HealthConfig::default()
         };
 
-        let monitor = HealthMonitor::new(
-            "test",
-            config,
-            CircuitBreakerConfig::default(),
-        );
+        let monitor = HealthMonitor::new("test", config, CircuitBreakerConfig::default());
 
         // Add more samples than buffer size
         for i in 0..10 {
@@ -1831,7 +1826,8 @@ mod edge_case_tests {
         let result = rustible::connection::retry::retry(&policy, || {
             counter_clone.fetch_add(1, Ordering::SeqCst);
             async { Ok::<_, ConnectionError>(()) }
-        }).await;
+        })
+        .await;
 
         assert!(result.is_success());
         assert_eq!(counter.load(Ordering::SeqCst), 1);

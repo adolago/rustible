@@ -50,7 +50,11 @@ pub struct Claims {
 
 impl Claims {
     /// Create new claims for a user.
-    pub fn new(subject: impl Into<String>, expiration_secs: u64, issuer: impl Into<String>) -> Self {
+    pub fn new(
+        subject: impl Into<String>,
+        expiration_secs: u64,
+        issuer: impl Into<String>,
+    ) -> Self {
         let now = Utc::now();
         let exp = now + Duration::seconds(expiration_secs as i64);
 
@@ -105,13 +109,19 @@ impl JwtAuth {
     }
 
     /// Generate a new JWT token for a user.
-    pub fn generate_token(&self, subject: impl Into<String>) -> Result<String, jsonwebtoken::errors::Error> {
+    pub fn generate_token(
+        &self,
+        subject: impl Into<String>,
+    ) -> Result<String, jsonwebtoken::errors::Error> {
         let claims = Claims::new(subject, self.expiration_secs, &self.issuer);
         encode(&Header::default(), &claims, &self.encoding_key)
     }
 
     /// Generate a token with custom claims.
-    pub fn generate_token_with_claims(&self, claims: &Claims) -> Result<String, jsonwebtoken::errors::Error> {
+    pub fn generate_token_with_claims(
+        &self,
+        claims: &Claims,
+    ) -> Result<String, jsonwebtoken::errors::Error> {
         encode(&Header::default(), claims, &self.encoding_key)
     }
 
@@ -241,9 +251,7 @@ where
         let user = AuthenticatedUser::from_request_parts(parts, state).await?;
 
         if !user.claims.is_admin() {
-            return Err(ApiError::Forbidden(
-                "Admin privileges required".to_string(),
-            ));
+            return Err(ApiError::Forbidden("Admin privileges required".to_string()));
         }
 
         Ok(AdminUser {

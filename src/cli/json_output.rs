@@ -91,10 +91,7 @@ impl Default for JsonOutput {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum JsonEvent {
     /// Playbook started
-    PlaybookStart {
-        playbook: String,
-        timestamp: String,
-    },
+    PlaybookStart { playbook: String, timestamp: String },
 
     /// Playbook finished
     PlaybookEnd {
@@ -153,10 +150,7 @@ pub enum JsonEvent {
     },
 
     /// Warning message
-    Warning {
-        message: String,
-        timestamp: String,
-    },
+    Warning { message: String, timestamp: String },
 
     /// Debug message
     Debug {
@@ -396,9 +390,8 @@ pub fn json_error(message: &str) -> String {
         host: None,
         timestamp: timestamp(),
     };
-    serde_json::to_string_pretty(&event).unwrap_or_else(|_| {
-        format!("{{\"error\": \"{}\"}}", message.replace('"', "\\\""))
-    })
+    serde_json::to_string_pretty(&event)
+        .unwrap_or_else(|_| format!("{{\"error\": \"{}\"}}", message.replace('"', "\\\"")))
 }
 
 /// Create a simple JSON success response
@@ -409,7 +402,10 @@ pub fn json_success(message: &str) -> String {
         "timestamp": timestamp()
     });
     serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
-        format!("{{\"status\": \"success\", \"message\": \"{}\"}}", message.replace('"', "\\\""))
+        format!(
+            "{{\"status\": \"success\", \"message\": \"{}\"}}",
+            message.replace('"', "\\\"")
+        )
     })
 }
 

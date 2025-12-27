@@ -161,11 +161,7 @@ impl FactPipeline {
     }
 
     /// Gather facts for a single host
-    pub async fn gather_facts(
-        &self,
-        host: &str,
-        gather_fn: impl AsyncFactGatherer,
-    ) -> FactResult {
+    pub async fn gather_facts(&self, host: &str, gather_fn: impl AsyncFactGatherer) -> FactResult {
         let start = Instant::now();
 
         // Check cache first
@@ -211,9 +207,10 @@ impl FactPipeline {
                     let mut stats = self.stats.write();
                     stats.total_gathers += 1;
                     let gather_time_ms = start.elapsed().as_millis() as u64;
-                    stats.avg_gather_time_ms =
-                        (stats.avg_gather_time_ms * (stats.total_gathers - 1) as u64 + gather_time_ms)
-                            / stats.total_gathers as u64;
+                    stats.avg_gather_time_ms = (stats.avg_gather_time_ms
+                        * (stats.total_gathers - 1) as u64
+                        + gather_time_ms)
+                        / stats.total_gathers as u64;
                 }
 
                 FactResult {
@@ -245,10 +242,7 @@ impl FactPipeline {
                     facts: IndexMap::new(),
                     from_cache: false,
                     gather_time: start.elapsed(),
-                    error: Some(format!(
-                        "Timeout after {:?}",
-                        self.config.gather_timeout
-                    )),
+                    error: Some(format!("Timeout after {:?}", self.config.gather_timeout)),
                 }
             }
         };
@@ -257,11 +251,7 @@ impl FactPipeline {
     }
 
     /// Gather facts for multiple hosts concurrently
-    pub async fn gather_facts_parallel<F>(
-        &self,
-        hosts: &[String],
-        gather_fn: F,
-    ) -> Vec<FactResult>
+    pub async fn gather_facts_parallel<F>(&self, hosts: &[String], gather_fn: F) -> Vec<FactResult>
     where
         F: AsyncFactGathererFactory,
     {
@@ -276,10 +266,7 @@ impl FactPipeline {
             .collect()
             .await;
 
-        debug!(
-            "Gathered facts for {} hosts in parallel",
-            results.len()
-        );
+        debug!("Gathered facts for {} hosts in parallel", results.len());
 
         results
     }
@@ -337,11 +324,8 @@ impl FactPipeline {
                 };
 
                 let gatherer = gather_fn.create();
-                let result = tokio::time::timeout(
-                    timeout,
-                    gatherer.gather_facts(&host, &subset),
-                )
-                .await;
+                let result =
+                    tokio::time::timeout(timeout, gatherer.gather_facts(&host, &subset)).await;
 
                 drop(permit);
 
@@ -490,9 +474,7 @@ mod tests {
         };
         let pipeline = FactPipeline::new(config);
 
-        let result = pipeline
-            .gather_facts("test-host", SimpleFactGatherer)
-            .await;
+        let result = pipeline.gather_facts("test-host", SimpleFactGatherer).await;
 
         assert!(!result.from_cache);
         assert!(result.error.is_none());
@@ -509,15 +491,11 @@ mod tests {
         let pipeline = FactPipeline::new(config);
 
         // First gather
-        let result1 = pipeline
-            .gather_facts("test-host", SimpleFactGatherer)
-            .await;
+        let result1 = pipeline.gather_facts("test-host", SimpleFactGatherer).await;
         assert!(!result1.from_cache);
 
         // Second gather should come from cache
-        let result2 = pipeline
-            .gather_facts("test-host", SimpleFactGatherer)
-            .await;
+        let result2 = pipeline.gather_facts("test-host", SimpleFactGatherer).await;
         assert!(result2.from_cache);
 
         let stats = pipeline.stats();
@@ -562,9 +540,7 @@ mod tests {
         let pipeline = FactPipeline::new(config);
 
         // Gather and cache
-        let _ = pipeline
-            .gather_facts("test-host", SimpleFactGatherer)
-            .await;
+        let _ = pipeline.gather_facts("test-host", SimpleFactGatherer).await;
         assert_eq!(pipeline.cache_size(), 1);
 
         // Invalidate

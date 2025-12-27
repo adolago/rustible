@@ -248,8 +248,7 @@ impl CallbackConfig {
         if other.default_plugin != "default" {
             self.default_plugin = other.default_plugin;
         }
-        if !other.enabled_plugins.is_empty()
-            && other.enabled_plugins != vec!["default".to_string()]
+        if !other.enabled_plugins.is_empty() && other.enabled_plugins != vec!["default".to_string()]
         {
             self.enabled_plugins = other.enabled_plugins;
         }
@@ -342,7 +341,9 @@ impl PluginConfig {
 
     /// Get an option value as a string.
     pub fn get_string(&self, key: &str) -> Option<String> {
-        self.options.get(key).and_then(|v| v.as_str().map(String::from))
+        self.options
+            .get(key)
+            .and_then(|v| v.as_str().map(String::from))
     }
 
     /// Get an option value as a boolean.
@@ -551,9 +552,7 @@ impl CallbackConfigLoader {
                 // Try TOML first, then YAML
                 toml::from_str(&content)
                     .or_else(|_| serde_yaml::from_str(&content))
-                    .with_context(|| {
-                        format!("Failed to parse config file: {}", path.display())
-                    })?
+                    .with_context(|| format!("Failed to parse config file: {}", path.display()))?
             }
         };
 
@@ -628,8 +627,16 @@ impl CallbackConfigLoader {
             // Pattern: RUSTIBLE_CALLBACK_<PLUGIN>_<OPTION>
             if let Some(suffix) = key.strip_prefix(&format!("{}_", prefix)) {
                 // Skip non-plugin vars
-                if ["VERBOSITY", "SHOW_DIFF", "CHECK_MODE", "OUTPUT", "NO_COLOR", "ENABLED", "SHOW_TIMING"]
-                    .contains(&suffix)
+                if [
+                    "VERBOSITY",
+                    "SHOW_DIFF",
+                    "CHECK_MODE",
+                    "OUTPUT",
+                    "NO_COLOR",
+                    "ENABLED",
+                    "SHOW_TIMING",
+                ]
+                .contains(&suffix)
                 {
                     continue;
                 }

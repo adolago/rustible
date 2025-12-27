@@ -573,10 +573,7 @@ impl CircuitBreakerRegistry {
         breakers
             .entry(identifier.to_string())
             .or_insert_with(|| {
-                Arc::new(CircuitBreaker::new(
-                    identifier,
-                    self.default_config.clone(),
-                ))
+                Arc::new(CircuitBreaker::new(identifier, self.default_config.clone()))
             })
             .clone()
     }
@@ -600,11 +597,7 @@ impl CircuitBreakerRegistry {
 
     /// Get statistics for all circuit breakers.
     pub fn all_stats(&self) -> Vec<CircuitBreakerStats> {
-        self.breakers
-            .read()
-            .values()
-            .map(|b| b.stats())
-            .collect()
+        self.breakers.read().values().map(|b| b.stats()).collect()
     }
 
     /// Get identifiers of all open circuits.

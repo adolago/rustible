@@ -216,9 +216,7 @@ impl BatchProcessor {
         strategy: BatchStrategy,
     ) -> Result<BatchedOperation, String> {
         match strategy {
-            BatchStrategy::PackageList => {
-                self.create_package_batch(module, args, items, loop_var)
-            }
+            BatchStrategy::PackageList => self.create_package_batch(module, args, items, loop_var),
             BatchStrategy::CommandPipeline => {
                 self.create_command_pipeline(module, args, items, loop_var)
             }
@@ -242,10 +240,9 @@ impl BatchProcessor {
             .iter()
             .filter_map(|item| match item {
                 JsonValue::String(s) => Some(s.clone()),
-                JsonValue::Object(obj) => obj
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
+                JsonValue::Object(obj) => {
+                    obj.get("name").and_then(|v| v.as_str()).map(String::from)
+                }
                 _ => None,
             })
             .collect();
@@ -263,14 +260,24 @@ impl BatchProcessor {
                 // These accept name as a list
                 merged_args.insert(
                     "name".to_string(),
-                    JsonValue::Array(package_names.iter().map(|n| JsonValue::String(n.clone())).collect()),
+                    JsonValue::Array(
+                        package_names
+                            .iter()
+                            .map(|n| JsonValue::String(n.clone()))
+                            .collect(),
+                    ),
                 );
             }
             "pip" => {
                 // pip accepts name as list or string
                 merged_args.insert(
                     "name".to_string(),
-                    JsonValue::Array(package_names.iter().map(|n| JsonValue::String(n.clone())).collect()),
+                    JsonValue::Array(
+                        package_names
+                            .iter()
+                            .map(|n| JsonValue::String(n.clone()))
+                            .collect(),
+                    ),
                 );
             }
             _ => {
@@ -497,7 +504,10 @@ mod tests {
         let processor = BatchProcessor::new(BatchConfig::default());
 
         let mut args = IndexMap::new();
-        args.insert("state".to_string(), JsonValue::String("present".to_string()));
+        args.insert(
+            "state".to_string(),
+            JsonValue::String("present".to_string()),
+        );
 
         let items = vec![
             JsonValue::String("nginx".to_string()),
@@ -516,7 +526,10 @@ mod tests {
         let processor = BatchProcessor::new(BatchConfig::default());
 
         let mut args = IndexMap::new();
-        args.insert("state".to_string(), JsonValue::String("present".to_string()));
+        args.insert(
+            "state".to_string(),
+            JsonValue::String("present".to_string()),
+        );
 
         let items = vec![
             JsonValue::String("nginx".to_string()),

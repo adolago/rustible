@@ -96,7 +96,8 @@ impl TemplateStats {
     /// Record a render operation
     pub fn record_render(&self, duration_us: u64) {
         self.render_count.fetch_add(1, Ordering::Relaxed);
-        self.total_render_time_us.fetch_add(duration_us, Ordering::Relaxed);
+        self.total_render_time_us
+            .fetch_add(duration_us, Ordering::Relaxed);
     }
 
     /// Get average render time in microseconds
@@ -175,7 +176,9 @@ impl CompiledTemplate {
             match env.template_from_str(&self.source) {
                 Ok(_) => {
                     let compile_time = compile_start.elapsed().as_micros() as u64;
-                    self.stats.compile_time_us.store(compile_time, Ordering::Relaxed);
+                    self.stats
+                        .compile_time_us
+                        .store(compile_time, Ordering::Relaxed);
                     Ok(())
                 }
                 Err(e) => Err(e.to_string()),
@@ -195,11 +198,9 @@ impl CompiledTemplate {
     /// Check if template is valid (syntax check)
     pub fn validate(&self, env: &Environment<'_>) -> Result<(), String> {
         self.compiled
-            .get_or_init(|| {
-                match env.template_from_str(&self.source) {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(e.to_string()),
-                }
+            .get_or_init(|| match env.template_from_str(&self.source) {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e.to_string()),
             })
             .clone()
     }
@@ -235,9 +236,9 @@ impl Default for TemplateCacheConfig {
     fn default() -> Self {
         Self {
             max_templates: 10_000,
-            max_memory_bytes: 64 * 1024 * 1024, // 64 MB
+            max_memory_bytes: 64 * 1024 * 1024,      // 64 MB
             template_ttl: Duration::from_secs(3600), // 1 hour
-            validate_on_insert: false, // Lazy validation for speed
+            validate_on_insert: false,               // Lazy validation for speed
             precompile: false,
             hot_template_threshold: 100,
         }
@@ -250,7 +251,7 @@ impl TemplateCacheConfig {
         Self {
             max_templates: 50_000,
             max_memory_bytes: 256 * 1024 * 1024, // 256 MB
-            template_ttl: Duration::ZERO, // No expiration
+            template_ttl: Duration::ZERO,        // No expiration
             validate_on_insert: false,
             precompile: true,
             hot_template_threshold: 50,
@@ -261,7 +262,7 @@ impl TemplateCacheConfig {
     pub fn low_memory() -> Self {
         Self {
             max_templates: 1_000,
-            max_memory_bytes: 8 * 1024 * 1024, // 8 MB
+            max_memory_bytes: 8 * 1024 * 1024,      // 8 MB
             template_ttl: Duration::from_secs(300), // 5 minutes
             validate_on_insert: false,
             precompile: false,
@@ -366,7 +367,8 @@ impl TemplateCacheMetrics {
     /// Record render time
     pub fn record_render(&self, duration_us: u64) {
         self.total_renders.fetch_add(1, Ordering::Relaxed);
-        self.total_render_time_us.fetch_add(duration_us, Ordering::Relaxed);
+        self.total_render_time_us
+            .fetch_add(duration_us, Ordering::Relaxed);
     }
 }
 
@@ -486,7 +488,9 @@ impl TemplateCache {
         // Check memory and evict if needed
         let current_memory = self.metrics.memory_bytes.load(Ordering::Relaxed);
         let template_size = source.len() + std::mem::size_of::<CompiledTemplate>();
-        if self.config.max_memory_bytes > 0 && current_memory + template_size > self.config.max_memory_bytes {
+        if self.config.max_memory_bytes > 0
+            && current_memory + template_size > self.config.max_memory_bytes
+        {
             self.evict_for_memory(template_size);
         }
 
@@ -501,8 +505,12 @@ impl TemplateCache {
 
         // Store in cache
         self.templates.insert(key, Arc::clone(&template));
-        self.metrics.memory_bytes.fetch_add(template.size_bytes, Ordering::Relaxed);
-        self.metrics.template_count.store(self.templates.len(), Ordering::Relaxed);
+        self.metrics
+            .memory_bytes
+            .fetch_add(template.size_bytes, Ordering::Relaxed);
+        self.metrics
+            .template_count
+            .store(self.templates.len(), Ordering::Relaxed);
         self.metrics.record_compilation();
 
         template
@@ -544,7 +552,9 @@ impl TemplateCache {
         let render_count = template.stats.render_count.load(Ordering::Relaxed);
         if render_count > 1 {
             let compile_time = template.stats.compile_time_us.load(Ordering::Relaxed);
-            self.metrics.compile_time_saved_us.fetch_add(compile_time, Ordering::Relaxed);
+            self.metrics
+                .compile_time_saved_us
+                .fetch_add(compile_time, Ordering::Relaxed);
         }
 
         Ok(result)
@@ -616,14 +626,22 @@ impl TemplateCache {
             }
 
             if oldest.is_none() || last_accessed < oldest.as_ref().unwrap().1 {
-                oldest = Some((entry.key().clone(), last_accessed, entry.value().size_bytes as u64));
+                oldest = Some((
+                    entry.key().clone(),
+                    last_accessed,
+                    entry.value().size_bytes as u64,
+                ));
             }
         }
 
         if let Some((key, _, size)) = oldest {
             if self.templates.remove(&key).is_some() {
-                self.metrics.memory_bytes.fetch_sub(size as usize, Ordering::Relaxed);
-                self.metrics.template_count.store(self.templates.len(), Ordering::Relaxed);
+                self.metrics
+                    .memory_bytes
+                    .fetch_sub(size as usize, Ordering::Relaxed);
+                self.metrics
+                    .template_count
+                    .store(self.templates.len(), Ordering::Relaxed);
                 self.metrics.record_eviction();
             }
         }
@@ -635,9 +653,20 @@ impl TemplateCache {
         let target = needed_bytes + (self.config.max_memory_bytes / 10); // Free 10% extra
 
         // Collect candidates sorted by access time, excluding hot templates
-        let mut candidates: Vec<_> = self.templates.iter()
-            .filter(|e| e.value().stats.render_count.load(Ordering::Relaxed) < self.config.hot_template_threshold)
-            .map(|e| (e.key().clone(), *e.value().last_accessed.read(), e.value().size_bytes))
+        let mut candidates: Vec<_> = self
+            .templates
+            .iter()
+            .filter(|e| {
+                e.value().stats.render_count.load(Ordering::Relaxed)
+                    < self.config.hot_template_threshold
+            })
+            .map(|e| {
+                (
+                    e.key().clone(),
+                    *e.value().last_accessed.read(),
+                    e.value().size_bytes,
+                )
+            })
             .collect();
         candidates.sort_by_key(|(_, accessed, _)| *accessed);
 
@@ -652,7 +681,9 @@ impl TemplateCache {
             }
         }
 
-        self.metrics.template_count.store(self.templates.len(), Ordering::Relaxed);
+        self.metrics
+            .template_count
+            .store(self.templates.len(), Ordering::Relaxed);
     }
 
     /// Cleanup expired templates
@@ -667,7 +698,9 @@ impl TemplateCache {
         for entry in self.templates.iter() {
             if entry.value().age() > self.config.template_ttl {
                 // Don't remove hot templates even if expired
-                if entry.value().stats.render_count.load(Ordering::Relaxed) < self.config.hot_template_threshold {
+                if entry.value().stats.render_count.load(Ordering::Relaxed)
+                    < self.config.hot_template_threshold
+                {
                     keys_to_remove.push(entry.key().clone());
                 }
             }
@@ -675,13 +708,17 @@ impl TemplateCache {
 
         for key in keys_to_remove {
             if let Some((_, template)) = self.templates.remove(&key) {
-                self.metrics.memory_bytes.fetch_sub(template.size_bytes, Ordering::Relaxed);
+                self.metrics
+                    .memory_bytes
+                    .fetch_sub(template.size_bytes, Ordering::Relaxed);
                 removed += 1;
                 self.metrics.record_eviction();
             }
         }
 
-        self.metrics.template_count.store(self.templates.len(), Ordering::Relaxed);
+        self.metrics
+            .template_count
+            .store(self.templates.len(), Ordering::Relaxed);
         removed
     }
 
@@ -700,8 +737,12 @@ impl TemplateCache {
 
     /// Get hot templates (frequently rendered)
     pub fn get_hot_templates(&self) -> Vec<HotTemplateInfo> {
-        self.templates.iter()
-            .filter(|e| e.value().stats.render_count.load(Ordering::Relaxed) >= self.config.hot_template_threshold)
+        self.templates
+            .iter()
+            .filter(|e| {
+                e.value().stats.render_count.load(Ordering::Relaxed)
+                    >= self.config.hot_template_threshold
+            })
             .map(|e| HotTemplateInfo {
                 content_hash: e.key().content_hash,
                 render_count: e.value().stats.render_count.load(Ordering::Relaxed),
@@ -955,9 +996,10 @@ mod tests {
     fn test_template_cache_basic() {
         let cache = TemplateCache::new(TemplateCacheConfig::default());
 
-        let vars: HashMap<String, serde_json::Value> = [
-            ("name".to_string(), serde_json::json!("World")),
-        ].into_iter().collect();
+        let vars: HashMap<String, serde_json::Value> =
+            [("name".to_string(), serde_json::json!("World"))]
+                .into_iter()
+                .collect();
 
         let result = cache.render("Hello {{ name }}!", &vars).unwrap();
         assert_eq!(result, "Hello World!");
@@ -1049,9 +1091,10 @@ mod tests {
         let lazy = LazyTemplate::new("Hello {{ name }}!");
         assert!(!lazy.is_compiled());
 
-        let vars: HashMap<String, serde_json::Value> = [
-            ("name".to_string(), serde_json::json!("World")),
-        ].into_iter().collect();
+        let vars: HashMap<String, serde_json::Value> =
+            [("name".to_string(), serde_json::json!("World"))]
+                .into_iter()
+                .collect();
 
         let result = lazy.render(&vars).unwrap();
         assert_eq!(result, "Hello World!");
@@ -1088,9 +1131,10 @@ mod tests {
     fn test_template_stats() {
         let cache = TemplateCache::new(TemplateCacheConfig::default());
 
-        let vars: HashMap<String, serde_json::Value> = [
-            ("name".to_string(), serde_json::json!("World")),
-        ].into_iter().collect();
+        let vars: HashMap<String, serde_json::Value> =
+            [("name".to_string(), serde_json::json!("World"))]
+                .into_iter()
+                .collect();
 
         let template = "Hello {{ name }}!";
 

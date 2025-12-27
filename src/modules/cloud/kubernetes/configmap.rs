@@ -63,8 +63,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use super::{
-    parse_annotations, parse_labels, validate_k8s_name, validate_k8s_namespace,
-    K8sResourceState,
+    parse_annotations, parse_labels, validate_k8s_name, validate_k8s_namespace, K8sResourceState,
 };
 
 /// ConfigMap configuration parsed from module parameters
@@ -332,11 +331,10 @@ impl K8sConfigMapModule {
             let needs_update = self.data_differs(config, &cm);
 
             if !needs_update {
-                return Ok(ModuleOutput::ok(format!(
-                    "ConfigMap '{}' is up to date",
-                    config.name
-                ))
-                .with_data("configmap", serde_json::to_value(&cm).unwrap()));
+                return Ok(
+                    ModuleOutput::ok(format!("ConfigMap '{}' is up to date", config.name))
+                        .with_data("configmap", serde_json::to_value(&cm).unwrap()),
+                );
             }
 
             if context.check_mode {
@@ -348,11 +346,10 @@ impl K8sConfigMapModule {
 
             let updated = Self::apply_configmap(config).await?;
 
-            Ok(ModuleOutput::changed(format!(
-                "Updated ConfigMap '{}'",
-                config.name
-            ))
-            .with_data("configmap", serde_json::to_value(&updated).unwrap()))
+            Ok(
+                ModuleOutput::changed(format!("Updated ConfigMap '{}'", config.name))
+                    .with_data("configmap", serde_json::to_value(&updated).unwrap()),
+            )
         } else {
             // Create new ConfigMap
             if context.check_mode {
@@ -364,11 +361,10 @@ impl K8sConfigMapModule {
 
             let created = Self::apply_configmap(config).await?;
 
-            Ok(ModuleOutput::changed(format!(
-                "Created ConfigMap '{}'",
-                config.name
-            ))
-            .with_data("configmap", serde_json::to_value(&created).unwrap()))
+            Ok(
+                ModuleOutput::changed(format!("Created ConfigMap '{}'", config.name))
+                    .with_data("configmap", serde_json::to_value(&created).unwrap()),
+            )
         }
     }
 
@@ -600,10 +596,7 @@ mod tests {
     fn test_configmap_config_immutable() {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!("immutable-config"));
-        params.insert(
-            "data".to_string(),
-            serde_json::json!({"VERSION": "1.0.0"}),
-        );
+        params.insert("data".to_string(), serde_json::json!({"VERSION": "1.0.0"}));
         params.insert("immutable".to_string(), serde_json::json!(true));
 
         let config = ConfigMapConfig::from_params(&params).unwrap();
@@ -614,10 +607,7 @@ mod tests {
     fn test_configmap_config_with_labels() {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!("app-config"));
-        params.insert(
-            "data".to_string(),
-            serde_json::json!({"key": "value"}),
-        );
+        params.insert("data".to_string(), serde_json::json!({"key": "value"}));
         params.insert(
             "labels".to_string(),
             serde_json::json!({
@@ -628,7 +618,10 @@ mod tests {
 
         let config = ConfigMapConfig::from_params(&params).unwrap();
         assert_eq!(config.labels.get("app"), Some(&"myapp".to_string()));
-        assert_eq!(config.labels.get("environment"), Some(&"production".to_string()));
+        assert_eq!(
+            config.labels.get("environment"),
+            Some(&"production".to_string())
+        );
     }
 
     #[test]

@@ -44,7 +44,7 @@
 //! - Caching for improved performance
 //! - Support for VPC and security group grouping
 
-use super::config::{PluginConfig, PluginConfigError, sanitize_group_name};
+use super::config::{sanitize_group_name, PluginConfig, PluginConfigError};
 use super::{DynamicInventoryPlugin, PluginOption, PluginOptionType};
 use crate::inventory::{Group, Host, Inventory, InventoryError, InventoryResult};
 use async_trait::async_trait;
@@ -253,10 +253,7 @@ impl Ec2Instance {
                     serde_yaml::Value::String(v.clone()),
                 );
             }
-            vars.insert(
-                "ec2_tags".to_string(),
-                serde_yaml::Value::Mapping(tags_map),
-            );
+            vars.insert("ec2_tags".to_string(), serde_yaml::Value::Mapping(tags_map));
         }
 
         vars
@@ -308,7 +305,12 @@ impl AwsEc2Plugin {
     /// Get hostname preferences
     fn get_hostname_preferences(&self) -> Vec<String> {
         if !self.config.hostnames.is_empty() {
-            return self.config.hostnames.iter().map(|h| h.name().to_string()).collect();
+            return self
+                .config
+                .hostnames
+                .iter()
+                .map(|h| h.name().to_string())
+                .collect();
         }
 
         // Default preferences
@@ -613,8 +615,8 @@ impl DynamicInventoryPlugin for AwsEc2Plugin {
 
     fn verify(&self) -> InventoryResult<()> {
         // Check for AWS credentials
-        let has_env_creds =
-            std::env::var("AWS_ACCESS_KEY_ID").is_ok() && std::env::var("AWS_SECRET_ACCESS_KEY").is_ok();
+        let has_env_creds = std::env::var("AWS_ACCESS_KEY_ID").is_ok()
+            && std::env::var("AWS_SECRET_ACCESS_KEY").is_ok();
 
         let has_profile = std::env::var("AWS_PROFILE").is_ok();
 
@@ -731,7 +733,9 @@ mod tests {
             vpc_id: Some("vpc-12345678".to_string()),
             subnet_id: Some("subnet-12345678".to_string()),
             security_groups: vec!["sg-12345678".to_string()],
-            iam_instance_profile: Some("arn:aws:iam::123456789012:instance-profile/WebServer".to_string()),
+            iam_instance_profile: Some(
+                "arn:aws:iam::123456789012:instance-profile/WebServer".to_string(),
+            ),
             tags,
             launch_time: Some("2024-01-15T10:30:00Z".to_string()),
             architecture: Some("x86_64".to_string()),

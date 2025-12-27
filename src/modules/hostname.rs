@@ -101,8 +101,7 @@ impl HostnameModule {
         connection: &Arc<dyn Connection + Send + Sync>,
         context: &ModuleContext,
     ) -> ModuleResult<String> {
-        let (success, stdout, stderr) =
-            Self::execute_command(connection, "hostname", context)?;
+        let (success, stdout, stderr) = Self::execute_command(connection, "hostname", context)?;
 
         if success {
             Ok(stdout.trim().to_string())
@@ -149,10 +148,7 @@ impl HostnameModule {
 
         // Set pretty hostname if provided
         if let Some(pretty) = pretty_hostname {
-            let cmd = format!(
-                "hostnamectl set-hostname --pretty {}",
-                shell_escape(pretty)
-            );
+            let cmd = format!("hostnamectl set-hostname --pretty {}", shell_escape(pretty));
             let (success, _, stderr) = Self::execute_command(connection, &cmd, context)?;
 
             if !success {
@@ -173,10 +169,7 @@ impl HostnameModule {
         context: &ModuleContext,
     ) -> ModuleResult<()> {
         // Write to /etc/hostname
-        let cmd = format!(
-            "echo {} > /etc/hostname",
-            shell_escape(hostname)
-        );
+        let cmd = format!("echo {} > /etc/hostname", shell_escape(hostname));
         let (success, _, stderr) = Self::execute_command(connection, &cmd, context)?;
 
         if !success {
@@ -342,11 +335,8 @@ impl Module for HostnameModule {
                 }
             }
 
-            return Ok(ModuleOutput::ok(format!(
-                "Hostname is already '{}'",
-                name
-            ))
-            .with_data("name", serde_json::json!(name)));
+            return Ok(ModuleOutput::ok(format!("Hostname is already '{}'", name))
+                .with_data("name", serde_json::json!(name)));
         }
 
         // Check mode
@@ -364,12 +354,7 @@ impl Module for HostnameModule {
         // Apply the change based on strategy
         match effective_strategy {
             HostnameStrategy::Systemd => {
-                Self::set_hostname_systemd(
-                    connection,
-                    &name,
-                    pretty_hostname.as_deref(),
-                    context,
-                )?;
+                Self::set_hostname_systemd(connection, &name, pretty_hostname.as_deref(), context)?;
             }
             HostnameStrategy::File | HostnameStrategy::Auto => {
                 Self::set_hostname_file(connection, &name, context)?;
@@ -393,7 +378,10 @@ impl Module for HostnameModule {
         let mut output = ModuleOutput::changed(messages.join(". "))
             .with_data("name", serde_json::json!(name))
             .with_data("previous_name", serde_json::json!(current_hostname))
-            .with_data("strategy", serde_json::json!(format!("{:?}", effective_strategy).to_lowercase()));
+            .with_data(
+                "strategy",
+                serde_json::json!(format!("{:?}", effective_strategy).to_lowercase()),
+            );
 
         if let Some(ref pretty) = pretty_hostname {
             output = output.with_data("pretty_hostname", serde_json::json!(pretty));

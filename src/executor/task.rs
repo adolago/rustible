@@ -556,8 +556,14 @@ impl Task {
 
         // Handle until/retries/delay retry logic
         let result = if self.until.is_some() {
-            self.execute_with_retry(module_ctx, runtime, handlers, notified, parallelization_manager)
-                .await?
+            self.execute_with_retry(
+                module_ctx,
+                runtime,
+                handlers,
+                notified,
+                parallelization_manager,
+            )
+            .await?
         } else {
             self.execute_module(
                 module_ctx,
@@ -851,10 +857,15 @@ impl Task {
             }
 
             // Evaluate the until condition
-            let condition_met = self.evaluate_condition(until_condition, ctx, runtime).await?;
+            let condition_met = self
+                .evaluate_condition(until_condition, ctx, runtime)
+                .await?;
 
             if condition_met {
-                debug!("Until condition '{}' met after {} attempt(s)", until_condition, attempt);
+                debug!(
+                    "Until condition '{}' met after {} attempt(s)",
+                    until_condition, attempt
+                );
                 return Ok(result);
             }
 
@@ -1184,7 +1195,10 @@ impl Task {
 
                 Ok(result)
             }
-            Err(e) => Err(ExecutorError::TaskFailed(format!("gather_facts failed: {}", e))),
+            Err(e) => Err(ExecutorError::TaskFailed(format!(
+                "gather_facts failed: {}",
+                e
+            ))),
         }
     }
 

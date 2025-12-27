@@ -98,9 +98,7 @@ pub struct RoleFile {
 impl RoleFile {
     /// Create a new role file
     pub fn new(path: PathBuf, file_type: RoleFileType) -> Self {
-        let modified_at = std::fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .ok();
+        let modified_at = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
         Self {
             path,
             file_type,
@@ -219,22 +217,25 @@ impl CachedRole {
 
     /// Get file paths for dependency tracking
     pub fn get_dependency_paths(&self) -> Vec<PathBuf> {
-        self.component_files.iter().map(|f| f.path.clone()).collect()
+        self.component_files
+            .iter()
+            .map(|f| f.path.clone())
+            .collect()
     }
 
     /// Estimate memory size
     pub fn size_bytes(&self) -> usize {
         // Rough estimation
-        self.role.name.len() +
-        self.role.tasks.len() * 200 +
-        self.role.handlers.len() * 150 +
-        serde_json::to_string(&self.role.defaults)
-            .map(|s| s.len())
-            .unwrap_or(500) +
-        serde_json::to_string(&self.role.vars)
-            .map(|s| s.len())
-            .unwrap_or(500) +
-        self.component_files.len() * 100
+        self.role.name.len()
+            + self.role.tasks.len() * 200
+            + self.role.handlers.len() * 150
+            + serde_json::to_string(&self.role.defaults)
+                .map(|s| s.len())
+                .unwrap_or(500)
+            + serde_json::to_string(&self.role.vars)
+                .map(|s| s.len())
+                .unwrap_or(500)
+            + self.component_files.len() * 100
     }
 }
 
@@ -295,7 +296,8 @@ impl RoleCache {
 
     /// Get a cached role by key
     pub fn get(&self, key: &RoleCacheKey) -> Option<Role> {
-        self.cache.get(key)
+        self.cache
+            .get(key)
             .filter(|cached| {
                 if self.config.validate_files {
                     !cached.is_modified()
@@ -317,7 +319,8 @@ impl RoleCache {
         for role_path in &self.config.role_paths {
             let full_path = role_path.join(name);
             if full_path.exists() {
-                self.name_to_path.insert(name.to_string(), full_path.clone());
+                self.name_to_path
+                    .insert(name.to_string(), full_path.clone());
                 return self.get(&RoleCacheKey::with_path(name, full_path));
             }
         }
@@ -333,7 +336,9 @@ impl RoleCache {
         let size = cached.size_bytes();
 
         // Create dependencies from component files
-        let deps: Vec<_> = cached.component_files.iter()
+        let deps: Vec<_> = cached
+            .component_files
+            .iter()
             .filter_map(|f| CacheDependency::file(f.path.clone()))
             .collect();
 
@@ -348,11 +353,12 @@ impl RoleCache {
     /// Store a loaded role with timing information
     pub fn insert_with_timing(&self, key: RoleCacheKey, role: Role, load_time_ms: u64) {
         let path = key.path.clone();
-        let cached = CachedRole::new(role, path.clone())
-            .with_load_time(load_time_ms);
+        let cached = CachedRole::new(role, path.clone()).with_load_time(load_time_ms);
         let size = cached.size_bytes();
 
-        let deps: Vec<_> = cached.component_files.iter()
+        let deps: Vec<_> = cached
+            .component_files
+            .iter()
             .filter_map(|f| CacheDependency::file(f.path.clone()))
             .collect();
 
@@ -366,9 +372,16 @@ impl RoleCache {
     /// Invalidate a cached role for a specific path
     pub fn invalidate_file(&self, path: &PathBuf) {
         // Find and remove any roles that depend on this file
-        let keys_to_remove: Vec<_> = self.cache.entries.iter()
+        let keys_to_remove: Vec<_> = self
+            .cache
+            .entries
+            .iter()
             .filter(|entry| {
-                entry.value().value.component_files.iter()
+                entry
+                    .value()
+                    .value
+                    .component_files
+                    .iter()
                     .any(|f| &f.path == path)
             })
             .map(|entry| entry.key().clone())
@@ -382,7 +395,10 @@ impl RoleCache {
 
     /// Invalidate a role by name
     pub fn invalidate_by_name(&self, name: &str) {
-        let keys_to_remove: Vec<_> = self.cache.entries.iter()
+        let keys_to_remove: Vec<_> = self
+            .cache
+            .entries
+            .iter()
             .filter(|entry| entry.key().name == name)
             .map(|entry| entry.key().clone())
             .collect();
@@ -419,11 +435,16 @@ impl RoleCache {
         let removed = self.cache.cleanup_expired();
 
         // Also clean up name_to_path for removed entries
-        let remaining_names: std::collections::HashSet<_> = self.cache.entries.iter()
+        let remaining_names: std::collections::HashSet<_> = self
+            .cache
+            .entries
+            .iter()
             .map(|e| e.key().name.clone())
             .collect();
 
-        let names_to_remove: Vec<_> = self.name_to_path.iter()
+        let names_to_remove: Vec<_> = self
+            .name_to_path
+            .iter()
             .filter(|e| !remaining_names.contains(e.key()))
             .map(|e| e.key().clone())
             .collect();
@@ -437,7 +458,9 @@ impl RoleCache {
 
     /// Get all cached role names
     pub fn role_names(&self) -> Vec<String> {
-        self.cache.entries.iter()
+        self.cache
+            .entries
+            .iter()
             .map(|e| e.key().name.clone())
             .collect()
     }

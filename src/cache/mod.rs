@@ -273,15 +273,9 @@ pub enum CacheDependency {
         modified_at: SystemTime,
     },
     /// Another cache key
-    CacheKey {
-        cache_type: CacheType,
-        key: String,
-    },
+    CacheKey { cache_type: CacheType, key: String },
     /// Custom invalidation check
-    Custom {
-        name: String,
-        created_at: Instant,
-    },
+    Custom { name: String, created_at: Instant },
 }
 
 impl CacheDependency {
@@ -304,12 +298,10 @@ impl CacheDependency {
     /// Check if this dependency has been invalidated
     pub fn is_invalidated(&self) -> bool {
         match self {
-            CacheDependency::File { path, modified_at } => {
-                std::fs::metadata(path)
-                    .and_then(|m| m.modified())
-                    .map(|current| current != *modified_at)
-                    .unwrap_or(true)
-            }
+            CacheDependency::File { path, modified_at } => std::fs::metadata(path)
+                .and_then(|m| m.modified())
+                .map(|current| current != *modified_at)
+                .unwrap_or(true),
             CacheDependency::CacheKey { .. } => {
                 // This would require checking against the actual cache
                 // For now, assume not invalidated
@@ -439,14 +431,20 @@ where
 
         // Check memory pressure
         let current_memory = self.metrics.memory_bytes.load(Ordering::Relaxed);
-        if self.config.max_memory_bytes > 0 && current_memory + size_bytes > self.config.max_memory_bytes {
+        if self.config.max_memory_bytes > 0
+            && current_memory + size_bytes > self.config.max_memory_bytes
+        {
             self.evict_for_memory(size_bytes);
         }
 
         let entry = CacheEntry::new(value, ttl, size_bytes);
         self.entries.insert(key, entry);
-        self.metrics.entries.store(self.entries.len(), Ordering::Relaxed);
-        self.metrics.memory_bytes.fetch_add(size_bytes, Ordering::Relaxed);
+        self.metrics
+            .entries
+            .store(self.entries.len(), Ordering::Relaxed);
+        self.metrics
+            .memory_bytes
+            .fetch_add(size_bytes, Ordering::Relaxed);
     }
 
     /// Insert a value with dependencies
@@ -469,15 +467,26 @@ where
         let entry = CacheEntry::new(value, Some(self.config.default_ttl), size_bytes)
             .with_dependencies(dependencies);
         self.entries.insert(key, entry);
-        self.metrics.entries.store(self.entries.len(), Ordering::Relaxed);
-        self.metrics.memory_bytes.fetch_add(size_bytes, Ordering::Relaxed);
+        self.metrics
+            .entries
+            .store(self.entries.len(), Ordering::Relaxed);
+        self.metrics
+            .memory_bytes
+            .fetch_add(size_bytes, Ordering::Relaxed);
     }
 
     /// Remove a specific key from the cache
     pub fn remove(&self, key: &K) -> Option<V> {
         if let Some((_, entry)) = self.entries.remove(key) {
-            self.metrics.entries.store(self.entries.len(), Ordering::Relaxed);
-            self.metrics.memory_bytes.fetch_sub(entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)), Ordering::Relaxed);
+            self.metrics
+                .entries
+                .store(self.entries.len(), Ordering::Relaxed);
+            self.metrics.memory_bytes.fetch_sub(
+                entry
+                    .size_bytes
+                    .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                Ordering::Relaxed,
+            );
             if self.config.enable_metrics {
                 self.metrics.record_invalidation();
             }
@@ -521,8 +530,9 @@ where
         let mut keys_to_remove = Vec::new();
 
         for entry in self.entries.iter() {
-            if entry.value().is_expired() ||
-               (self.config.track_dependencies && entry.value().is_dependency_invalidated()) {
+            if entry.value().is_expired()
+                || (self.config.track_dependencies && entry.value().is_dependency_invalidated())
+            {
                 keys_to_remove.push(entry.key().clone());
             }
         }
@@ -530,8 +540,10 @@ where
         for key in keys_to_remove {
             if let Some((_, entry)) = self.entries.remove(&key) {
                 self.metrics.memory_bytes.fetch_sub(
-                    entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
-                    Ordering::Relaxed
+                    entry
+                        .size_bytes
+                        .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                    Ordering::Relaxed,
                 );
                 removed += 1;
                 if self.config.enable_metrics {
@@ -540,7 +552,9 @@ where
             }
         }
 
-        self.metrics.entries.store(self.entries.len(), Ordering::Relaxed);
+        self.metrics
+            .entries
+            .store(self.entries.len(), Ordering::Relaxed);
         *self.metrics.last_cleanup.write() = Some(Instant::now());
         removed
     }
@@ -559,8 +573,10 @@ where
         if let Some((key, _)) = oldest {
             if let Some((_, entry)) = self.entries.remove(&key) {
                 self.metrics.memory_bytes.fetch_sub(
-                    entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
-                    Ordering::Relaxed
+                    entry
+                        .size_bytes
+                        .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                    Ordering::Relaxed,
                 );
                 if self.config.enable_metrics {
                     self.metrics.record_eviction();
@@ -575,8 +591,16 @@ where
         let target = needed_bytes + (self.config.max_memory_bytes / 10); // Free 10% extra
 
         // Sort entries by last accessed time
-        let mut entries: Vec<_> = self.entries.iter()
-            .map(|e| (e.key().clone(), *e.value().last_accessed.read(), e.value().size_bytes))
+        let mut entries: Vec<_> = self
+            .entries
+            .iter()
+            .map(|e| {
+                (
+                    e.key().clone(),
+                    *e.value().last_accessed.read(),
+                    e.value().size_bytes,
+                )
+            })
             .collect();
         entries.sort_by_key(|(_, accessed, _)| *accessed);
 
@@ -587,8 +611,10 @@ where
             if let Some((_, entry)) = self.entries.remove(&key) {
                 freed += entry.size_bytes;
                 self.metrics.memory_bytes.fetch_sub(
-                    entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
-                    Ordering::Relaxed
+                    entry
+                        .size_bytes
+                        .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                    Ordering::Relaxed,
                 );
                 if self.config.enable_metrics {
                     self.metrics.record_eviction();
@@ -596,7 +622,9 @@ where
             }
         }
 
-        self.metrics.entries.store(self.entries.len(), Ordering::Relaxed);
+        self.metrics
+            .entries
+            .store(self.entries.len(), Ordering::Relaxed);
     }
 }
 
@@ -691,8 +719,10 @@ impl CacheManager {
             playbook_entries: self.playbooks.len(),
             role_entries: self.roles.len(),
             variable_entries: self.variables.len(),
-            total_entries: self.facts.len() + self.playbooks.len() +
-                          self.roles.len() + self.variables.len(),
+            total_entries: self.facts.len()
+                + self.playbooks.len()
+                + self.roles.len()
+                + self.variables.len(),
             facts_hit_rate: self.facts.metrics().hit_rate(),
             playbooks_hit_rate: self.playbooks.metrics().hit_rate(),
             roles_hit_rate: self.roles.metrics().hit_rate(),
@@ -759,8 +789,7 @@ pub struct CleanupResult {
 impl CleanupResult {
     /// Get total entries removed
     pub fn total(&self) -> usize {
-        self.facts_removed + self.playbooks_removed +
-        self.roles_removed + self.variables_removed
+        self.facts_removed + self.playbooks_removed + self.roles_removed + self.variables_removed
     }
 }
 
@@ -785,10 +814,7 @@ mod tests {
 
     #[test]
     fn test_cache_basic_operations() {
-        let cache: Cache<String, String> = Cache::new(
-            CacheType::Facts,
-            CacheConfig::default(),
-        );
+        let cache: Cache<String, String> = Cache::new(CacheType::Facts, CacheConfig::default());
 
         // Test insert and get
         cache.insert("key1".to_string(), "value1".to_string(), 10);
@@ -798,7 +824,10 @@ mod tests {
         assert_eq!(cache.get(&"nonexistent".to_string()), None);
 
         // Test remove
-        assert_eq!(cache.remove(&"key1".to_string()), Some("value1".to_string()));
+        assert_eq!(
+            cache.remove(&"key1".to_string()),
+            Some("value1".to_string())
+        );
         assert_eq!(cache.get(&"key1".to_string()), None);
     }
 
@@ -822,10 +851,7 @@ mod tests {
 
     #[test]
     fn test_cache_metrics() {
-        let cache: Cache<String, String> = Cache::new(
-            CacheType::Facts,
-            CacheConfig::default(),
-        );
+        let cache: Cache<String, String> = Cache::new(CacheType::Facts, CacheConfig::default());
 
         cache.insert("key1".to_string(), "value1".to_string(), 10);
 
@@ -871,8 +897,14 @@ mod tests {
         let manager = CacheManager::new();
 
         // Test that caches are independent
-        manager.facts.cache.insert("host1".to_string(), Default::default(), 100);
-        manager.playbooks.cache.insert("playbook1".to_string().into(), Default::default(), 100);
+        manager
+            .facts
+            .cache
+            .insert("host1".to_string(), Default::default(), 100);
+        manager
+            .playbooks
+            .cache
+            .insert("playbook1".to_string().into(), Default::default(), 100);
 
         assert_eq!(manager.facts.len(), 1);
         assert_eq!(manager.playbooks.len(), 1);
@@ -885,10 +917,7 @@ mod tests {
 
     #[test]
     fn test_disabled_cache() {
-        let cache: Cache<String, String> = Cache::new(
-            CacheType::Facts,
-            CacheConfig::disabled(),
-        );
+        let cache: Cache<String, String> = Cache::new(CacheType::Facts, CacheConfig::disabled());
 
         cache.insert("key1".to_string(), "value1".to_string(), 10);
         // Should not be stored because max_entries is 0

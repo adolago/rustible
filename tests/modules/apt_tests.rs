@@ -129,7 +129,9 @@ fn test_apt_shell_escape_simple_name() {
 fn test_apt_shell_escape_with_version() {
     // Package names with version specifiers
     let input = "nginx-1.18.0";
-    assert!(input.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '.'));
+    assert!(input
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '.'));
 }
 
 #[test]
@@ -150,15 +152,19 @@ fn test_apt_shell_escape_command_injection_attempt() {
 
     for input in dangerous_inputs {
         // These should not pass through unescaped
-        assert!(input.chars().any(|c| !c.is_alphanumeric() && c != '-' && c != '.' && c != '_'));
+        assert!(input
+            .chars()
+            .any(|c| !c.is_alphanumeric() && c != '-' && c != '.' && c != '_'));
     }
 }
 
 #[test]
 fn test_apt_shell_escape_unicode() {
     // Unicode package names should be escaped
-    let input = "pkg-\u{00e9}";  // 'e' with accent
-    assert!(input.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-'));
+    let input = "pkg-\u{00e9}"; // 'e' with accent
+    assert!(input
+        .chars()
+        .any(|c| !c.is_ascii_alphanumeric() && c != '-'));
 }
 
 // ============================================================================

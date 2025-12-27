@@ -398,7 +398,9 @@ mod throttle_tests {
             let manager = manager.clone();
             let counter = counter.clone();
             let handle = tokio::spawn(async move {
-                let _guard = manager.acquire("host1", &format!("module{}", i), None).await;
+                let _guard = manager
+                    .acquire("host1", &format!("module{}", i), None)
+                    .await;
                 counter.fetch_add(1, Ordering::SeqCst);
                 tokio::time::sleep(Duration::from_millis(10)).await;
             });
@@ -688,7 +690,7 @@ mod pipeline_tests {
     use super::*;
     use rustible::executor::pipeline::{
         BranchPrediction, BranchPredictor, ExecutionPipeline, FileOperationBatch,
-        FileOperationType, FilePipeline, PackageBatch, PackageBatcher, PackageBatchConfig,
+        FileOperationType, FilePipeline, PackageBatch, PackageBatchConfig, PackageBatcher,
         PackageOperation, PipelineConfig, SpeculativeConfig,
     };
 
@@ -1572,9 +1574,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_throttled_async_task_execution() {
         // Combine throttling with async task execution
-        let throttle_manager = Arc::new(ThrottleManager::new(
-            ThrottleConfig::with_global_limit(2),
-        ));
+        let throttle_manager = Arc::new(ThrottleManager::new(ThrottleConfig::with_global_limit(2)));
         let async_manager = AsyncTaskManager::new();
 
         let completed = Arc::new(AtomicUsize::new(0));
@@ -1674,10 +1674,8 @@ mod integration_tests {
         }
 
         // Wait for all workers with overall timeout
-        let _ = tokio::time::timeout(
-            Duration::from_secs(10),
-            futures::future::join_all(handles)
-        ).await;
+        let _ =
+            tokio::time::timeout(Duration::from_secs(10), futures::future::join_all(handles)).await;
 
         // All items should be processed
         assert_eq!(completed.load(Ordering::SeqCst), 20);

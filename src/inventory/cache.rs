@@ -36,7 +36,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use super::{Inventory, InventoryResult, parse_json_inventory_from_value};
+use super::{parse_json_inventory_from_value, Inventory, InventoryResult};
 
 // ============================================================================
 // Cache Configuration
@@ -429,7 +429,9 @@ impl InventoryCache {
                 let removed = entries.remove(key);
                 if let Some(removed_entry) = removed {
                     self.metrics.memory_bytes.fetch_sub(
-                        removed_entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                        removed_entry
+                            .size_bytes
+                            .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
                         Ordering::Relaxed,
                     );
                 }
@@ -531,7 +533,9 @@ impl InventoryCache {
         let mut entries = self.entries.write().await;
         if let Some(entry) = entries.remove(key) {
             self.metrics.memory_bytes.fetch_sub(
-                entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                entry
+                    .size_bytes
+                    .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
                 Ordering::Relaxed,
             );
             self.metrics.entries.store(entries.len(), Ordering::Relaxed);
@@ -561,7 +565,9 @@ impl InventoryCache {
         for key in keys_to_remove {
             if let Some(entry) = entries.remove(&key) {
                 self.metrics.memory_bytes.fetch_sub(
-                    entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                    entry
+                        .size_bytes
+                        .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
                     Ordering::Relaxed,
                 );
                 if self.config.enable_metrics {
@@ -612,7 +618,9 @@ impl InventoryCache {
         for key in keys_to_remove {
             if let Some(entry) = entries.remove(&key) {
                 self.metrics.memory_bytes.fetch_sub(
-                    entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                    entry
+                        .size_bytes
+                        .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
                     Ordering::Relaxed,
                 );
                 removed += 1;
@@ -672,7 +680,9 @@ impl InventoryCache {
         {
             if let Some(entry) = entries.remove(&lru_key) {
                 self.metrics.memory_bytes.fetch_sub(
-                    entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                    entry
+                        .size_bytes
+                        .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
                     Ordering::Relaxed,
                 );
                 if self.config.enable_metrics {

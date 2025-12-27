@@ -45,11 +45,17 @@ fn test_literal_block_scalar_preserves_newlines() {
     // Get the script_content variable
     let play = &playbook.plays[0];
     let script_content = play.vars.get("script_content");
-    assert!(script_content.is_some(), "script_content variable should exist");
+    assert!(
+        script_content.is_some(),
+        "script_content variable should exist"
+    );
 
     // Check that newlines are preserved
     if let Some(content) = script_content.and_then(|v| v.as_str()) {
-        assert!(content.contains('\n'), "Literal block should preserve newlines");
+        assert!(
+            content.contains('\n'),
+            "Literal block should preserve newlines"
+        );
         assert!(content.contains("#!/bin/bash"), "Should contain shebang");
         assert!(content.contains("Line 1"), "Should contain Line 1");
         assert!(content.contains("Line 2"), "Should contain Line 2");
@@ -106,7 +112,10 @@ fn test_literal_block_with_chomping_indicators() {
 
     // Strip chomping should remove trailing newline
     if let Some(content) = play.vars.get("strip_trailing").and_then(|v| v.as_str()) {
-        assert!(!content.ends_with('\n'), "Strip chomping should remove trailing newline");
+        assert!(
+            !content.ends_with('\n'),
+            "Strip chomping should remove trailing newline"
+        );
     }
 }
 
@@ -133,7 +142,10 @@ fn test_quoted_multiline_string() {
 
     // Single quoted should NOT interpret escape sequences
     if let Some(content) = play.vars.get("single_quoted").and_then(|v| v.as_str()) {
-        assert!(content.contains("\\n"), "Single-quoted should NOT interpret \\n");
+        assert!(
+            content.contains("\\n"),
+            "Single-quoted should NOT interpret \\n"
+        );
     }
 }
 
@@ -192,7 +204,10 @@ fn test_basic_anchor_and_alias() {
     let default = play.vars.get("default_config");
     let production = play.vars.get("production_config");
 
-    if let (Some(d), Some(p)) = (default.and_then(|v| v.as_object()), production.and_then(|v| v.as_object())) {
+    if let (Some(d), Some(p)) = (
+        default.and_then(|v| v.as_object()),
+        production.and_then(|v| v.as_object()),
+    ) {
         assert_eq!(d.len(), p.len(), "Aliased mapping should have same length");
     }
 }
@@ -309,7 +324,11 @@ fn test_ansible_boolean_yes_no() {
 
     let play = &playbook.plays[0];
     assert!(play.gather_facts, "gather_facts: yes should be true");
-    assert_eq!(play.r#become, Some(false), "become: no should be Some(false)");
+    assert_eq!(
+        play.r#become,
+        Some(false),
+        "become: no should be Some(false)"
+    );
 
     let task1 = &play.tasks[0];
     assert!(task1.ignore_errors, "ignore_errors: yes should be true");
@@ -356,7 +375,11 @@ fn test_ansible_boolean_true_false_string() {
 
     let play = &playbook.plays[0];
     assert!(play.gather_facts, "gather_facts: \"true\" should be true");
-    assert_eq!(play.r#become, Some(false), "become: \"false\" should be Some(false)");
+    assert_eq!(
+        play.r#become,
+        Some(false),
+        "become: \"false\" should be Some(false)"
+    );
 }
 
 #[test]
@@ -594,7 +617,10 @@ fn test_empty_collections() {
     }
 
     assert!(play.vars.get("null_value").map_or(false, |v| v.is_null()));
-    assert!(play.vars.get("explicit_null").map_or(false, |v| v.is_null()));
+    assert!(play
+        .vars
+        .get("explicit_null")
+        .map_or(false, |v| v.is_null()));
 }
 
 // ============================================================================
@@ -821,10 +847,16 @@ fn test_numeric_strings_vs_numbers() {
     let play = &playbook.plays[0];
 
     // actual_number should be a number
-    assert!(play.vars.get("actual_number").map_or(false, |v| v.is_number()));
+    assert!(play
+        .vars
+        .get("actual_number")
+        .map_or(false, |v| v.is_number()));
 
     // string_number should be a string
-    assert!(play.vars.get("string_number").map_or(false, |v| v.is_string()));
+    assert!(play
+        .vars
+        .get("string_number")
+        .map_or(false, |v| v.is_string()));
 }
 
 // ============================================================================
@@ -994,10 +1026,14 @@ fn test_template_in_various_positions() {
       when: "{{ enable_copy }}"
 "#;
 
-    let playbook = Playbook::from_yaml(yaml, None).expect("Should parse templates in various positions");
+    let playbook =
+        Playbook::from_yaml(yaml, None).expect("Should parse templates in various positions");
 
     let play = &playbook.plays[0];
-    assert!(play.name.contains("{{"), "Play name should contain template");
+    assert!(
+        play.name.contains("{{"),
+        "Play name should contain template"
+    );
     assert!(play.hosts.contains("{{"), "Hosts should contain template");
 }
 
@@ -1087,10 +1123,13 @@ fn test_hash_in_values_vs_comments() {
 fn test_to_yaml_filter() {
     let engine = TemplateEngine::new();
     let mut vars = HashMap::new();
-    vars.insert("data".to_string(), serde_json::json!({
-        "name": "test",
-        "values": [1, 2, 3]
-    }));
+    vars.insert(
+        "data".to_string(),
+        serde_json::json!({
+            "name": "test",
+            "values": [1, 2, 3]
+        }),
+    );
 
     let result = engine.render("{{ data | to_yaml }}", &vars);
     assert!(result.is_ok(), "to_yaml filter should work");
@@ -1100,7 +1139,10 @@ fn test_to_yaml_filter() {
 fn test_from_yaml_filter() {
     let engine = TemplateEngine::new();
     let mut vars = HashMap::new();
-    vars.insert("yaml_string".to_string(), serde_json::json!("name: test\nvalue: 42"));
+    vars.insert(
+        "yaml_string".to_string(),
+        serde_json::json!("name: test\nvalue: 42"),
+    );
 
     let result = engine.render("{{ yaml_string | from_yaml }}", &vars);
     assert!(result.is_ok(), "from_yaml filter should work");
@@ -1167,7 +1209,10 @@ fn test_duplicate_keys_handling() {
     // YAML parsers typically take the last value for duplicate keys
     let result = Playbook::from_yaml(yaml, None);
     if let Ok(playbook) = result {
-        assert_eq!(playbook.plays[0].hosts, "webservers", "Last value should win");
+        assert_eq!(
+            playbook.plays[0].hosts, "webservers",
+            "Last value should win"
+        );
     }
     // Some parsers may error - both behaviors are acceptable
 }
@@ -1255,5 +1300,9 @@ fn test_yaml_compatibility_summary() {
     }
     println!("=========================================\n");
 
-    assert_eq!(covered_areas.len(), 22, "Should cover 22 YAML compatibility areas");
+    assert_eq!(
+        covered_areas.len(),
+        22,
+        "Should cover 22 YAML compatibility areas"
+    );
 }

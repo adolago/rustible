@@ -77,8 +77,9 @@ impl PipConfig {
             }
             Some(serde_json::Value::String(s)) => {
                 // String: parse with shell_words for proper quote/space handling
-                shell_words::split(s)
-                    .map_err(|e| ModuleError::InvalidParameter(format!("Invalid extra_args: {}", e)))?
+                shell_words::split(s).map_err(|e| {
+                    ModuleError::InvalidParameter(format!("Invalid extra_args: {}", e))
+                })?
             }
             Some(_) => {
                 return Err(ModuleError::InvalidParameter(

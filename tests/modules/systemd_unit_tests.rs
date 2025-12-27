@@ -111,10 +111,7 @@ fn test_systemd_unit_state_params() {
     params.insert("state".to_string(), serde_json::json!("present"));
     params.insert("content".to_string(), serde_json::json!("[Unit]"));
 
-    assert_eq!(
-        params.get("state").unwrap(),
-        &serde_json::json!("present")
-    );
+    assert_eq!(params.get("state").unwrap(), &serde_json::json!("present"));
 }
 
 #[test]
@@ -219,15 +216,26 @@ fn test_template_timer_with_calendar() {
 
 #[test]
 fn test_template_timer_with_boot_sec() {
-    let content = templates::timer("Run after boot", None, Some("5min"), None, "startup.service");
+    let content = templates::timer(
+        "Run after boot",
+        None,
+        Some("5min"),
+        None,
+        "startup.service",
+    );
     assert!(content.contains("OnBootSec=5min"));
     assert!(!content.contains("OnCalendar="));
 }
 
 #[test]
 fn test_template_timer_with_unit_active_sec() {
-    let content =
-        templates::timer("Run periodically", None, None, Some("1h"), "periodic.service");
+    let content = templates::timer(
+        "Run periodically",
+        None,
+        None,
+        Some("1h"),
+        "periodic.service",
+    );
     assert!(content.contains("OnUnitActiveSec=1h"));
 }
 
@@ -393,11 +401,7 @@ fn test_unit_name_timer_format() {
 
 #[test]
 fn test_unit_name_socket_format() {
-    let valid_names = [
-        "myapp.socket",
-        "web.socket",
-        "api-server.socket",
-    ];
+    let valid_names = ["myapp.socket", "web.socket", "api-server.socket"];
 
     for name in valid_names {
         assert!(

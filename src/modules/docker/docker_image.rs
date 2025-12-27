@@ -141,7 +141,9 @@ pub struct ImageConfig {
 impl ImageConfig {
     fn from_params(params: &ModuleParams) -> ModuleResult<Self> {
         let name = params.get_string_required("name")?;
-        let tag = params.get_string("tag")?.unwrap_or_else(|| "latest".to_string());
+        let tag = params
+            .get_string("tag")?
+            .unwrap_or_else(|| "latest".to_string());
 
         let state = if let Some(s) = params.get_string("state")? {
             ImageState::from_str(&s)?
@@ -177,22 +179,31 @@ impl ImageConfig {
 
             BuildConfig {
                 path: obj.get("path").and_then(|v| v.as_str()).map(String::from),
-                dockerfile: obj.get("dockerfile")
+                dockerfile: obj
+                    .get("dockerfile")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Dockerfile")
                     .to_string(),
                 args,
-                nocache: obj.get("nocache").and_then(|v| v.as_bool()).unwrap_or(false),
+                nocache: obj
+                    .get("nocache")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
                 pull: obj.get("pull").and_then(|v| v.as_bool()).unwrap_or(false),
                 target: obj.get("target").and_then(|v| v.as_str()).map(String::from),
                 rm: obj.get("rm").and_then(|v| v.as_bool()).unwrap_or(true),
-                forcerm: obj.get("forcerm").and_then(|v| v.as_bool()).unwrap_or(false),
+                forcerm: obj
+                    .get("forcerm")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
                 labels,
             }
         } else {
             BuildConfig {
                 path: params.get_string("build_path")?,
-                dockerfile: params.get_string("dockerfile")?.unwrap_or_else(|| "Dockerfile".to_string()),
+                dockerfile: params
+                    .get_string("dockerfile")?
+                    .unwrap_or_else(|| "Dockerfile".to_string()),
                 ..Default::default()
             }
         };
@@ -233,9 +244,12 @@ impl DockerImageModule {
         let reference = format!("{}:{}", name, tag);
         match docker.inspect_image(&reference).await {
             Ok(_) => Ok(true),
-            Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => Ok(false),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => Ok(false),
             Err(e) => Err(ModuleError::ExecutionFailed(format!(
-                "Failed to inspect image: {}", e
+                "Failed to inspect image: {}",
+                e
             ))),
         }
     }
@@ -293,12 +307,14 @@ impl DockerImageModule {
 
         let mut stream = docker.build_image(options, None, Some(tar_data.into()));
         while let Some(result) = stream.next().await {
-            let info = result.map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Build failed: {}", e))
-            })?;
+            let info =
+                result.map_err(|e| ModuleError::ExecutionFailed(format!("Build failed: {}", e)))?;
             // Log build output if needed
             if let Some(error) = info.error {
-                return Err(ModuleError::ExecutionFailed(format!("Build error: {}", error)));
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "Build error: {}",
+                    error
+                )));
             }
         }
 
@@ -313,38 +329,37 @@ impl DockerImageModule {
             noprune: false,
         };
 
-        docker.remove_image(&reference, Some(options), None).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to remove image: {}", e))
-        })?;
+        docker
+            .remove_image(&reference, Some(options), None)
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to remove image: {}", e)))?;
 
         Ok(())
     }
 
     /// Tag image
     async fn tag_image(docker: &Docker, source: &str, repo: &str, tag: &str) -> ModuleResult<()> {
-        let options = TagImageOptions {
-            repo,
-            tag,
-        };
+        let options = TagImageOptions { repo, tag };
 
-        docker.tag_image(source, Some(options)).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to tag image: {}", e))
-        })
+        docker
+            .tag_image(source, Some(options))
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to tag image: {}", e)))
     }
 
     /// Push image to registry
     async fn push_image(docker: &Docker, name: &str, tag: &str) -> ModuleResult<()> {
-        let options = bollard::image::PushImageOptions {
-            tag,
-        };
+        let options = bollard::image::PushImageOptions { tag };
 
         let mut stream = docker.push_image(name, Some(options), None);
         while let Some(result) = stream.next().await {
-            let info = result.map_err(|e| {
-                ModuleError::ExecutionFailed(format!("Push failed: {}", e))
-            })?;
+            let info =
+                result.map_err(|e| ModuleError::ExecutionFailed(format!("Push failed: {}", e)))?;
             if let Some(error) = info.error {
-                return Err(ModuleError::ExecutionFailed(format!("Push error: {}", error)));
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "Push error: {}",
+                    error
+                )));
             }
         }
 
@@ -352,7 +367,11 @@ impl DockerImageModule {
     }
 
     /// Get image info
-    async fn get_image_info(docker: &Docker, name: &str, tag: &str) -> ModuleResult<serde_json::Value> {
+    async fn get_image_info(
+        docker: &Docker,
+        name: &str,
+        tag: &str,
+    ) -> ModuleResult<serde_json::Value> {
         let reference = format!("{}:{}", name, tag);
         match docker.inspect_image(&reference).await {
             Ok(info) => Ok(serde_json::json!({
@@ -390,12 +409,16 @@ impl DockerImageModule {
                         messages.push(format!("Would remove image '{}'", config.full_reference()));
                         changed = true;
                     } else {
-                        Self::remove_image(&docker, &config.name, &config.tag, config.force).await?;
+                        Self::remove_image(&docker, &config.name, &config.tag, config.force)
+                            .await?;
                         messages.push(format!("Removed image '{}'", config.full_reference()));
                         changed = true;
                     }
                 } else {
-                    messages.push(format!("Image '{}' does not exist", config.full_reference()));
+                    messages.push(format!(
+                        "Image '{}' does not exist",
+                        config.full_reference()
+                    ));
                 }
             }
 
@@ -404,21 +427,29 @@ impl DockerImageModule {
                     ImageSource::Pull => {
                         if !exists {
                             if context.check_mode {
-                                messages.push(format!("Would pull image '{}'", config.full_reference()));
+                                messages.push(format!(
+                                    "Would pull image '{}'",
+                                    config.full_reference()
+                                ));
                                 changed = true;
                             } else {
                                 Self::pull_image(&docker, &config.name, &config.tag).await?;
-                                messages.push(format!("Pulled image '{}'", config.full_reference()));
+                                messages
+                                    .push(format!("Pulled image '{}'", config.full_reference()));
                                 changed = true;
                             }
                         } else {
-                            messages.push(format!("Image '{}' already exists", config.full_reference()));
+                            messages.push(format!(
+                                "Image '{}' already exists",
+                                config.full_reference()
+                            ));
                         }
                     }
                     ImageSource::Build => {
                         // For build, we always rebuild if source is 'build'
                         if context.check_mode {
-                            messages.push(format!("Would build image '{}'", config.full_reference()));
+                            messages
+                                .push(format!("Would build image '{}'", config.full_reference()));
                             changed = true;
                         } else {
                             Self::build_image(&docker, &config).await?;
@@ -429,7 +460,9 @@ impl DockerImageModule {
                     ImageSource::Load => {
                         if !exists {
                             let archive_path = config.archive_path.as_ref().ok_or_else(|| {
-                                ModuleError::MissingParameter("archive_path is required for source=load".to_string())
+                                ModuleError::MissingParameter(
+                                    "archive_path is required for source=load".to_string(),
+                                )
                             })?;
                             if context.check_mode {
                                 messages.push(format!("Would load image from '{}'", archive_path));
@@ -437,23 +470,34 @@ impl DockerImageModule {
                             } else {
                                 // Load image from tar archive
                                 let file = std::fs::File::open(archive_path).map_err(|e| {
-                                    ModuleError::ExecutionFailed(format!("Failed to open archive: {}", e))
+                                    ModuleError::ExecutionFailed(format!(
+                                        "Failed to open archive: {}",
+                                        e
+                                    ))
                                 })?;
                                 let mut stream = docker.import_image(
                                     bollard::image::ImportImageOptions { quiet: true },
-                                    hyper::Body::wrap_stream(tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file))),
+                                    hyper::Body::wrap_stream(tokio_util::io::ReaderStream::new(
+                                        tokio::fs::File::from_std(file),
+                                    )),
                                     None,
                                 );
                                 while let Some(result) = stream.next().await {
                                     result.map_err(|e| {
-                                        ModuleError::ExecutionFailed(format!("Failed to load image: {}", e))
+                                        ModuleError::ExecutionFailed(format!(
+                                            "Failed to load image: {}",
+                                            e
+                                        ))
                                     })?;
                                 }
                                 messages.push(format!("Loaded image from '{}'", archive_path));
                                 changed = true;
                             }
                         } else {
-                            messages.push(format!("Image '{}' already exists", config.full_reference()));
+                            messages.push(format!(
+                                "Image '{}' already exists",
+                                config.full_reference()
+                            ));
                         }
                     }
                     ImageSource::Local => {
@@ -463,7 +507,10 @@ impl DockerImageModule {
                                 config.full_reference()
                             )));
                         }
-                        messages.push(format!("Image '{}' exists locally", config.full_reference()));
+                        messages.push(format!(
+                            "Image '{}' exists locally",
+                            config.full_reference()
+                        ));
                     }
                 }
             }
@@ -511,9 +558,13 @@ impl DockerImageModule {
 
 #[cfg(not(feature = "docker"))]
 impl DockerImageModule {
-    fn execute_stub(&self, _params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<ModuleOutput> {
+    fn execute_stub(
+        &self,
+        _params: &ModuleParams,
+        _context: &ModuleContext,
+    ) -> ModuleResult<ModuleOutput> {
         Err(ModuleError::Unsupported(
-            "Docker module requires 'docker' feature to be enabled".to_string()
+            "Docker module requires 'docker' feature to be enabled".to_string(),
         ))
     }
 }
@@ -533,7 +584,9 @@ impl Module for DockerImageModule {
 
     fn parallelization_hint(&self) -> ParallelizationHint {
         // Image operations can be rate-limited by registry
-        ParallelizationHint::RateLimited { requests_per_second: 5 }
+        ParallelizationHint::RateLimited {
+            requests_per_second: 5,
+        }
     }
 
     fn required_params(&self) -> &[&'static str] {
@@ -547,15 +600,16 @@ impl Module for DockerImageModule {
     ) -> ModuleResult<ModuleOutput> {
         #[cfg(feature = "docker")]
         {
-            let rt = tokio::runtime::Handle::try_current()
-                .map_err(|_| ModuleError::ExecutionFailed("No tokio runtime available".to_string()))?;
+            let rt = tokio::runtime::Handle::try_current().map_err(|_| {
+                ModuleError::ExecutionFailed("No tokio runtime available".to_string())
+            })?;
 
             let params = params.clone();
             let context = context.clone();
             std::thread::scope(|s| {
-                s.spawn(|| {
-                    rt.block_on(self.execute_async(&params, &context))
-                }).join().unwrap()
+                s.spawn(|| rt.block_on(self.execute_async(&params, &context)))
+                    .join()
+                    .unwrap()
             })
         }
 
@@ -577,8 +631,12 @@ impl Module for DockerImageModule {
         let config = ImageConfig::from_params(params)?;
 
         let before = format!("image: {} (current state unknown)", config.full_reference());
-        let after = format!("image: {} state={:?} source={:?}",
-            config.full_reference(), config.state, config.source);
+        let after = format!(
+            "image: {} state={:?} source={:?}",
+            config.full_reference(),
+            config.state,
+            config.source
+        );
 
         Ok(Some(Diff::new(before, after)))
     }
@@ -590,7 +648,10 @@ mod tests {
 
     #[test]
     fn test_image_state_from_str() {
-        assert_eq!(ImageState::from_str("present").unwrap(), ImageState::Present);
+        assert_eq!(
+            ImageState::from_str("present").unwrap(),
+            ImageState::Present
+        );
         assert_eq!(ImageState::from_str("absent").unwrap(), ImageState::Absent);
         assert_eq!(ImageState::from_str("build").unwrap(), ImageState::Build);
         assert!(ImageState::from_str("invalid").is_err());

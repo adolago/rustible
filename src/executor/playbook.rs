@@ -1148,13 +1148,15 @@ fn parse_task_definition(
             .as_ref()
             .map(|lc| lc.loop_var.clone())
             .unwrap_or_else(|| "item".to_string()),
-        loop_control: def.loop_control.map(|lc| crate::executor::task::LoopControl {
-            loop_var: lc.loop_var,
-            index_var: lc.index_var,
-            label: lc.label,
-            pause: lc.pause.map(|p| p as u64),
-            extended: lc.extended,
-        }),
+        loop_control: def
+            .loop_control
+            .map(|lc| crate::executor::task::LoopControl {
+                loop_var: lc.loop_var,
+                index_var: lc.index_var,
+                label: lc.label,
+                pause: lc.pause.map(|p| p as u64),
+                extended: lc.extended,
+            }),
         ignore_errors: def.ignore_errors,
         changed_when: def.changed_when.as_ref().map(|w| w.to_condition()),
         failed_when: def.failed_when.as_ref().map(|w| w.to_condition()),

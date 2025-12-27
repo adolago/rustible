@@ -156,7 +156,7 @@ impl IdempotencyClass {
             IdempotencyClass::FullyIdempotent => Some(Duration::from_secs(600)), // 10 minutes
             IdempotencyClass::StateBasedIdempotent => Some(Duration::from_secs(120)), // 2 minutes
             IdempotencyClass::ConditionallyIdempotent => Some(Duration::from_secs(60)), // 1 minute
-            IdempotencyClass::NonIdempotent => None, // Never cache
+            IdempotencyClass::NonIdempotent => None,                             // Never cache
         }
     }
 
@@ -248,9 +248,8 @@ struct CacheEntry {
 impl CacheEntry {
     fn new(result: CachedModuleResult, ttl: Option<Duration>) -> Self {
         let now = Instant::now();
-        let size_bytes = std::mem::size_of::<CachedModuleResult>()
-            + result.msg.len()
-            + result.data.len() * 64; // Estimate
+        let size_bytes =
+            std::mem::size_of::<CachedModuleResult>() + result.msg.len() + result.data.len() * 64; // Estimate
 
         Self {
             result,
@@ -263,7 +262,9 @@ impl CacheEntry {
     }
 
     fn is_expired(&self) -> bool {
-        self.expires_at.map(|e| Instant::now() >= e).unwrap_or(false)
+        self.expires_at
+            .map(|e| Instant::now() >= e)
+            .unwrap_or(false)
     }
 
     fn record_access(&self) {
@@ -325,7 +326,10 @@ impl ModuleResultCache {
         idempotency: IdempotencyClass,
     ) {
         if !idempotency.is_cacheable() {
-            trace!("Not caching non-idempotent result: {}", key.to_display_string());
+            trace!(
+                "Not caching non-idempotent result: {}",
+                key.to_display_string()
+            );
             return;
         }
 
@@ -343,7 +347,9 @@ impl ModuleResultCache {
 
         let size = entry.size_bytes;
         self.entries.insert(key.clone(), entry);
-        self.metrics.entries.store(self.entries.len(), Ordering::Relaxed);
+        self.metrics
+            .entries
+            .store(self.entries.len(), Ordering::Relaxed);
         self.metrics.memory_bytes.fetch_add(size, Ordering::Relaxed);
 
         trace!("Cached result: {}", key.to_display_string());
@@ -352,9 +358,13 @@ impl ModuleResultCache {
     /// Invalidate a specific cache entry
     pub fn invalidate(&self, key: &ModuleCacheKey) {
         if let Some((_, entry)) = self.entries.remove(key) {
-            self.metrics.entries.store(self.entries.len(), Ordering::Relaxed);
+            self.metrics
+                .entries
+                .store(self.entries.len(), Ordering::Relaxed);
             self.metrics.memory_bytes.fetch_sub(
-                entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                entry
+                    .size_bytes
+                    .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
                 Ordering::Relaxed,
             );
             self.metrics.record_invalidation();
@@ -429,7 +439,9 @@ impl ModuleResultCache {
         for key in keys_to_remove {
             if let Some((_, entry)) = self.entries.remove(&key) {
                 self.metrics.memory_bytes.fetch_sub(
-                    entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                    entry
+                        .size_bytes
+                        .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
                     Ordering::Relaxed,
                 );
                 removed += 1;
@@ -437,7 +449,9 @@ impl ModuleResultCache {
             }
         }
 
-        self.metrics.entries.store(self.entries.len(), Ordering::Relaxed);
+        self.metrics
+            .entries
+            .store(self.entries.len(), Ordering::Relaxed);
         removed
     }
 
@@ -455,7 +469,9 @@ impl ModuleResultCache {
         if let Some((key, _)) = oldest {
             if let Some((_, entry)) = self.entries.remove(&key) {
                 self.metrics.memory_bytes.fetch_sub(
-                    entry.size_bytes.min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
+                    entry
+                        .size_bytes
+                        .min(self.metrics.memory_bytes.load(Ordering::Relaxed)),
                     Ordering::Relaxed,
                 );
                 self.metrics.record_eviction();
@@ -478,7 +494,10 @@ mod tests {
     fn test_cache_key_creation() {
         let mut params = HashMap::new();
         params.insert("name".to_string(), JsonValue::String("nginx".to_string()));
-        params.insert("state".to_string(), JsonValue::String("present".to_string()));
+        params.insert(
+            "state".to_string(),
+            JsonValue::String("present".to_string()),
+        );
 
         let key = ModuleCacheKey::new("apt", &params, "host1", false, None);
 
@@ -491,11 +510,17 @@ mod tests {
     fn test_cache_key_determinism() {
         let mut params1 = HashMap::new();
         params1.insert("name".to_string(), JsonValue::String("nginx".to_string()));
-        params1.insert("state".to_string(), JsonValue::String("present".to_string()));
+        params1.insert(
+            "state".to_string(),
+            JsonValue::String("present".to_string()),
+        );
 
         let mut params2 = HashMap::new();
         // Insert in different order
-        params2.insert("state".to_string(), JsonValue::String("present".to_string()));
+        params2.insert(
+            "state".to_string(),
+            JsonValue::String("present".to_string()),
+        );
         params2.insert("name".to_string(), JsonValue::String("nginx".to_string()));
 
         let key1 = ModuleCacheKey::new("apt", &params1, "host1", false, None);
@@ -525,7 +550,10 @@ mod tests {
         );
 
         let mut cmd_params = HashMap::new();
-        cmd_params.insert("creates".to_string(), JsonValue::String("/tmp/marker".to_string()));
+        cmd_params.insert(
+            "creates".to_string(),
+            JsonValue::String("/tmp/marker".to_string()),
+        );
 
         assert_eq!(
             classify_module_idempotency("command", &cmd_params),
@@ -551,7 +579,11 @@ mod tests {
             ttl: None,
         };
 
-        cache.put(key.clone(), result.clone(), IdempotencyClass::StateBasedIdempotent);
+        cache.put(
+            key.clone(),
+            result.clone(),
+            IdempotencyClass::StateBasedIdempotent,
+        );
 
         let cached = cache.get(&key);
         assert!(cached.is_some());
@@ -624,7 +656,11 @@ mod tests {
             ttl: None,
         };
 
-        cache.put(key1.clone(), result.clone(), IdempotencyClass::FullyIdempotent);
+        cache.put(
+            key1.clone(),
+            result.clone(),
+            IdempotencyClass::FullyIdempotent,
+        );
         cache.put(key2.clone(), result, IdempotencyClass::FullyIdempotent);
 
         cache.invalidate_host("host1");

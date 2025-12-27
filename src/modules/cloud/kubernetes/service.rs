@@ -76,8 +76,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use super::{
-    parse_annotations, parse_labels, validate_k8s_name, validate_k8s_namespace,
-    K8sResourceState, ServicePort, ServiceType,
+    parse_annotations, parse_labels, validate_k8s_name, validate_k8s_namespace, K8sResourceState,
+    ServicePort, ServiceType,
 };
 
 /// Service configuration parsed from module parameters
@@ -158,7 +158,10 @@ impl ServiceConfig {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("TCP")
                                     .to_string(),
-                                name: obj.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                name: obj
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
                             })
                         } else {
                             None
@@ -300,7 +303,10 @@ impl K8sServiceModule {
         let cluster_ip = if config.service_type == ServiceType::Headless {
             None
         } else {
-            config.cluster_ip.clone().or_else(|| Some("10.96.0.1".to_string()))
+            config
+                .cluster_ip
+                .clone()
+                .or_else(|| Some("10.96.0.1".to_string()))
         };
 
         tracing::info!(
@@ -389,12 +395,11 @@ impl K8sServiceModule {
             )));
         }
 
-        Ok(ModuleOutput::changed(format!(
-            "Applied service definition for '{}'",
-            config.name
-        ))
-        .with_data("name", serde_json::json!(config.name))
-        .with_data("namespace", serde_json::json!(config.namespace)))
+        Ok(
+            ModuleOutput::changed(format!("Applied service definition for '{}'", config.name))
+                .with_data("name", serde_json::json!(config.name))
+                .with_data("namespace", serde_json::json!(config.namespace)),
+        )
     }
 
     /// Ensure service is present
@@ -409,11 +414,10 @@ impl K8sServiceModule {
             let needs_update = self.needs_update(config, &svc);
 
             if !needs_update {
-                return Ok(ModuleOutput::ok(format!(
-                    "Service '{}' is up to date",
-                    config.name
-                ))
-                .with_data("service", serde_json::to_value(&svc).unwrap()));
+                return Ok(
+                    ModuleOutput::ok(format!("Service '{}' is up to date", config.name))
+                        .with_data("service", serde_json::to_value(&svc).unwrap()),
+                );
             }
 
             if context.check_mode {
@@ -425,11 +429,10 @@ impl K8sServiceModule {
 
             let updated = Self::apply_service(config).await?;
 
-            Ok(ModuleOutput::changed(format!(
-                "Updated service '{}'",
-                config.name
-            ))
-            .with_data("service", serde_json::to_value(&updated).unwrap()))
+            Ok(
+                ModuleOutput::changed(format!("Updated service '{}'", config.name))
+                    .with_data("service", serde_json::to_value(&updated).unwrap()),
+            )
         } else {
             // Create new service
             if context.check_mode {
@@ -441,11 +444,10 @@ impl K8sServiceModule {
 
             let created = Self::apply_service(config).await?;
 
-            Ok(ModuleOutput::changed(format!(
-                "Created service '{}'",
-                config.name
-            ))
-            .with_data("service", serde_json::to_value(&created).unwrap()))
+            Ok(
+                ModuleOutput::changed(format!("Created service '{}'", config.name))
+                    .with_data("service", serde_json::to_value(&created).unwrap()),
+            )
         }
     }
 
@@ -631,10 +633,7 @@ mod tests {
     fn test_service_config_basic() {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!("nginx-svc"));
-        params.insert(
-            "selector".to_string(),
-            serde_json::json!({"app": "nginx"}),
-        );
+        params.insert("selector".to_string(), serde_json::json!({"app": "nginx"}));
         params.insert(
             "ports".to_string(),
             serde_json::json!([
@@ -683,10 +682,7 @@ mod tests {
 
         let config = ServiceConfig::from_params(&params).unwrap();
         assert_eq!(config.service_type, ServiceType::LoadBalancer);
-        assert_eq!(
-            config.load_balancer_ip,
-            Some("192.168.1.100".to_string())
-        );
+        assert_eq!(config.load_balancer_ip, Some("192.168.1.100".to_string()));
     }
 
     #[test]
@@ -713,15 +709,12 @@ mod tests {
                 "service.beta.kubernetes.io/aws-load-balancer-type": "nlb"
             }),
         );
-        params.insert(
-            "ports".to_string(),
-            serde_json::json!([{"port": 80}]),
-        );
+        params.insert("ports".to_string(), serde_json::json!([{"port": 80}]));
 
         let config = ServiceConfig::from_params(&params).unwrap();
-        assert!(config.annotations.contains_key(
-            "service.beta.kubernetes.io/aws-load-balancer-type"
-        ));
+        assert!(config
+            .annotations
+            .contains_key("service.beta.kubernetes.io/aws-load-balancer-type"));
     }
 
     #[test]

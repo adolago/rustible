@@ -118,7 +118,9 @@ fn test_dnf_shell_escape_simple_name() {
 #[test]
 fn test_dnf_shell_escape_with_version() {
     let input = "kernel-5.14.0-284";
-    assert!(input.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '.'));
+    assert!(input
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '.'));
 }
 
 #[test]
@@ -133,7 +135,9 @@ fn test_dnf_command_injection_patterns() {
 
     for input in dangerous_inputs {
         // These should not pass validation
-        assert!(input.chars().any(|c| !c.is_alphanumeric() && c != '-' && c != '.'));
+        assert!(input
+            .chars()
+            .any(|c| !c.is_alphanumeric() && c != '-' && c != '.'));
     }
 }
 

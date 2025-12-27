@@ -303,7 +303,10 @@ pub fn create_plugin_from_config(
         }
         "gcp_compute" | "google.cloud.gcp_compute" | "gcp" => {
             let plugin = GcpPlugin::new(config).map_err(|e| {
-                InventoryError::DynamicInventoryFailed(format!("Failed to create GCP plugin: {}", e))
+                InventoryError::DynamicInventoryFailed(format!(
+                    "Failed to create GCP plugin: {}",
+                    e
+                ))
             })?;
             Ok(Arc::new(plugin))
         }
@@ -324,11 +327,13 @@ mod tests {
         assert!(opt.required);
         assert_eq!(opt.option_type, PluginOptionType::String);
 
-        let opt = PluginOption::optional_bool("include_stopped", "Include stopped instances", false);
+        let opt =
+            PluginOption::optional_bool("include_stopped", "Include stopped instances", false);
         assert!(!opt.required);
         assert_eq!(opt.default, Some("false".to_string()));
 
-        let opt = PluginOption::optional_list("regions", "List of regions").with_env_var("AWS_REGIONS");
+        let opt =
+            PluginOption::optional_list("regions", "List of regions").with_env_var("AWS_REGIONS");
         assert_eq!(opt.env_var, Some("AWS_REGIONS".to_string()));
     }
 

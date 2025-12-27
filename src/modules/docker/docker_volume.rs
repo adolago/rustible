@@ -77,7 +77,9 @@ impl VolumeConfig {
             VolumeState::Present
         };
 
-        let driver = params.get_string("driver")?.unwrap_or_else(|| "local".to_string());
+        let driver = params
+            .get_string("driver")?
+            .unwrap_or_else(|| "local".to_string());
 
         // Parse driver options
         let mut driver_options = HashMap::new();
@@ -127,9 +129,12 @@ impl DockerVolumeModule {
     async fn volume_exists(docker: &Docker, name: &str) -> ModuleResult<bool> {
         match docker.inspect_volume(name).await {
             Ok(_) => Ok(true),
-            Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => Ok(false),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => Ok(false),
             Err(e) => Err(ModuleError::ExecutionFailed(format!(
-                "Failed to inspect volume: {}", e
+                "Failed to inspect volume: {}",
+                e
             ))),
         }
     }
@@ -161,9 +166,10 @@ impl DockerVolumeModule {
             labels: config.labels.clone(),
         };
 
-        docker.create_volume(options).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to create volume: {}", e))
-        })?;
+        docker
+            .create_volume(options)
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to create volume: {}", e)))?;
 
         Ok(())
     }
@@ -172,9 +178,10 @@ impl DockerVolumeModule {
     async fn remove_volume(docker: &Docker, name: &str, force: bool) -> ModuleResult<()> {
         let options = RemoveVolumeOptions { force };
 
-        docker.remove_volume(name, Some(options)).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to remove volume: {}", e))
-        })
+        docker
+            .remove_volume(name, Some(options))
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to remove volume: {}", e)))
     }
 
     /// List volumes matching a filter
@@ -186,11 +193,13 @@ impl DockerVolumeModule {
 
         let options = ListVolumesOptions { filters };
 
-        let response = docker.list_volumes(Some(options)).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to list volumes: {}", e))
-        })?;
+        let response = docker
+            .list_volumes(Some(options))
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to list volumes: {}", e)))?;
 
-        let volumes = response.volumes
+        let volumes = response
+            .volumes
             .map(|v| v.into_iter().map(|vol| vol.name).collect())
             .unwrap_or_default();
 
@@ -200,9 +209,10 @@ impl DockerVolumeModule {
     /// Prune unused volumes
     #[allow(dead_code)]
     async fn prune_volumes(docker: &Docker) -> ModuleResult<Vec<String>> {
-        let response = docker.prune_volumes::<&str>(None).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to prune volumes: {}", e))
-        })?;
+        let response = docker
+            .prune_volumes::<&str>(None)
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to prune volumes: {}", e)))?;
 
         Ok(response.volumes_deleted.unwrap_or_default())
     }
@@ -282,9 +292,13 @@ impl DockerVolumeModule {
 
 #[cfg(not(feature = "docker"))]
 impl DockerVolumeModule {
-    fn execute_stub(&self, _params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<ModuleOutput> {
+    fn execute_stub(
+        &self,
+        _params: &ModuleParams,
+        _context: &ModuleContext,
+    ) -> ModuleResult<ModuleOutput> {
         Err(ModuleError::Unsupported(
-            "Docker module requires 'docker' feature to be enabled".to_string()
+            "Docker module requires 'docker' feature to be enabled".to_string(),
         ))
     }
 }
@@ -317,15 +331,16 @@ impl Module for DockerVolumeModule {
     ) -> ModuleResult<ModuleOutput> {
         #[cfg(feature = "docker")]
         {
-            let rt = tokio::runtime::Handle::try_current()
-                .map_err(|_| ModuleError::ExecutionFailed("No tokio runtime available".to_string()))?;
+            let rt = tokio::runtime::Handle::try_current().map_err(|_| {
+                ModuleError::ExecutionFailed("No tokio runtime available".to_string())
+            })?;
 
             let params = params.clone();
             let context = context.clone();
             std::thread::scope(|s| {
-                s.spawn(|| {
-                    rt.block_on(self.execute_async(&params, &context))
-                }).join().unwrap()
+                s.spawn(|| rt.block_on(self.execute_async(&params, &context)))
+                    .join()
+                    .unwrap()
             })
         }
 
@@ -347,8 +362,10 @@ impl Module for DockerVolumeModule {
         let config = VolumeConfig::from_params(params)?;
 
         let before = format!("volume: {} (current state unknown)", config.name);
-        let after = format!("volume: {} state={:?} driver={}",
-            config.name, config.state, config.driver);
+        let after = format!(
+            "volume: {} state={:?} driver={}",
+            config.name, config.state, config.driver
+        );
 
         Ok(Some(Diff::new(before, after)))
     }
@@ -360,8 +377,14 @@ mod tests {
 
     #[test]
     fn test_volume_state_from_str() {
-        assert_eq!(VolumeState::from_str("present").unwrap(), VolumeState::Present);
-        assert_eq!(VolumeState::from_str("absent").unwrap(), VolumeState::Absent);
+        assert_eq!(
+            VolumeState::from_str("present").unwrap(),
+            VolumeState::Present
+        );
+        assert_eq!(
+            VolumeState::from_str("absent").unwrap(),
+            VolumeState::Absent
+        );
         assert!(VolumeState::from_str("invalid").is_err());
     }
 

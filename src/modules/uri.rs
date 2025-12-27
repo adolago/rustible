@@ -175,9 +175,9 @@ impl UriModule {
             builder = builder.redirect(reqwest::redirect::Policy::none());
         }
 
-        builder
-            .build()
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to build HTTP client: {}", e)))
+        builder.build().map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to build HTTP client: {}", e))
+        })
     }
 
     /// Parse HTTP method from string
@@ -387,10 +387,7 @@ impl UriModule {
     }
 
     /// Validate response status code against expected values
-    fn validate_status(
-        status_code: u16,
-        status_code_list: &[u16],
-    ) -> bool {
+    fn validate_status(status_code: u16, status_code_list: &[u16]) -> bool {
         if status_code_list.is_empty() {
             // Default: accept 2xx status codes
             (200..300).contains(&status_code)
@@ -427,16 +424,20 @@ impl UriModule {
     ) -> ModuleResult<ModuleOutput> {
         // In check mode, don't make actual requests
         if check_mode {
-            return Ok(ModuleOutput::ok(format!(
-                "Would make {} request to {}",
-                method, url
-            ))
-            .with_data("method", serde_json::json!(method))
-            .with_data("url", serde_json::json!(url)));
+            return Ok(
+                ModuleOutput::ok(format!("Would make {} request to {}", method, url))
+                    .with_data("method", serde_json::json!(method))
+                    .with_data("url", serde_json::json!(url)),
+            );
         }
 
         // Build HTTP client
-        let client = Self::build_client(timeout_secs, validate_certs, follow_redirects, max_redirects)?;
+        let client = Self::build_client(
+            timeout_secs,
+            validate_certs,
+            follow_redirects,
+            max_redirects,
+        )?;
 
         // Parse HTTP method
         let http_method = Self::parse_method(&method)?;
@@ -463,13 +464,19 @@ impl UriModule {
             }
             AuthType::OAuth2ClientCredentials => {
                 let token_url = oauth2_token_url.ok_or_else(|| {
-                    ModuleError::MissingParameter("oauth2_token_url required for OAuth2".to_string())
+                    ModuleError::MissingParameter(
+                        "oauth2_token_url required for OAuth2".to_string(),
+                    )
                 })?;
                 let client_id = oauth2_client_id.ok_or_else(|| {
-                    ModuleError::MissingParameter("oauth2_client_id required for OAuth2".to_string())
+                    ModuleError::MissingParameter(
+                        "oauth2_client_id required for OAuth2".to_string(),
+                    )
                 })?;
                 let client_secret = oauth2_client_secret.ok_or_else(|| {
-                    ModuleError::MissingParameter("oauth2_client_secret required for OAuth2".to_string())
+                    ModuleError::MissingParameter(
+                        "oauth2_client_secret required for OAuth2".to_string(),
+                    )
                 })?;
 
                 let token = Self::get_oauth2_token(
@@ -630,7 +637,8 @@ impl Module for UriModule {
                     }
                     if params.get_string("oauth2_client_secret")?.is_none() {
                         return Err(ModuleError::MissingParameter(
-                            "oauth2_client_secret is required for OAuth2 authentication".to_string(),
+                            "oauth2_client_secret is required for OAuth2 authentication"
+                                .to_string(),
                         ));
                     }
                 }
@@ -672,12 +680,11 @@ impl Module for UriModule {
 
         // In check mode, don't make actual requests - return early before needing runtime
         if context.check_mode {
-            return Ok(ModuleOutput::ok(format!(
-                "Would make {} request to {}",
-                method, url
-            ))
-            .with_data("method", serde_json::json!(method))
-            .with_data("url", serde_json::json!(url)));
+            return Ok(
+                ModuleOutput::ok(format!("Would make {} request to {}", method, url))
+                    .with_data("method", serde_json::json!(method))
+                    .with_data("url", serde_json::json!(url)),
+            );
         }
 
         // Extract headers
@@ -767,9 +774,7 @@ impl Module for UriModule {
 
         // Execute the async request using tokio runtime
         let result = tokio::runtime::Handle::try_current()
-            .map_err(|_| {
-                ModuleError::ExecutionFailed("No tokio runtime available".to_string())
-            })?
+            .map_err(|_| ModuleError::ExecutionFailed("No tokio runtime available".to_string()))?
             .block_on(Self::execute_async(
                 url,
                 method,
@@ -871,14 +876,20 @@ mod tests {
     #[test]
     fn test_validate_params_valid_https_url() {
         let module = UriModule;
-        let params = create_params(vec![("url", serde_json::json!("https://api.example.com/data"))]);
+        let params = create_params(vec![(
+            "url",
+            serde_json::json!("https://api.example.com/data"),
+        )]);
         assert!(module.validate_params(&params).is_ok());
     }
 
     #[test]
     fn test_validate_params_valid_http_url() {
         let module = UriModule;
-        let params = create_params(vec![("url", serde_json::json!("http://localhost:8080/api"))]);
+        let params = create_params(vec![(
+            "url",
+            serde_json::json!("http://localhost:8080/api"),
+        )]);
         assert!(module.validate_params(&params).is_ok());
     }
 
@@ -955,7 +966,10 @@ mod tests {
         let params = create_params(vec![
             ("url", serde_json::json!("https://example.com")),
             ("auth_type", serde_json::json!("oauth2")),
-            ("oauth2_token_url", serde_json::json!("https://auth.example.com/token")),
+            (
+                "oauth2_token_url",
+                serde_json::json!("https://auth.example.com/token"),
+            ),
             ("oauth2_client_id", serde_json::json!("client123")),
             ("oauth2_client_secret", serde_json::json!("secret456")),
         ]);
@@ -1101,7 +1115,9 @@ mod tests {
     fn test_parallelization_hint() {
         let module = UriModule;
         match module.parallelization_hint() {
-            ParallelizationHint::RateLimited { requests_per_second } => {
+            ParallelizationHint::RateLimited {
+                requests_per_second,
+            } => {
                 assert!(requests_per_second > 0);
             }
             _ => panic!("Expected RateLimited hint"),

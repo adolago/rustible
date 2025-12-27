@@ -619,12 +619,14 @@ impl Executor {
         }
 
         // Track which blocks have failed (per host) - pre-allocate with capacity
-        let mut failed_blocks: HashMap<String, HashSet<String>> = HashMap::with_capacity(host_count);
+        let mut failed_blocks: HashMap<String, HashSet<String>> =
+            HashMap::with_capacity(host_count);
         for h in hosts {
             failed_blocks.insert(h.clone(), HashSet::new());
         }
         // Track which blocks have had their rescue tasks run
-        let mut rescued_blocks: HashMap<String, HashSet<String>> = HashMap::with_capacity(host_count);
+        let mut rescued_blocks: HashMap<String, HashSet<String>> =
+            HashMap::with_capacity(host_count);
         for h in hosts {
             rescued_blocks.insert(h.clone(), HashSet::new());
         }
@@ -702,10 +704,7 @@ impl Executor {
             for (host, task_result) in task_results {
                 debug!(
                     "  Host '{}': status={:?}, changed={}, msg={:?}",
-                    host,
-                    task_result.status,
-                    task_result.changed,
-                    task_result.msg
+                    host, task_result.status, task_result.changed, task_result.msg
                 );
 
                 if let Some(host_result) = results.get_mut(&host) {

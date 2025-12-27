@@ -63,10 +63,7 @@ impl PoolMetrics {
                 "rustible_pool_size",
                 "Current number of connections in pool",
             ),
-            pool_capacity: Gauge::new(
-                "rustible_pool_capacity",
-                "Maximum pool capacity",
-            ),
+            pool_capacity: Gauge::new("rustible_pool_capacity", "Maximum pool capacity"),
             available_connections: Gauge::new(
                 "rustible_pool_available",
                 "Number of available connections in pool",
@@ -90,7 +87,9 @@ impl PoolMetrics {
             wait_time: Histogram::with_buckets(
                 "rustible_pool_wait_time_ms",
                 "Time spent waiting for an available connection",
-                &[1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 5000.0],
+                &[
+                    1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 5000.0,
+                ],
             ),
             pool_exhaustions: Counter::new(
                 "rustible_pool_exhaustions_total",
@@ -100,10 +99,7 @@ impl PoolMetrics {
                 "rustible_pool_checkouts_total",
                 "Total connection checkouts",
             ),
-            checkins: Counter::new(
-                "rustible_pool_checkins_total",
-                "Total connection checkins",
-            ),
+            checkins: Counter::new("rustible_pool_checkins_total", "Total connection checkins"),
             health_check_passes: Counter::new(
                 "rustible_pool_health_checks_passed_total",
                 "Total health checks passed",
@@ -223,7 +219,11 @@ impl PoolMetrics {
 
     /// Get all host metrics
     pub fn all_host_metrics(&self) -> Vec<HostPoolMetricsSnapshot> {
-        self.per_host.read().values().map(|m| m.snapshot()).collect()
+        self.per_host
+            .read()
+            .values()
+            .map(|m| m.snapshot())
+            .collect()
     }
 
     /// Get or create per-host metrics
@@ -440,8 +440,7 @@ impl PoolMetricsSummary {
         // - Utilization is under 90%
         // - Health success rate is above 95%
         // - No recent exhaustions
-        self.utilization_percent < 90.0
-            && self.health_success_rate() > 95.0
+        self.utilization_percent < 90.0 && self.health_success_rate() > 95.0
     }
 }
 

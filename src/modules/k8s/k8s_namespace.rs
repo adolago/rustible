@@ -283,17 +283,16 @@ impl K8sNamespaceModule {
                                 ))
                             })?;
 
-                        Ok(ModuleOutput::changed(format!(
-                            "Updated Namespace '{}'",
-                            config.name
-                        ))
-                        .with_data(
-                            "status",
-                            serde_json::json!(result
-                                .status
-                                .as_ref()
-                                .and_then(|s| s.phase.clone())),
-                        ))
+                        Ok(
+                            ModuleOutput::changed(format!("Updated Namespace '{}'", config.name))
+                                .with_data(
+                                    "status",
+                                    serde_json::json!(result
+                                        .status
+                                        .as_ref()
+                                        .and_then(|s| s.phase.clone())),
+                                ),
+                        )
                     }
                     Err(kube::Error::Api(e)) if e.code == 404 => {
                         if context.check_mode {
@@ -320,17 +319,16 @@ impl K8sNamespaceModule {
                                 .await?;
                         }
 
-                        Ok(ModuleOutput::changed(format!(
-                            "Created Namespace '{}'",
-                            config.name
-                        ))
-                        .with_data(
-                            "status",
-                            serde_json::json!(result
-                                .status
-                                .as_ref()
-                                .and_then(|s| s.phase.clone())),
-                        ))
+                        Ok(
+                            ModuleOutput::changed(format!("Created Namespace '{}'", config.name))
+                                .with_data(
+                                    "status",
+                                    serde_json::json!(result
+                                        .status
+                                        .as_ref()
+                                        .and_then(|s| s.phase.clone())),
+                                ),
+                        )
                     }
                     Err(e) => Err(ModuleError::ExecutionFailed(format!(
                         "Failed to get Namespace: {}",
@@ -356,14 +354,24 @@ impl K8sNamespaceModule {
         }
 
         // Must start with alphanumeric character
-        if !name.chars().next().map(|c| c.is_alphanumeric()).unwrap_or(false) {
+        if !name
+            .chars()
+            .next()
+            .map(|c| c.is_alphanumeric())
+            .unwrap_or(false)
+        {
             return Err(ModuleError::InvalidParameter(
                 "Namespace name must start with an alphanumeric character".to_string(),
             ));
         }
 
         // Must end with alphanumeric character
-        if !name.chars().last().map(|c| c.is_alphanumeric()).unwrap_or(false) {
+        if !name
+            .chars()
+            .last()
+            .map(|c| c.is_alphanumeric())
+            .unwrap_or(false)
+        {
             return Err(ModuleError::InvalidParameter(
                 "Namespace name must end with an alphanumeric character".to_string(),
             ));

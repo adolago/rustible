@@ -23,7 +23,7 @@
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
-    ModuleResult, ParamExt, ParallelizationHint,
+    ModuleResult, ParallelizationHint, ParamExt,
 };
 use crate::connection::{Connection, ExecuteOptions};
 use once_cell::sync::Lazy;
@@ -40,9 +40,8 @@ static SERVICE_NAME_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0-9_-]*$").expect("Invalid service name regex"));
 
 /// Regex for validating port specifications (port/protocol)
-static PORT_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^(\d+(-\d+)?/(tcp|udp|sctp|dccp))$").expect("Invalid port regex")
-});
+static PORT_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^(\d+(-\d+)?/(tcp|udp|sctp|dccp))$").expect("Invalid port regex"));
 
 /// Regex for validating source addresses (IP or CIDR)
 static SOURCE_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -282,7 +281,10 @@ impl FirewalldModule {
         service: &str,
         context: &ModuleContext,
     ) -> ModuleResult<bool> {
-        let cmd = Self::build_cmd(config, &format!("--query-service={}", shell_escape(service)));
+        let cmd = Self::build_cmd(
+            config,
+            &format!("--query-service={}", shell_escape(service)),
+        );
         let (success, _, _) = Self::execute_command(connection, &cmd, context)?;
         Ok(success)
     }
@@ -893,10 +895,7 @@ impl Module for FirewalldModule {
 
             if should_enable && !is_enabled {
                 if context.check_mode {
-                    messages.push(format!(
-                        "Would add rich rule to zone '{}'",
-                        config.zone
-                    ));
+                    messages.push(format!("Would add rich rule to zone '{}'", config.zone));
                     changed = true;
                 } else {
                     Self::manage_rich_rule(connection, &config, rule, true, context)?;
@@ -1061,8 +1060,8 @@ impl Module for FirewalldModule {
 
         // Check service
         if let Some(ref service) = config.service {
-            let is_enabled = Self::query_service(connection, &config, service, context)
-                .unwrap_or(false);
+            let is_enabled =
+                Self::query_service(connection, &config, service, context).unwrap_or(false);
             before_lines.push(format!(
                 "service {}: {}",
                 service,
@@ -1211,15 +1210,9 @@ mod tests {
 
     #[test]
     fn test_zone_target_from_str() {
-        assert_eq!(
-            ZoneTarget::from_str("ACCEPT").unwrap(),
-            ZoneTarget::Accept
-        );
+        assert_eq!(ZoneTarget::from_str("ACCEPT").unwrap(), ZoneTarget::Accept);
         assert_eq!(ZoneTarget::from_str("DROP").unwrap(), ZoneTarget::Drop);
-        assert_eq!(
-            ZoneTarget::from_str("REJECT").unwrap(),
-            ZoneTarget::Reject
-        );
+        assert_eq!(ZoneTarget::from_str("REJECT").unwrap(), ZoneTarget::Reject);
         assert_eq!(
             ZoneTarget::from_str("default").unwrap(),
             ZoneTarget::Default

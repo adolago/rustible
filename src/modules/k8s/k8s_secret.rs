@@ -479,10 +479,7 @@ impl Module for K8sSecretModule {
 
         let before = match config.state {
             SecretState::Present => "absent or different configuration".to_string(),
-            SecretState::Absent => format!(
-                "Secret '{}/{}' exists",
-                config.namespace, config.name
-            ),
+            SecretState::Absent => format!("Secret '{}/{}' exists", config.namespace, config.name),
         };
 
         let after = match config.state {
@@ -490,10 +487,7 @@ impl Module for K8sSecretModule {
                 "Secret '{}/{}' type={} with {} keys",
                 config.namespace, config.name, config.secret_type, total_keys
             ),
-            SecretState::Absent => format!(
-                "Secret '{}/{}' absent",
-                config.namespace, config.name
-            ),
+            SecretState::Absent => format!("Secret '{}/{}' absent", config.namespace, config.name),
         };
 
         Ok(Some(Diff::new(before, after)))

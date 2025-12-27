@@ -33,7 +33,9 @@ pub fn print_installation_instructions(shell: Shell) {
             println!("eval \"$(rustible completions bash)\"");
             println!();
             println!("# Option 2: Save to file");
-            println!("rustible completions bash > ~/.local/share/bash-completion/completions/rustible");
+            println!(
+                "rustible completions bash > ~/.local/share/bash-completion/completions/rustible"
+            );
             println!();
             println!("# Or for system-wide installation:");
             println!("sudo rustible completions bash > /etc/bash_completion.d/rustible");

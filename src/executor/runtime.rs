@@ -1449,8 +1449,14 @@ mod tests {
 
         // ansible_facts should still contain the nested structure for backwards compatibility
         let ansible_facts = merged.get("ansible_facts").unwrap();
-        assert_eq!(ansible_facts.get("hostname"), Some(&serde_json::json!("myserver")));
-        assert_eq!(ansible_facts.get("distribution"), Some(&serde_json::json!("Ubuntu")));
+        assert_eq!(
+            ansible_facts.get("hostname"),
+            Some(&serde_json::json!("myserver"))
+        );
+        assert_eq!(
+            ansible_facts.get("distribution"),
+            Some(&serde_json::json!("Ubuntu"))
+        );
     }
 
     #[test]

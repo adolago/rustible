@@ -220,7 +220,8 @@ pub async fn list_playbooks(
                                 let plays = std::fs::read_to_string(&entry_path)
                                     .ok()
                                     .and_then(|content| {
-                                        serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content).ok()
+                                        serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                                            .ok()
                                     })
                                     .map(|v| v.len())
                                     .unwrap_or(0);
@@ -270,7 +271,10 @@ fn find_playbook(search_paths: &[String], playbook: &str) -> ApiResult<String> {
         }
     }
 
-    Err(ApiError::NotFound(format!("Playbook not found: {}", playbook)))
+    Err(ApiError::NotFound(format!(
+        "Playbook not found: {}",
+        playbook
+    )))
 }
 
 /// Internal function to run a playbook job.
@@ -282,7 +286,11 @@ async fn run_playbook_job(
 ) {
     // Update status to running
     state.update_job_status(job_id, JobStatus::Running);
-    state.append_job_output(job_id, format!("Starting playbook: {}", playbook_path), "stdout");
+    state.append_job_output(
+        job_id,
+        format!("Starting playbook: {}", playbook_path),
+        "stdout",
+    );
 
     // Load inventory if specified
     let inventory = if let Some(inv_path) = &req.inventory {
@@ -328,7 +336,11 @@ async fn run_playbook_job(
     if let Some(ref inv) = inventory {
         state.append_job_output(
             job_id,
-            format!("Inventory: {} hosts, {} groups", inv.host_count(), inv.group_count()),
+            format!(
+                "Inventory: {} hosts, {} groups",
+                inv.host_count(),
+                inv.group_count()
+            ),
             "stdout",
         );
     }
@@ -344,27 +356,15 @@ async fn run_playbook_job(
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     for (i, play) in playbook.plays.iter().enumerate() {
-        state.append_job_output(
-            job_id,
-            format!("PLAY [{}] ***", play.name),
-            "stdout",
-        );
+        state.append_job_output(job_id, format!("PLAY [{}] ***", play.name), "stdout");
 
         for task in play.all_tasks() {
-            state.append_job_output(
-                job_id,
-                format!("TASK [{}] ***", task.name),
-                "stdout",
-            );
+            state.append_job_output(job_id, format!("TASK [{}] ***", task.name), "stdout");
 
             // Simulate task execution
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-            state.append_job_output(
-                job_id,
-                format!("ok: [localhost]"),
-                "stdout",
-            );
+            state.append_job_output(job_id, format!("ok: [localhost]"), "stdout");
         }
     }
 
@@ -441,10 +441,13 @@ pub async fn cancel_job(
     AxumPath(job_id): AxumPath<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
     if state.cancel_job(job_id) {
-        Ok((StatusCode::OK, Json(serde_json::json!({
-            "message": "Job cancelled",
-            "job_id": job_id
-        }))))
+        Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "message": "Job cancelled",
+                "job_id": job_id
+            })),
+        ))
     } else {
         Err(ApiError::Conflict("Job cannot be cancelled".to_string()))
     }
@@ -483,10 +486,7 @@ pub async fn list_hosts(
         .or_else(|| state.load_inventory().ok())
         .ok_or_else(|| ApiError::NotFound("No inventory loaded".to_string()))?;
 
-    let hosts: Vec<HostResponse> = inventory
-        .hosts()
-        .map(host_to_response)
-        .collect();
+    let hosts: Vec<HostResponse> = inventory.hosts().map(host_to_response).collect();
 
     let total = hosts.len();
     Ok(Json(HostListResponse { hosts, total }))

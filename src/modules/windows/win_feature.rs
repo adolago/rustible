@@ -346,7 +346,11 @@ impl Module for WinFeatureModule {
         for name in &config.names {
             if let Some(feature_info) = current_status.get(name) {
                 if let Some(error) = feature_info.get("Error") {
-                    errors.push(format!("{}: {}", name, error.as_str().unwrap_or("Unknown error")));
+                    errors.push(format!(
+                        "{}: {}",
+                        name,
+                        error.as_str().unwrap_or("Unknown error")
+                    ));
                     continue;
                 }
 
@@ -478,7 +482,11 @@ impl Module for WinFeatureModule {
         for name in &config.names {
             if let Some(feature_info) = current_status.get(name) {
                 let is_installed = feature_info["Installed"].as_bool().unwrap_or(false);
-                let state_str = if is_installed { "Installed" } else { "Not installed" };
+                let state_str = if is_installed {
+                    "Installed"
+                } else {
+                    "Not installed"
+                };
 
                 before_lines.push(format!("{}: {}", name, state_str));
 
@@ -540,7 +548,10 @@ mod tests {
 
     #[test]
     fn test_build_check_features_script() {
-        let names = vec!["IIS-WebServerRole".to_string(), "NetFx4-AdvSrvs".to_string()];
+        let names = vec![
+            "IIS-WebServerRole".to_string(),
+            "NetFx4-AdvSrvs".to_string(),
+        ];
         let script = WinFeatureModule::build_check_features_script(&names);
         assert!(script.contains("Get-WindowsFeature"));
         assert!(script.contains("IIS-WebServerRole"));

@@ -315,7 +315,11 @@ impl TimezoneModule {
         } else {
             // Fallback: try enabling/disabling common NTP services
             let services = ["chronyd", "ntpd", "systemd-timesyncd", "ntp"];
-            let action = if enabled { "enable --now" } else { "disable --now" };
+            let action = if enabled {
+                "enable --now"
+            } else {
+                "disable --now"
+            };
 
             for service in services {
                 let cmd = format!("systemctl {} {} 2>/dev/null || true", action, service);
@@ -423,7 +427,10 @@ impl TimezoneModule {
         context: &ModuleContext,
     ) -> ModuleResult<bool> {
         let zoneinfo_path = format!("/usr/share/zoneinfo/{}", timezone);
-        let cmd = format!("test -f {} && echo yes || echo no", shell_escape(&zoneinfo_path));
+        let cmd = format!(
+            "test -f {} && echo yes || echo no",
+            shell_escape(&zoneinfo_path)
+        );
         let (_, stdout, _) = Self::execute_command(connection, cmd.as_str(), context)?;
         Ok(stdout.trim() == "yes")
     }
@@ -496,7 +503,10 @@ impl Module for TimezoneModule {
         let strategy = TimezoneStrategy::from_str(&strategy_str)?;
         let ntp_enabled = params.get_bool("ntp")?;
         let hwclock_str = params.get_string("hwclock")?;
-        let hwclock_mode = hwclock_str.as_ref().map(|s| HwclockMode::from_str(s)).transpose()?;
+        let hwclock_mode = hwclock_str
+            .as_ref()
+            .map(|s| HwclockMode::from_str(s))
+            .transpose()?;
 
         // Detect or use specified strategy
         let effective_strategy = match strategy {
@@ -550,12 +560,20 @@ impl Module for TimezoneModule {
 
             if current_ntp != should_enable_ntp {
                 if context.check_mode {
-                    let action = if should_enable_ntp { "enable" } else { "disable" };
+                    let action = if should_enable_ntp {
+                        "enable"
+                    } else {
+                        "disable"
+                    };
                     messages.push(format!("Would {} NTP synchronization", action));
                     changed = true;
                 } else {
                     Self::set_ntp_status(connection, should_enable_ntp, context)?;
-                    let action = if should_enable_ntp { "Enabled" } else { "Disabled" };
+                    let action = if should_enable_ntp {
+                        "Enabled"
+                    } else {
+                        "Disabled"
+                    };
                     messages.push(format!("{} NTP synchronization", action));
                     changed = true;
                 }
@@ -649,16 +667,18 @@ impl Module for TimezoneModule {
         let strategy = TimezoneStrategy::from_str(&strategy_str)?;
         let ntp_enabled = params.get_bool("ntp")?;
         let hwclock_str = params.get_string("hwclock")?;
-        let hwclock_mode = hwclock_str.as_ref().map(|s| HwclockMode::from_str(s)).transpose()?;
+        let hwclock_mode = hwclock_str
+            .as_ref()
+            .map(|s| HwclockMode::from_str(s))
+            .transpose()?;
 
         let effective_strategy = match strategy {
             TimezoneStrategy::Auto => Self::detect_strategy(connection, context)?,
             s => s,
         };
 
-        let current_timezone =
-            Self::get_current_timezone(connection, &effective_strategy, context)
-                .unwrap_or_else(|_| String::from("(unknown)"));
+        let current_timezone = Self::get_current_timezone(connection, &effective_strategy, context)
+            .unwrap_or_else(|_| String::from("(unknown)"));
 
         let mut before_lines = Vec::new();
         let mut after_lines = Vec::new();
@@ -676,8 +696,8 @@ impl Module for TimezoneModule {
 
         // Hardware clock
         if let Some(ref hwclock) = hwclock_mode {
-            let current_hwclock = Self::get_hwclock_mode(connection, context)
-                .unwrap_or(HwclockMode::Utc);
+            let current_hwclock =
+                Self::get_hwclock_mode(connection, context).unwrap_or(HwclockMode::Utc);
             let current_str = match current_hwclock {
                 HwclockMode::Utc => "UTC",
                 HwclockMode::Local => "local",

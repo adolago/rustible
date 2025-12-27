@@ -30,7 +30,7 @@
 
 use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
-    ModuleResult, ParamExt, ParallelizationHint,
+    ModuleResult, ParallelizationHint, ParamExt,
 };
 use crate::connection::{Connection, ExecuteOptions};
 use once_cell::sync::Lazy;
@@ -425,11 +425,8 @@ impl UfwModule {
         connection: &Arc<dyn Connection + Send + Sync>,
         context: &ModuleContext,
     ) -> ModuleResult<bool> {
-        let (success, _, _) = Self::execute_command(
-            connection,
-            "command -v ufw >/dev/null 2>&1",
-            context,
-        )?;
+        let (success, _, _) =
+            Self::execute_command(connection, "command -v ufw >/dev/null 2>&1", context)?;
         Ok(success)
     }
 
@@ -482,8 +479,7 @@ impl UfwModule {
         connection: &Arc<dyn Connection + Send + Sync>,
         context: &ModuleContext,
     ) -> ModuleResult<()> {
-        let (success, _, stderr) =
-            Self::execute_command(connection, "ufw --force reset", context)?;
+        let (success, _, stderr) = Self::execute_command(connection, "ufw --force reset", context)?;
         if success {
             Ok(())
         } else {
@@ -707,7 +703,9 @@ impl UfwModule {
         // Check if all pattern parts are found in the same line
         for line in status.lines() {
             let line_upper: String = line.to_uppercase();
-            let all_match = pattern_parts.iter().all(|p| line_upper.contains(&p.to_uppercase()));
+            let all_match = pattern_parts
+                .iter()
+                .all(|p| line_upper.contains(&p.to_uppercase()));
             if all_match && !pattern_parts.is_empty() {
                 return Ok(true);
             }
@@ -892,10 +890,7 @@ impl Module for UfwModule {
                     changed = true;
                 } else {
                     Self::set_default(connection, direction, policy, context)?;
-                    messages.push(format!(
-                        "Set default {} policy to {}",
-                        direction, target
-                    ));
+                    messages.push(format!("Set default {} policy to {}", direction, target));
                     changed = true;
                 }
             } else {
@@ -989,7 +984,8 @@ impl Module for UfwModule {
         let mut after_lines = Vec::new();
 
         // Get current status
-        let (is_active, _status) = Self::get_ufw_status(connection, context).unwrap_or((false, String::new()));
+        let (is_active, _status) =
+            Self::get_ufw_status(connection, context).unwrap_or((false, String::new()));
 
         before_lines.push(format!(
             "status: {}",
@@ -1078,7 +1074,9 @@ fn validate_interface(name: &str) -> ModuleResult<()> {
 
 /// Escape a string for safe use in shell commands
 fn shell_escape(s: &str) -> String {
-    if s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/' || c == ':') {
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/' || c == ':')
+    {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))

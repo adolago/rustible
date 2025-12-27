@@ -159,7 +159,10 @@ impl ConditionEvaluator {
         }
 
         // Handle defined() check
-        if let Some(inner) = expr.strip_prefix("defined(").and_then(|s| s.strip_suffix(')')) {
+        if let Some(inner) = expr
+            .strip_prefix("defined(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
             return Ok(ctx.is_defined(inner.trim()));
         }
 

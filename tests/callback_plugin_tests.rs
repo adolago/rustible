@@ -31,7 +31,12 @@ use rustible::traits::{ExecutionCallback, ExecutionResult, ModuleResult};
 // ============================================================================
 
 /// Create a test ExecutionResult for task completion testing.
-fn create_test_result(task_name: &str, host: &str, success: bool, changed: bool) -> ExecutionResult {
+fn create_test_result(
+    task_name: &str,
+    host: &str,
+    success: bool,
+    changed: bool,
+) -> ExecutionResult {
     ExecutionResult {
         host: host.to_string(),
         task_name: task_name.to_string(),
@@ -360,7 +365,11 @@ mod default_callback_tests {
         callback
             .on_play_start(
                 "test-play",
-                &["host1".to_string(), "host2".to_string(), "host3".to_string()],
+                &[
+                    "host1".to_string(),
+                    "host2".to_string(),
+                    "host3".to_string(),
+                ],
             )
             .await;
 
@@ -455,13 +464,7 @@ mod timer_callback_tests {
         let timer = TimerCallback::default();
 
         // Record a task
-        timer.record_task_complete(
-            "task1",
-            "host1",
-            true,
-            false,
-            Some(Duration::from_secs(1)),
-        );
+        timer.record_task_complete("task1", "host1", true, false, Some(Duration::from_secs(1)));
         assert_eq!(timer.get_total_tasks(), 1);
 
         // Clone should start fresh (no shared state)
@@ -473,13 +476,7 @@ mod timer_callback_tests {
     fn test_timer_callback_reset() {
         let timer = TimerCallback::default();
 
-        timer.record_task_complete(
-            "task1",
-            "host1",
-            true,
-            false,
-            Some(Duration::from_secs(1)),
-        );
+        timer.record_task_complete("task1", "host1", true, false, Some(Duration::from_secs(1)));
         assert_eq!(timer.get_total_tasks(), 1);
 
         timer.reset();
@@ -495,9 +492,27 @@ mod timer_callback_tests {
             ..Default::default()
         });
 
-        timer.record_task_complete("task1", "host1", true, false, Some(Duration::from_millis(100)));
-        timer.record_task_complete("task2", "host1", true, true, Some(Duration::from_millis(200)));
-        timer.record_task_complete("task3", "host1", false, false, Some(Duration::from_millis(50)));
+        timer.record_task_complete(
+            "task1",
+            "host1",
+            true,
+            false,
+            Some(Duration::from_millis(100)),
+        );
+        timer.record_task_complete(
+            "task2",
+            "host1",
+            true,
+            true,
+            Some(Duration::from_millis(200)),
+        );
+        timer.record_task_complete(
+            "task3",
+            "host1",
+            false,
+            false,
+            Some(Duration::from_millis(50)),
+        );
 
         let timings = timer.get_timings();
         assert_eq!(timings.len(), 3);
@@ -514,7 +529,13 @@ mod timer_callback_tests {
         timer.record_task_complete("fast", "h1", true, false, Some(Duration::from_millis(10)));
         timer.record_task_complete("medium", "h1", true, false, Some(Duration::from_millis(50)));
         timer.record_task_complete("slow", "h1", true, false, Some(Duration::from_millis(100)));
-        timer.record_task_complete("very-slow", "h1", true, false, Some(Duration::from_millis(500)));
+        timer.record_task_complete(
+            "very-slow",
+            "h1",
+            true,
+            false,
+            Some(Duration::from_millis(500)),
+        );
 
         let slowest = timer.get_slowest_tasks(2);
         assert_eq!(slowest.len(), 2);
@@ -849,9 +870,7 @@ mod minimal_callback_tests {
 
         // First playbook with failure
         callback.on_playbook_start("playbook-1").await;
-        callback
-            .on_play_start("play", &["host1".to_string()])
-            .await;
+        callback.on_play_start("play", &["host1".to_string()]).await;
         callback
             .on_task_complete(&create_test_result("task", "host1", false, false))
             .await;
@@ -873,7 +892,11 @@ mod minimal_callback_tests {
         callback
             .on_play_start(
                 "test-play",
-                &["host1".to_string(), "host2".to_string(), "host3".to_string()],
+                &[
+                    "host1".to_string(),
+                    "host2".to_string(),
+                    "host3".to_string(),
+                ],
             )
             .await;
 
@@ -914,11 +937,12 @@ mod cross_plugin_tests {
                 .show_skipped(false)
                 .build(),
         );
-        let timer_callback: Arc<dyn ExecutionCallback> = Arc::new(TimerCallback::new(TimerConfig {
-            show_per_task: false,
-            show_summary: false,
-            ..Default::default()
-        }));
+        let timer_callback: Arc<dyn ExecutionCallback> =
+            Arc::new(TimerCallback::new(TimerConfig {
+                show_per_task: false,
+                show_summary: false,
+                ..Default::default()
+            }));
         let minimal_callback: Arc<dyn ExecutionCallback> = Arc::new(MinimalCallback::new());
 
         let callbacks: Vec<Arc<dyn ExecutionCallback>> = vec![

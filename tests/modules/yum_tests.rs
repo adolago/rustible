@@ -118,19 +118,19 @@ fn test_yum_shell_escape_simple_name() {
 #[test]
 fn test_yum_shell_escape_with_version() {
     let input = "nginx-1.0";
-    assert!(input.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '.'));
+    assert!(input
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '.'));
 }
 
 #[test]
 fn test_yum_command_injection_patterns() {
-    let dangerous_inputs = [
-        "; rm -rf /",
-        "$(whoami)",
-        "`id`",
-    ];
+    let dangerous_inputs = ["; rm -rf /", "$(whoami)", "`id`"];
 
     for input in dangerous_inputs {
-        assert!(input.chars().any(|c| !c.is_alphanumeric() && c != '-' && c != '.'));
+        assert!(input
+            .chars()
+            .any(|c| !c.is_alphanumeric() && c != '-' && c != '.'));
     }
 }
 
@@ -234,11 +234,7 @@ fn test_yum_check_mode_context() {
 
 #[test]
 fn test_yum_rpm_specific_package_names() {
-    let valid_names = [
-        "kernel-headers",
-        "gcc-c++",
-        "python3-devel",
-    ];
+    let valid_names = ["kernel-headers", "gcc-c++", "python3-devel"];
 
     for name in valid_names {
         assert!(!name.is_empty());

@@ -140,7 +140,7 @@ impl RuntimeConfig {
             worker_threads: Some(cpu_count),
             max_blocking_threads: 256,
             thread_stack_size: 4 * 1024 * 1024, // Larger for recursion
-            event_interval: 127, // Less responsive, lower overhead
+            event_interval: 127,                // Less responsive, lower overhead
             global_queue_interval: 61,
             ..Default::default()
         }
@@ -312,7 +312,8 @@ impl MetricsCollector {
     pub fn record_backpressure(&self, wait_time: Duration) {
         self.backpressure_events.fetch_add(1, Ordering::Relaxed);
         let wait_us = wait_time.as_micros() as u64;
-        self.total_wait_time_us.fetch_add(wait_us, Ordering::Relaxed);
+        self.total_wait_time_us
+            .fetch_add(wait_us, Ordering::Relaxed);
 
         // Update max wait time using CAS loop
         let mut current = self.max_wait_time_us.load(Ordering::Relaxed);
@@ -662,11 +663,7 @@ pub struct TaskSpawner {
 
 impl TaskSpawner {
     /// Create a new task spawner.
-    pub fn new(
-        handle: Handle,
-        max_concurrent: usize,
-        metrics: Arc<MetricsCollector>,
-    ) -> Self {
+    pub fn new(handle: Handle, max_concurrent: usize, metrics: Arc<MetricsCollector>) -> Self {
         let backpressure = Arc::new(BackpressureController::new(
             max_concurrent,
             Arc::clone(&metrics),
@@ -690,7 +687,8 @@ impl TaskSpawner {
         F: Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        self.spawn_with_options(future, SpawnOptions::default()).await
+        self.spawn_with_options(future, SpawnOptions::default())
+            .await
     }
 
     /// Spawn a task with custom options.

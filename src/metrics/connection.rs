@@ -89,13 +89,16 @@ impl ConnectionMetrics {
         let host = timer.host.clone();
 
         // Record global metrics
-        self.connection_latency.observe(duration.as_secs_f64() * 1000.0);
+        self.connection_latency
+            .observe(duration.as_secs_f64() * 1000.0);
         self.connection_successes.inc();
         self.active_connections.inc();
 
         // Record per-host metrics
         let host_metrics = self.get_or_create_host_metrics(&host);
-        host_metrics.latency.observe(duration.as_secs_f64() * 1000.0);
+        host_metrics
+            .latency
+            .observe(duration.as_secs_f64() * 1000.0);
         host_metrics.successes.inc();
         host_metrics.active.inc();
     }
@@ -132,7 +135,11 @@ impl ConnectionMetrics {
 
     /// Get all host metrics
     pub fn all_host_metrics(&self) -> Vec<HostConnectionMetricsSnapshot> {
-        self.per_host.read().values().map(|m| m.snapshot()).collect()
+        self.per_host
+            .read()
+            .values()
+            .map(|m| m.snapshot())
+            .collect()
     }
 
     /// Get or create per-host metrics

@@ -92,7 +92,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub use dependencies::{DependencyGraph, DependencyNode, TaskDependency};
-pub use diff::{DiffEngine, DiffReport, StateDiff, StateChange};
+pub use diff::{DiffEngine, DiffReport, StateChange, StateDiff};
 pub use persistence::{JsonPersistence, PersistenceBackend, SqlitePersistence, StatePersistence};
 pub use rollback::{RollbackAction, RollbackExecutor, RollbackPlan, RollbackStatus};
 
@@ -361,7 +361,11 @@ impl Default for TaskStateRecord {
 
 impl TaskStateRecord {
     /// Create a new task state record
-    pub fn new(task_id: impl Into<String>, host: impl Into<String>, module: impl Into<String>) -> Self {
+    pub fn new(
+        task_id: impl Into<String>,
+        host: impl Into<String>,
+        module: impl Into<String>,
+    ) -> Self {
         Self {
             task_id: task_id.into(),
             host: host.into(),
@@ -555,7 +559,8 @@ impl ExecutionSession {
 
         // Update host state
         {
-            let mut state = self.hosts
+            let mut state = self
+                .hosts
                 .entry(record.host.clone())
                 .or_insert_with(|| HostState {
                     host: record.host.clone(),
@@ -623,7 +628,8 @@ impl ExecutionSession {
         snapshot.tasks = self.tasks.iter().map(|r| r.value().clone()).collect();
 
         // Collect host states
-        snapshot.host_states = self.hosts
+        snapshot.host_states = self
+            .hosts
             .iter()
             .map(|r| (r.key().clone(), r.value().clone()))
             .collect();
@@ -653,7 +659,12 @@ impl ExecutionSession {
             }
             stats.total += 1;
         }
-        if let Some(duration) = Utc::now().signed_duration_since(self.started_at).num_milliseconds().try_into().ok() {
+        if let Some(duration) = Utc::now()
+            .signed_duration_since(self.started_at)
+            .num_milliseconds()
+            .try_into()
+            .ok()
+        {
             stats.duration_ms = duration;
         }
         stats
@@ -697,15 +708,9 @@ impl StateManager {
         }
 
         let persistence: Box<dyn StatePersistence + Send + Sync> = match &config.persistence {
-            PersistenceBackend::Json(path) => {
-                Box::new(JsonPersistence::new(path.clone())?)
-            }
-            PersistenceBackend::Sqlite(path) => {
-                Box::new(SqlitePersistence::new(path.clone())?)
-            }
-            PersistenceBackend::Memory => {
-                Box::new(persistence::MemoryPersistence::new())
-            }
+            PersistenceBackend::Json(path) => Box::new(JsonPersistence::new(path.clone())?),
+            PersistenceBackend::Sqlite(path) => Box::new(SqlitePersistence::new(path.clone())?),
+            PersistenceBackend::Memory => Box::new(persistence::MemoryPersistence::new()),
         };
 
         let inner = StateManagerInner {
@@ -744,28 +749,34 @@ impl StateManager {
         };
 
         let session = Arc::new(session);
-        self.inner.sessions.insert(session_id, Arc::new(RwLock::new(
-            // We need to return the session, so we clone the Arc
-            // This is a workaround since ExecutionSession isn't Clone
-            ExecutionSession {
-                id: session.id.clone(),
-                playbook: session.playbook.clone(),
-                started_at: session.started_at,
-                tasks: session.tasks.clone(),
-                hosts: session.hosts.clone(),
-                dependencies: session.dependencies.clone(),
-                sequence: session.sequence.clone(),
-                config: session.config.clone(),
-                state_manager: session.state_manager.clone(),
-            }
-        )));
+        self.inner.sessions.insert(
+            session_id,
+            Arc::new(RwLock::new(
+                // We need to return the session, so we clone the Arc
+                // This is a workaround since ExecutionSession isn't Clone
+                ExecutionSession {
+                    id: session.id.clone(),
+                    playbook: session.playbook.clone(),
+                    started_at: session.started_at,
+                    tasks: session.tasks.clone(),
+                    hosts: session.hosts.clone(),
+                    dependencies: session.dependencies.clone(),
+                    sequence: session.sequence.clone(),
+                    config: session.config.clone(),
+                    state_manager: session.state_manager.clone(),
+                },
+            )),
+        );
 
         Ok(session)
     }
 
     /// Get an existing session
     pub fn get_session(&self, session_id: &str) -> Option<Arc<RwLock<ExecutionSession>>> {
-        self.inner.sessions.get(session_id).map(|r| r.value().clone())
+        self.inner
+            .sessions
+            .get(session_id)
+            .map(|r| r.value().clone())
     }
 
     /// End a session and persist its state
@@ -902,15 +913,19 @@ mod tests {
 
     #[test]
     fn test_state_snapshot() {
-        let mut snapshot = StateSnapshot::new("session1", "playbook.yml")
-            .with_description("Test snapshot");
+        let mut snapshot =
+            StateSnapshot::new("session1", "playbook.yml").with_description("Test snapshot");
 
         assert_eq!(snapshot.playbook, "playbook.yml");
         assert!(snapshot.description.is_some());
 
         // Add some tasks
-        snapshot.tasks.push(TaskStateRecord::new("task1", "host1", "apt"));
-        snapshot.tasks.push(TaskStateRecord::new("task2", "host1", "service"));
+        snapshot
+            .tasks
+            .push(TaskStateRecord::new("task1", "host1", "apt"));
+        snapshot
+            .tasks
+            .push(TaskStateRecord::new("task2", "host1", "service"));
         snapshot.tasks[0].status = TaskStatus::Changed;
         snapshot.tasks[1].status = TaskStatus::Ok;
 
@@ -929,8 +944,8 @@ mod tests {
         assert_eq!(session.playbook, "test.yml");
 
         // Record a task
-        let record = TaskStateRecord::new("install_pkg", "localhost", "apt")
-            .with_name("Install package");
+        let record =
+            TaskStateRecord::new("install_pkg", "localhost", "apt").with_name("Install package");
         session.record_task(record).unwrap();
 
         assert_eq!(session.task_count(), 1);

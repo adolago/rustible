@@ -57,10 +57,9 @@
 //! ```
 
 use super::common::{
-    calculate_config_checksum, generate_backup_filename,
-    parse_config_input, validate_config_lines, ConfigBackup, ConfigCommandGenerator,
-    ConfigSource, IosCommandGenerator, NetworkConfig, NetworkDeviceConnection, NetworkPlatform,
-    NetworkTransport,
+    calculate_config_checksum, generate_backup_filename, parse_config_input, validate_config_lines,
+    ConfigBackup, ConfigCommandGenerator, ConfigSource, IosCommandGenerator, NetworkConfig,
+    NetworkDeviceConnection, NetworkPlatform, NetworkTransport,
 };
 use crate::connection::Connection;
 use crate::modules::{
@@ -406,7 +405,9 @@ impl IosConfigParams {
         let after = params.get_vec_string("after")?;
 
         // Transport
-        let transport = params.get_string("transport")?.unwrap_or_else(default_transport);
+        let transport = params
+            .get_string("transport")?
+            .unwrap_or_else(default_transport);
 
         // Check mode
         let check_only = params.get_bool_or("check_only", false);
@@ -423,10 +424,14 @@ impl IosConfigParams {
         let defaults = params.get_vec_string("defaults")?;
 
         // Diff ignore lines
-        let diff_ignore_lines = params.get_vec_string("diff_ignore_lines")?.unwrap_or_default();
+        let diff_ignore_lines = params
+            .get_vec_string("diff_ignore_lines")?
+            .unwrap_or_default();
 
         // Timeout
-        let timeout = params.get_i64("timeout")?.unwrap_or(default_timeout() as i64) as u64;
+        let timeout = params
+            .get_i64("timeout")?
+            .unwrap_or(default_timeout() as i64) as u64;
 
         Ok(Self {
             lines,
@@ -877,8 +882,7 @@ impl IosConfigModule {
         if matches!(params.replace, ReplaceMode::Override | ReplaceMode::Block) {
             if let Some(config) = running_config {
                 let matcher = ConfigMatcher::new(&params.diff_ignore_lines);
-                let removals =
-                    matcher.generate_removal_commands(config, lines, &params.parents);
+                let removals = matcher.generate_removal_commands(config, lines, &params.parents);
 
                 // Navigate to parent context for removals
                 for parent in &params.parents {
@@ -1077,8 +1081,7 @@ impl IosConfigModule {
         };
 
         // Build commands
-        let commands =
-            self.build_commands(params, &config_lines, Some(&running_config.content));
+        let commands = self.build_commands(params, &config_lines, Some(&running_config.content));
 
         // In check mode, return what would change
         if context.check_mode || params.check_only {
@@ -1103,7 +1106,10 @@ impl IosConfigModule {
 
         // Create checkpoint if requested
         if params.create_checkpoint {
-            let checkpoint_name = params.checkpoint_name.as_deref().unwrap_or("rustible_checkpoint");
+            let checkpoint_name = params
+                .checkpoint_name
+                .as_deref()
+                .unwrap_or("rustible_checkpoint");
             let checkpoint_cmd = format!("archive config {}", checkpoint_name);
             let _ = device.execute_command(&checkpoint_cmd).await;
         }
@@ -1254,8 +1260,7 @@ impl Module for IosConfigModule {
     fn diff(&self, params: &ModuleParams, context: &ModuleContext) -> ModuleResult<Option<Diff>> {
         let ios_params = IosConfigParams::from_params(params)?;
         let config_lines = self.build_config_lines(&ios_params, context)?;
-        let commands =
-            self.build_commands(&ios_params, &config_lines, None);
+        let commands = self.build_commands(&ios_params, &config_lines, None);
 
         Ok(Some(Diff {
             before: "(current running configuration)".to_string(),
@@ -1418,8 +1423,7 @@ router bgp 65000
         let tree = parse_config_tree(config);
 
         // Find interface section
-        let interface =
-            find_config_section(&tree, &["interface GigabitEthernet0/0".to_string()]);
+        let interface = find_config_section(&tree, &["interface GigabitEthernet0/0".to_string()]);
         assert!(interface.is_some());
         assert_eq!(interface.unwrap().children.len(), 2);
 
@@ -1513,7 +1517,10 @@ interface GigabitEthernet0/0
         let commands = module.build_commands(&params, &params.lines, None);
 
         // Verify order: configure terminal, before, parents, lines, after, end
-        let conf_idx = commands.iter().position(|c| c == "configure terminal").unwrap();
+        let conf_idx = commands
+            .iter()
+            .position(|c| c == "configure terminal")
+            .unwrap();
         let before_idx = commands.iter().position(|c| c == "no shutdown").unwrap();
         let parent_idx = commands
             .iter()
@@ -1625,7 +1632,10 @@ interface GigabitEthernet0/0
     fn test_params_with_defaults() {
         let mut params: ModuleParams = HashMap::new();
         params.insert("lines".to_string(), serde_json::json!(["test config"]));
-        params.insert("defaults".to_string(), serde_json::json!(["default line 1"]));
+        params.insert(
+            "defaults".to_string(),
+            serde_json::json!(["default line 1"]),
+        );
 
         let ios_params = IosConfigParams::from_params(&params).unwrap();
         assert!(ios_params.defaults.is_some());

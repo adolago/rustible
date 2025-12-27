@@ -53,7 +53,9 @@
 //!   register: config_diff
 //! ```
 
-use crate::connection::{CommandResult, Connection, ConnectionError, ConnectionResult, ExecuteOptions};
+use crate::connection::{
+    CommandResult, Connection, ConnectionError, ConnectionResult, ExecuteOptions,
+};
 use crate::modules::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
@@ -282,7 +284,9 @@ impl RollbackTarget {
         match value {
             serde_json::Value::Number(n) => {
                 let index = n.as_u64().ok_or_else(|| {
-                    ModuleError::InvalidParameter("Rollback index must be a positive integer".to_string())
+                    ModuleError::InvalidParameter(
+                        "Rollback index must be a positive integer".to_string(),
+                    )
                 })? as u8;
                 if index > 49 {
                     return Err(ModuleError::InvalidParameter(
@@ -506,7 +510,10 @@ impl JunosNetconfTransport {
 
         let config_element = match format {
             ConfigFormat::Xml => config.to_string(),
-            _ => format!("<configuration-text>{}</configuration-text>", escape_xml(config)),
+            _ => format!(
+                "<configuration-text>{}</configuration-text>",
+                escape_xml(config)
+            ),
         };
 
         let operation = format!(
@@ -535,7 +542,10 @@ impl JunosNetconfTransport {
 
         if let Some(timeout) = options.confirm_timeout {
             commit_attrs.push(format!("<confirmed/>"));
-            commit_attrs.push(format!("<confirm-timeout>{}</confirm-timeout>", timeout * 60));
+            commit_attrs.push(format!(
+                "<confirm-timeout>{}</confirm-timeout>",
+                timeout * 60
+            ));
         }
 
         if options.synchronize {
@@ -559,10 +569,7 @@ impl JunosNetconfTransport {
 
     /// Confirm a pending commit
     pub async fn confirm_commit(&self) -> ConnectionResult<NetconfResponse> {
-        let operation = format!(
-            r#"<commit-configuration xmlns="{}"/>"#,
-            JUNOS_NS
-        );
+        let operation = format!(r#"<commit-configuration xmlns="{}"/>"#, JUNOS_NS);
 
         self.send_rpc(&operation).await
     }
@@ -756,7 +763,8 @@ impl NetconfError {
         Some(NetconfError {
             error_type: Self::extract_element(xml, "error-type").unwrap_or_default(),
             error_tag: Self::extract_element(xml, "error-tag").unwrap_or_default(),
-            error_severity: Self::extract_element(xml, "error-severity").unwrap_or_else(|| "error".to_string()),
+            error_severity: Self::extract_element(xml, "error-severity")
+                .unwrap_or_else(|| "error".to_string()),
             error_message: Self::extract_element(xml, "error-message"),
             error_path: Self::extract_element(xml, "error-path"),
         })
@@ -779,7 +787,12 @@ impl NetconfError {
 
 impl std::fmt::Display for NetconfError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}] {}", self.error_tag, self.error_message.as_deref().unwrap_or("Unknown error"))?;
+        write!(
+            f,
+            "[{}] {}",
+            self.error_tag,
+            self.error_message.as_deref().unwrap_or("Unknown error")
+        )?;
         if let Some(ref path) = self.error_path {
             write!(f, " at {}", path)?;
         }
@@ -943,10 +956,7 @@ impl JunosConfigModule {
         context: &ModuleContext,
     ) -> ModuleResult<CommandResult> {
         // Build CLI script that enters configure mode and runs commands
-        let script = format!(
-            "cli -c 'configure; {}; exit'",
-            commands.join("; ")
-        );
+        let script = format!("cli -c 'configure; {}; exit'", commands.join("; "));
 
         Self::execute_cli(connection, &script, context).await
     }
@@ -1163,7 +1173,10 @@ impl JunosConfigModule {
                     RollbackTarget::Index(n) => format!("rollback {}", n),
                     RollbackTarget::Rescue => "rescue configuration".to_string(),
                 };
-                return Ok(ModuleOutput::ok(format!("Would rollback to {}", target_str)));
+                return Ok(ModuleOutput::ok(format!(
+                    "Would rollback to {}",
+                    target_str
+                )));
             }
 
             // Get diff before rollback
@@ -1217,8 +1230,14 @@ impl JunosConfigModule {
         // Check mode - just show what would change
         if context.check_mode {
             return Ok(ModuleOutput::ok("Would load and commit configuration")
-                .with_data("config_format", serde_json::json!(config.format.netconf_format()))
-                .with_data("operation", serde_json::json!(format!("{:?}", config.operation))));
+                .with_data(
+                    "config_format",
+                    serde_json::json!(config.format.netconf_format()),
+                )
+                .with_data(
+                    "operation",
+                    serde_json::json!(format!("{:?}", config.operation)),
+                ));
         }
 
         // Load configuration
@@ -1228,7 +1247,8 @@ impl JunosConfigModule {
             config.format,
             config.operation,
             context,
-        ).await?;
+        )
+        .await?;
         messages.push("Loaded configuration".to_string());
         changed = true;
 
@@ -1313,7 +1333,8 @@ impl JunosConfigModule {
             config.format,
             config.operation,
             context,
-        ).await?;
+        )
+        .await?;
 
         // Get diff
         let diff = Self::get_diff_cli(connection.as_ref(), context).await?;
@@ -1362,9 +1383,9 @@ impl Module for JunosConfigModule {
         let context = context.clone();
         let module = self;
         std::thread::scope(|s| {
-            s.spawn(|| {
-                handle.block_on(module.execute_async(&params, &context, connection))
-            }).join().unwrap()
+            s.spawn(|| handle.block_on(module.execute_async(&params, &context, connection)))
+                .join()
+                .unwrap()
         })
     }
 
@@ -1391,9 +1412,9 @@ impl Module for JunosConfigModule {
         let context = context.clone();
         let module = self;
         std::thread::scope(|s| {
-            s.spawn(|| {
-                handle.block_on(module.diff_async(&params, &context, connection))
-            }).join().unwrap()
+            s.spawn(|| handle.block_on(module.diff_async(&params, &context, connection)))
+                .join()
+                .unwrap()
         })
     }
 
@@ -1435,10 +1456,22 @@ mod tests {
 
     #[test]
     fn test_load_operation_from_str() {
-        assert_eq!(LoadOperation::from_str("merge").unwrap(), LoadOperation::Merge);
-        assert_eq!(LoadOperation::from_str("replace").unwrap(), LoadOperation::Replace);
-        assert_eq!(LoadOperation::from_str("override").unwrap(), LoadOperation::Override);
-        assert_eq!(LoadOperation::from_str("update").unwrap(), LoadOperation::Update);
+        assert_eq!(
+            LoadOperation::from_str("merge").unwrap(),
+            LoadOperation::Merge
+        );
+        assert_eq!(
+            LoadOperation::from_str("replace").unwrap(),
+            LoadOperation::Replace
+        );
+        assert_eq!(
+            LoadOperation::from_str("override").unwrap(),
+            LoadOperation::Override
+        );
+        assert_eq!(
+            LoadOperation::from_str("update").unwrap(),
+            LoadOperation::Update
+        );
         assert!(LoadOperation::from_str("invalid").is_err());
     }
 
@@ -1484,7 +1517,10 @@ mod tests {
     fn test_junos_config_validation() {
         // Valid: has config
         let mut params = ModuleParams::new();
-        params.insert("config".to_string(), serde_json::json!("set system host-name test"));
+        params.insert(
+            "config".to_string(),
+            serde_json::json!("set system host-name test"),
+        );
         let config = JunosConfig::from_params(&params).unwrap();
         assert!(config.validate().is_ok());
 

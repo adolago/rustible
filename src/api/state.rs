@@ -102,14 +102,23 @@ impl AppState {
     /// Check user credentials (returns roles if valid).
     pub fn verify_credentials(&self, username: &str, password: &str) -> Option<Vec<String>> {
         let users = self.users.read();
-        users.get(username).filter(|creds| {
-            // In production, use proper password verification
-            creds.password_hash == password
-        }).map(|creds| creds.roles.clone())
+        users
+            .get(username)
+            .filter(|creds| {
+                // In production, use proper password verification
+                creds.password_hash == password
+            })
+            .map(|creds| creds.roles.clone())
     }
 
     /// Create a new job.
-    pub fn create_job(&self, playbook: String, inventory: Option<String>, user: Option<String>, extra_vars: HashMap<String, serde_json::Value>) -> Uuid {
+    pub fn create_job(
+        &self,
+        playbook: String,
+        inventory: Option<String>,
+        user: Option<String>,
+        extra_vars: HashMap<String, serde_json::Value>,
+    ) -> Uuid {
         let id = Uuid::new_v4();
         let job = Job {
             id,
@@ -146,7 +155,10 @@ impl AppState {
             if status == JobStatus::Running && job.started_at.is_none() {
                 job.started_at = Some(Utc::now());
             }
-            if matches!(status, JobStatus::Success | JobStatus::Failed | JobStatus::Cancelled) {
+            if matches!(
+                status,
+                JobStatus::Success | JobStatus::Failed | JobStatus::Cancelled
+            ) {
                 job.finished_at = Some(Utc::now());
             }
 
@@ -203,7 +215,12 @@ impl AppState {
     }
 
     /// List jobs with optional filtering.
-    pub fn list_jobs(&self, status_filter: Option<JobStatus>, page: usize, per_page: usize) -> (Vec<JobInfo>, usize) {
+    pub fn list_jobs(
+        &self,
+        status_filter: Option<JobStatus>,
+        page: usize,
+        per_page: usize,
+    ) -> (Vec<JobInfo>, usize) {
         let jobs = self.jobs.read();
 
         let filtered: Vec<_> = jobs

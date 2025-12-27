@@ -105,10 +105,7 @@ impl InteractiveSession {
             return Ok(None);
         }
 
-        let items: Vec<String> = playbooks
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect();
+        let items: Vec<String> = playbooks.iter().map(|p| p.display().to_string()).collect();
 
         let selection = Select::with_theme(&self.theme)
             .with_prompt("Select a playbook")
@@ -506,7 +503,10 @@ pub fn extract_tags_from_playbook(playbook: &PathBuf) -> Result<Vec<String>> {
                 if !tag.contains(':') && !tag.is_empty() {
                     // This might be a tag value
                     // We'll be conservative and only add it if it looks like a simple tag
-                    if tag.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                    if tag
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                    {
                         tags.insert(tag.to_string());
                     }
                 }

@@ -210,9 +210,7 @@ impl PinnedHostKey {
 
     /// Check if this pin has expired
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|exp| exp < Utc::now())
-            .unwrap_or(false)
+        self.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false)
     }
 
     /// Check if this pin matches a host
@@ -263,7 +261,10 @@ impl std::fmt::Debug for HostKeyPolicy {
             .field("known_hosts_path", &self.known_hosts_path)
             .field("auto_add_hosts", &self.auto_add_hosts)
             .field("log_verification", &self.log_verification)
-            .field("unknown_host_callback", &self.unknown_host_callback.as_ref().map(|_| "<callback>"))
+            .field(
+                "unknown_host_callback",
+                &self.unknown_host_callback.as_ref().map(|_| "<callback>"),
+            )
             .finish()
     }
 }
@@ -295,8 +296,7 @@ impl HostKeyPolicy {
 
     /// Add a pinned key
     pub fn with_pin(mut self, host: impl Into<String>, fingerprint: impl Into<String>) -> Self {
-        self.pinned_keys
-            .push(PinnedHostKey::new(host, fingerprint));
+        self.pinned_keys.push(PinnedHostKey::new(host, fingerprint));
         self
     }
 
@@ -595,7 +595,8 @@ fn parse_known_hosts_line(line: &str, _port: u16) -> Option<(String, String)> {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         let result = hasher.finalize();
-        let fingerprint = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, result);
+        let fingerprint =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, result);
         Some((host, format!("SHA256:{}", fingerprint)))
     } else {
         None
@@ -1799,13 +1800,10 @@ mod tests {
 
     #[test]
     fn test_audit_event_formatting() {
-        let event = AuditEvent::new(
-            AuditEventType::ConnectionEstablished,
-            "Test connection",
-        )
-        .with_host("example.com")
-        .with_port(22)
-        .with_user("testuser");
+        let event = AuditEvent::new(AuditEventType::ConnectionEstablished, "Test connection")
+            .with_host("example.com")
+            .with_port(22)
+            .with_user("testuser");
 
         let line = event.to_log_line();
         assert!(line.contains("ConnectionEstablished"));

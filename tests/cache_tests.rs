@@ -20,12 +20,13 @@ use std::time::Duration;
 use indexmap::IndexMap;
 use serde_json::{json, Value as JsonValue};
 
-use rustible::cache::{
-    Cache, CacheConfig, CacheDependency, CacheManager, CacheMetrics,
-    CacheType, FactCache, PlaybookCache, RoleCache, VariableCache,
-};
 use rustible::cache::module_result::{
-    classify_module_idempotency, CachedModuleResult, IdempotencyClass, ModuleCacheKey, ModuleResultCache,
+    classify_module_idempotency, CachedModuleResult, IdempotencyClass, ModuleCacheKey,
+    ModuleResultCache,
+};
+use rustible::cache::{
+    Cache, CacheConfig, CacheDependency, CacheManager, CacheMetrics, CacheType, FactCache,
+    PlaybookCache, RoleCache, VariableCache,
 };
 
 // ============================================================================

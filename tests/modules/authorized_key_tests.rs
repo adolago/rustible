@@ -19,8 +19,7 @@ use tempfile::TempDir;
 // Test Constants - Sample SSH Keys
 // ============================================================================
 
-const TEST_RSA_KEY: &str =
-    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7test user@example.com";
+const TEST_RSA_KEY: &str = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7test user@example.com";
 const TEST_RSA_KEY_NO_COMMENT: &str = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7test";
 const TEST_ED25519_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest user@example.com";
 const TEST_ECDSA_256_KEY: &str = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY= test";
@@ -120,7 +119,10 @@ fn test_parse_key_with_from_option() {
 
 #[test]
 fn test_parse_key_with_multiple_options() {
-    let key_str = format!(r#"command="/bin/date",no-pty,no-agent-forwarding {}"#, TEST_RSA_KEY);
+    let key_str = format!(
+        r#"command="/bin/date",no-pty,no-agent-forwarding {}"#,
+        TEST_RSA_KEY
+    );
     let key = AuthorizedKey::parse(&key_str).unwrap();
     assert_eq!(
         key.options,
@@ -138,7 +140,10 @@ fn test_parse_key_with_environment_option() {
 
 #[test]
 fn test_parse_key_with_complex_from_option() {
-    let key_str = format!(r#"from="10.0.0.0/8,!10.0.0.1,*.example.com" {}"#, TEST_ED25519_KEY);
+    let key_str = format!(
+        r#"from="10.0.0.0/8,!10.0.0.1,*.example.com" {}"#,
+        TEST_ED25519_KEY
+    );
     let key = AuthorizedKey::parse(&key_str).unwrap();
     assert!(key.options.is_some());
 }
@@ -196,7 +201,8 @@ fn test_same_key_identical() {
 #[test]
 fn test_same_key_different_comment() {
     let key1 = AuthorizedKey::parse(TEST_RSA_KEY).unwrap();
-    let key2 = AuthorizedKey::parse(&TEST_RSA_KEY.replace("user@example.com", "other@host")).unwrap();
+    let key2 =
+        AuthorizedKey::parse(&TEST_RSA_KEY.replace("user@example.com", "other@host")).unwrap();
     assert!(key1.same_key(&key2));
 }
 
@@ -446,7 +452,8 @@ fn test_add_duplicate_key() {
 #[test]
 fn test_add_key_with_different_comment() {
     let key1 = AuthorizedKey::parse(TEST_RSA_KEY).unwrap();
-    let key2 = AuthorizedKey::parse(&TEST_RSA_KEY.replace("user@example.com", "other@host")).unwrap();
+    let key2 =
+        AuthorizedKey::parse(&TEST_RSA_KEY.replace("user@example.com", "other@host")).unwrap();
     let mut keys = vec![key1];
 
     let changed = add_key_helper(&mut keys, &key2);
@@ -546,7 +553,10 @@ fn add_key_helper(existing_keys: &mut Vec<AuthorizedKey>, new_key: &AuthorizedKe
     true
 }
 
-fn remove_key_helper(existing_keys: &mut Vec<AuthorizedKey>, key_to_remove: &AuthorizedKey) -> bool {
+fn remove_key_helper(
+    existing_keys: &mut Vec<AuthorizedKey>,
+    key_to_remove: &AuthorizedKey,
+) -> bool {
     let original_len = existing_keys.len();
     existing_keys.retain(|k| !k.same_key(key_to_remove));
     existing_keys.len() != original_len
@@ -572,7 +582,10 @@ fn test_module_description() {
 #[test]
 fn test_module_classification() {
     let module = AuthorizedKeyModule;
-    assert_eq!(module.classification(), ModuleClassification::NativeTransport);
+    assert_eq!(
+        module.classification(),
+        ModuleClassification::NativeTransport
+    );
 }
 
 #[test]

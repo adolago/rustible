@@ -69,7 +69,11 @@ impl VariableCacheKey {
     }
 
     /// Create a task scope key
-    pub fn task(hostname: impl Into<String>, play_name: impl Into<String>, task_name: impl Into<String>) -> Self {
+    pub fn task(
+        hostname: impl Into<String>,
+        play_name: impl Into<String>,
+        task_name: impl Into<String>,
+    ) -> Self {
         Self {
             hostname: Some(hostname.into()),
             play_name: Some(play_name.into()),
@@ -155,8 +159,12 @@ impl CachedVariables {
     pub fn size_bytes(&self) -> usize {
         serde_json::to_string(&self.variables)
             .map(|s| s.len())
-            .unwrap_or(1000) +
-        self.source_files.iter().map(|p| p.to_string_lossy().len()).sum::<usize>()
+            .unwrap_or(1000)
+            + self
+                .source_files
+                .iter()
+                .map(|p| p.to_string_lossy().len())
+                .sum::<usize>()
     }
 
     /// Compute a hash of the variables for comparison
@@ -213,7 +221,7 @@ impl Default for VariableCacheConfig {
     fn default() -> Self {
         Self {
             variable_ttl: Duration::from_secs(300), // 5 minutes
-            template_ttl: Duration::from_secs(60),   // 1 minute (templates may use dynamic data)
+            template_ttl: Duration::from_secs(60),  // 1 minute (templates may use dynamic data)
             cache_templates: true,
             max_template_size: 64 * 1024, // 64 KB
         }
@@ -259,11 +267,14 @@ impl VariableCache {
         let size = variables.size_bytes();
 
         // Create dependencies from source files
-        let deps: Vec<_> = variables.source_files.iter()
+        let deps: Vec<_> = variables
+            .source_files
+            .iter()
             .filter_map(|p| CacheDependency::file(p.clone()))
             .collect();
 
-        self.cache.insert_with_dependencies(key, variables, deps, size);
+        self.cache
+            .insert_with_dependencies(key, variables, deps, size);
     }
 
     /// Store host variables
@@ -294,7 +305,8 @@ impl VariableCache {
 
         let key = Self::template_key(template, variables_hash);
         let size = result.len();
-        self.template_cache.insert_with_ttl(key, result, Some(self.config.template_ttl), size);
+        self.template_cache
+            .insert_with_ttl(key, result, Some(self.config.template_ttl), size);
     }
 
     /// Generate template cache key
@@ -309,7 +321,10 @@ impl VariableCache {
     /// Invalidate variables for a host
     pub fn invalidate_host(&self, hostname: &str) {
         // Invalidate all scopes that include this host
-        let keys_to_remove: Vec<_> = self.cache.entries.iter()
+        let keys_to_remove: Vec<_> = self
+            .cache
+            .entries
+            .iter()
             .filter(|entry| entry.key().hostname.as_deref() == Some(hostname))
             .map(|entry| entry.key().clone())
             .collect();
@@ -321,7 +336,10 @@ impl VariableCache {
 
     /// Invalidate variables from a specific file
     pub fn invalidate_file(&self, path: &PathBuf) {
-        let keys_to_remove: Vec<_> = self.cache.entries.iter()
+        let keys_to_remove: Vec<_> = self
+            .cache
+            .entries
+            .iter()
             .filter(|entry| entry.value().value.source_files.contains(path))
             .map(|entry| entry.key().clone())
             .collect();
@@ -377,7 +395,9 @@ impl VariableCache {
         }
 
         if let Some(play_name) = play_name {
-            if let Some(host_play_vars) = self.get(&VariableCacheKey::host_play(hostname, play_name)) {
+            if let Some(host_play_vars) =
+                self.get(&VariableCacheKey::host_play(hostname, play_name))
+            {
                 merged.merge(&host_play_vars);
             }
         }
@@ -392,7 +412,10 @@ mod tests {
 
     fn sample_variables() -> IndexMap<String, JsonValue> {
         let mut vars = IndexMap::new();
-        vars.insert("app_name".to_string(), JsonValue::String("myapp".to_string()));
+        vars.insert(
+            "app_name".to_string(),
+            JsonValue::String("myapp".to_string()),
+        );
         vars.insert("app_port".to_string(), JsonValue::Number(8080.into()));
         vars.insert("debug".to_string(), JsonValue::Bool(true));
         vars
@@ -423,12 +446,21 @@ mod tests {
         let cache = VariableCache::new(CacheConfig::default());
 
         let mut global = sample_variables();
-        global.insert("global_var".to_string(), JsonValue::String("global".to_string()));
+        global.insert(
+            "global_var".to_string(),
+            JsonValue::String("global".to_string()),
+        );
         cache.insert_global(CachedVariables::new(global));
 
         let mut host = IndexMap::new();
-        host.insert("host_var".to_string(), JsonValue::String("host".to_string()));
-        host.insert("app_name".to_string(), JsonValue::String("overridden".to_string()));
+        host.insert(
+            "host_var".to_string(),
+            JsonValue::String("host".to_string()),
+        );
+        host.insert(
+            "app_name".to_string(),
+            JsonValue::String("overridden".to_string()),
+        );
         cache.insert_host("host1", CachedVariables::new(host));
 
         let merged = cache.build_merged("host1", None);

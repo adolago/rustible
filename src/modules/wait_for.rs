@@ -206,9 +206,7 @@ impl WaitForConfig {
 
         let msg = params.get_string("msg")?;
 
-        let exclude_hosts = params
-            .get_vec_string("exclude_hosts")?
-            .unwrap_or_default();
+        let exclude_hosts = params.get_vec_string("exclude_hosts")?.unwrap_or_default();
 
         let active_connection_states = params
             .get_vec_string("active_connection_states")?
@@ -321,9 +319,8 @@ impl WaitForModule {
 
     /// Check if a regex pattern is found in a file
     fn check_regex_in_file(path: &str, pattern: &str) -> ModuleResult<bool> {
-        let regex = Regex::new(pattern).map_err(|e| {
-            ModuleError::InvalidParameter(format!("Invalid regex pattern: {}", e))
-        })?;
+        let regex = Regex::new(pattern)
+            .map_err(|e| ModuleError::InvalidParameter(format!("Invalid regex pattern: {}", e)))?;
 
         let file = match std::fs::File::open(path) {
             Ok(f) => f,
@@ -356,11 +353,7 @@ impl WaitForModule {
         let output = std::process::Command::new("ss")
             .args(["-tn", "state", "all"])
             .output()
-            .or_else(|_| {
-                std::process::Command::new("netstat")
-                    .args(["-tn"])
-                    .output()
-            });
+            .or_else(|_| std::process::Command::new("netstat").args(["-tn"]).output());
 
         match output {
             Ok(output) => {
@@ -374,7 +367,10 @@ impl WaitForModule {
 
                 for line in stdout.lines() {
                     // Skip header lines
-                    if line.starts_with("State") || line.starts_with("Proto") || line.starts_with("Netid") {
+                    if line.starts_with("State")
+                        || line.starts_with("Proto")
+                        || line.starts_with("Netid")
+                    {
                         continue;
                     }
 
@@ -384,9 +380,9 @@ impl WaitForModule {
                     }
 
                     // Check if the connection state is active
-                    let is_active = active_states.iter().any(|state| {
-                        line.to_uppercase().contains(&state.to_uppercase())
-                    });
+                    let is_active = active_states
+                        .iter()
+                        .any(|state| line.to_uppercase().contains(&state.to_uppercase()));
 
                     if !is_active {
                         continue;
@@ -463,7 +459,10 @@ impl WaitForModule {
                     condition, elapsed_secs
                 ))
                 .with_data("elapsed", serde_json::json!(elapsed_secs))
-                .with_data("state", serde_json::json!(format!("{:?}", config.state).to_lowercase())));
+                .with_data(
+                    "state",
+                    serde_json::json!(format!("{:?}", config.state).to_lowercase()),
+                ));
             }
 
             // Sleep before next check
@@ -487,7 +486,10 @@ impl WaitForModule {
                 Ok(!Self::check_port_open(&config.host, port, connect_timeout))
             }
             WaitState::Present => {
-                let path = config.path.as_ref().expect("path required for present state");
+                let path = config
+                    .path
+                    .as_ref()
+                    .expect("path required for present state");
 
                 // If search_regex is provided, check for pattern
                 if let Some(ref pattern) = config.search_regex {
@@ -500,7 +502,10 @@ impl WaitForModule {
                 }
             }
             WaitState::Absent => {
-                let path = config.path.as_ref().expect("path required for absent state");
+                let path = config
+                    .path
+                    .as_ref()
+                    .expect("path required for absent state");
                 Ok(!Self::check_path_exists(path))
             }
             WaitState::Drained => {
@@ -546,10 +551,7 @@ impl WaitForModule {
                 )
             }
             WaitState::Drained => {
-                format!(
-                    "connections on port {} to drain",
-                    config.port.unwrap_or(0)
-                )
+                format!("connections on port {} to drain", config.port.unwrap_or(0))
             }
         }
     }
@@ -990,7 +992,10 @@ mod tests {
             ("port", serde_json::json!(65534)),
             ("timeout", serde_json::json!(1)),
             ("sleep", serde_json::json!(1)),
-            ("msg", serde_json::json!("Custom error: service not available")),
+            (
+                "msg",
+                serde_json::json!("Custom error: service not available"),
+            ),
         ]);
 
         let context = ModuleContext::default();

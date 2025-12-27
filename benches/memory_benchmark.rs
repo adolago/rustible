@@ -27,8 +27,8 @@ use std::collections::HashMap;
 use std::hint::black_box as bb;
 
 // Import Rustible types - use prelude for common types
-use rustible::playbook::{Play, Playbook, Task};
 use rustible::inventory::{Group, Host, Inventory};
+use rustible::playbook::{Play, Playbook, Task};
 use rustible::vars::Variables;
 
 // ============================================================================
@@ -39,7 +39,10 @@ use rustible::vars::Variables;
 fn generate_task(name: &str, complexity: usize) -> Task {
     let mut args = serde_json::Map::new();
     for i in 0..complexity {
-        args.insert(format!("arg_{}", i), serde_json::json!(format!("value_{}", i)));
+        args.insert(
+            format!("arg_{}", i),
+            serde_json::json!(format!("value_{}", i)),
+        );
     }
 
     Task::new(name, "command", serde_json::Value::Object(args))
@@ -80,7 +83,8 @@ fn generate_inventory(num_hosts: usize, vars_per_host: usize) -> String {
 
     for h in 0..num_hosts {
         yaml.push_str(&format!("    host{:05}:\n", h));
-        yaml.push_str(&format!("      ansible_host: 10.{}.{}.{}\n",
+        yaml.push_str(&format!(
+            "      ansible_host: 10.{}.{}.{}\n",
             (h / 65536) % 256,
             (h / 256) % 256,
             h % 256
@@ -125,20 +129,18 @@ fn bench_task_cloning_overhead(c: &mut Criterion) {
     let medium_task = generate_task("medium", 10);
     let large_task = generate_task("large", 50);
 
-    group.bench_function("clone_small", |b| {
-        b.iter(|| black_box(small_task.clone()))
-    });
+    group.bench_function("clone_small", |b| b.iter(|| black_box(small_task.clone())));
 
     group.bench_function("clone_medium", |b| {
         b.iter(|| black_box(medium_task.clone()))
     });
 
-    group.bench_function("clone_large", |b| {
-        b.iter(|| black_box(large_task.clone()))
-    });
+    group.bench_function("clone_large", |b| b.iter(|| black_box(large_task.clone())));
 
     // Benchmark batch cloning (common in role expansion)
-    let tasks: Vec<Task> = (0..100).map(|i| generate_task(&format!("task_{}", i), 5)).collect();
+    let tasks: Vec<Task> = (0..100)
+        .map(|i| generate_task(&format!("task_{}", i), 5))
+        .collect();
 
     group.bench_function("clone_batch_100", |b| {
         b.iter(|| {
@@ -334,7 +336,8 @@ fn bench_task_result_accumulation(c: &mut Criterion) {
             num_results,
             |b, &num| {
                 b.iter(|| {
-                    let mut results: Vec<(String, String, std::time::Duration, bool)> = Vec::with_capacity(num);
+                    let mut results: Vec<(String, String, std::time::Duration, bool)> =
+                        Vec::with_capacity(num);
                     for i in 0..num {
                         results.push((
                             format!("task_{}", i),
@@ -364,7 +367,10 @@ fn bench_hashmap_vs_indexmap(c: &mut Criterion) {
                 b.iter(|| {
                     let mut map: HashMap<String, serde_json::Value> = HashMap::with_capacity(num);
                     for i in 0..num {
-                        map.insert(format!("key_{}", i), serde_json::json!(format!("value_{}", i)));
+                        map.insert(
+                            format!("key_{}", i),
+                            serde_json::json!(format!("value_{}", i)),
+                        );
                     }
                     black_box(map)
                 })
@@ -379,7 +385,10 @@ fn bench_hashmap_vs_indexmap(c: &mut Criterion) {
                 b.iter(|| {
                     let mut map: IndexMap<String, serde_json::Value> = IndexMap::with_capacity(num);
                     for i in 0..num {
-                        map.insert(format!("key_{}", i), serde_json::json!(format!("value_{}", i)));
+                        map.insert(
+                            format!("key_{}", i),
+                            serde_json::json!(format!("value_{}", i)),
+                        );
                     }
                     black_box(map)
                 })
@@ -456,34 +465,26 @@ fn bench_vec_presizing(c: &mut Criterion) {
 
     for size in [10, 100, 1000].iter() {
         // Without pre-sizing
-        group.bench_with_input(
-            BenchmarkId::new("dynamic", size),
-            size,
-            |b, &size| {
-                b.iter(|| {
-                    let mut vec: Vec<String> = Vec::new();
-                    for i in 0..size {
-                        vec.push(format!("item_{}", i));
-                    }
-                    black_box(vec)
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("dynamic", size), size, |b, &size| {
+            b.iter(|| {
+                let mut vec: Vec<String> = Vec::new();
+                for i in 0..size {
+                    vec.push(format!("item_{}", i));
+                }
+                black_box(vec)
+            })
+        });
 
         // With pre-sizing
-        group.bench_with_input(
-            BenchmarkId::new("presized", size),
-            size,
-            |b, &size| {
-                b.iter(|| {
-                    let mut vec: Vec<String> = Vec::with_capacity(size);
-                    for i in 0..size {
-                        vec.push(format!("item_{}", i));
-                    }
-                    black_box(vec)
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("presized", size), size, |b, &size| {
+            b.iter(|| {
+                let mut vec: Vec<String> = Vec::with_capacity(size);
+                for i in 0..size {
+                    vec.push(format!("item_{}", i));
+                }
+                black_box(vec)
+            })
+        });
     }
 
     group.finish();

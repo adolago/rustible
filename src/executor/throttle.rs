@@ -56,8 +56,13 @@ impl ThrottleConfig {
     }
 
     /// Add a module rate limit
-    pub fn rate_limit_module(mut self, module: impl Into<String>, requests_per_second: u32) -> Self {
-        self.module_rate_limits.insert(module.into(), requests_per_second);
+    pub fn rate_limit_module(
+        mut self,
+        module: impl Into<String>,
+        requests_per_second: u32,
+    ) -> Self {
+        self.module_rate_limits
+            .insert(module.into(), requests_per_second);
         self
     }
 }
@@ -425,7 +430,10 @@ impl TaskThrottleManager {
     /// Acquire a permit for a task execution
     pub async fn acquire(&self, task_id: &str, throttle: u32) -> OwnedSemaphorePermit {
         let sem = self.get_or_create(task_id, throttle);
-        debug!("Acquiring task throttle permit for task '{}' (limit: {})", task_id, throttle);
+        debug!(
+            "Acquiring task throttle permit for task '{}' (limit: {})",
+            task_id, throttle
+        );
         sem.acquire_owned()
             .await
             .expect("Task semaphore should not be closed")

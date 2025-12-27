@@ -192,8 +192,23 @@ fn test_selinux_all_protocols() {
 #[test]
 fn test_selinux_all_file_types() {
     let ftypes = [
-        "a", "f", "d", "c", "b", "s", "l", "p", "all", "file", "directory", "char", "block",
-        "socket", "link", "pipe", "fifo",
+        "a",
+        "f",
+        "d",
+        "c",
+        "b",
+        "s",
+        "l",
+        "p",
+        "all",
+        "file",
+        "directory",
+        "char",
+        "block",
+        "socket",
+        "link",
+        "pipe",
+        "fifo",
     ];
 
     for ftype in ftypes {
@@ -283,9 +298,7 @@ fn test_selinux_valid_boolean_names() {
 
     for boolean in valid_booleans {
         assert!(
-            boolean
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_'),
+            boolean.chars().all(|c| c.is_alphanumeric() || c == '_'),
             "Boolean '{}' should contain only alphanumeric and underscores",
             boolean
         );

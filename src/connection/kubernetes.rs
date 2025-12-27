@@ -168,17 +168,18 @@ impl KubernetesConnection {
             })?,
             KubernetesAuth::BearerToken(token) => {
                 // Start with default kubeconfig to get server URL
-                let mut config = Config::infer()
-                    .await
-                    .map_err(|e| ConnectionError::InvalidConfig(format!("Failed to infer config: {}", e)))?;
+                let mut config = Config::infer().await.map_err(|e| {
+                    ConnectionError::InvalidConfig(format!("Failed to infer config: {}", e))
+                })?;
                 // Override with bearer token auth header
                 config.auth_info.token = Some(secrecy::SecretString::new(token));
                 config
             }
         };
 
-        Client::try_from(config)
-            .map_err(|e| ConnectionError::ConnectionFailed(format!("Failed to create client: {}", e)))
+        Client::try_from(config).map_err(|e| {
+            ConnectionError::ConnectionFailed(format!("Failed to create client: {}", e))
+        })
     }
 
     /// Verify that the target pod exists and is running
@@ -264,9 +265,15 @@ impl KubernetesConnection {
 
         let mut attached: AttachedProcess = self
             .pods_api
-            .exec(&self.pod, command.iter().map(|s| s.as_str()), &attach_params)
+            .exec(
+                &self.pod,
+                command.iter().map(|s| s.as_str()),
+                &attach_params,
+            )
             .await
-            .map_err(|e| ConnectionError::ExecutionFailed(format!("Failed to exec in pod: {}", e)))?;
+            .map_err(|e| {
+                ConnectionError::ExecutionFailed(format!("Failed to exec in pod: {}", e))
+            })?;
 
         // Handle stdin for password escalation
         if options.escalate && options.escalate_password.is_some() {
@@ -343,7 +350,11 @@ impl KubernetesConnection {
 
         // Add environment variables
         for (key, value) in &options.env {
-            full_command.push_str(&format!("export {}='{}'; ", key, value.replace('\'', "'\\''")));
+            full_command.push_str(&format!(
+                "export {}='{}'; ",
+                key,
+                value.replace('\'', "'\\''")
+            ));
         }
 
         // Add working directory
@@ -566,37 +577,28 @@ impl Connection for KubernetesConnection {
         }
 
         // Decode base64 content
-        let decoded = BASE64_STANDARD
-            .decode(result.stdout.trim())
-            .map_err(|e| ConnectionError::TransferFailed(format!("Failed to decode content: {}", e)))?;
+        let decoded = BASE64_STANDARD.decode(result.stdout.trim()).map_err(|e| {
+            ConnectionError::TransferFailed(format!("Failed to decode content: {}", e))
+        })?;
 
         Ok(decoded)
     }
 
     async fn path_exists(&self, path: &Path) -> ConnectionResult<bool> {
-        let command = format!(
-            "test -e '{}' && echo yes || echo no",
-            path.display()
-        );
+        let command = format!("test -e '{}' && echo yes || echo no", path.display());
         let result = self.execute(&command, None).await?;
         Ok(result.stdout.trim() == "yes")
     }
 
     async fn is_directory(&self, path: &Path) -> ConnectionResult<bool> {
-        let command = format!(
-            "test -d '{}' && echo yes || echo no",
-            path.display()
-        );
+        let command = format!("test -d '{}' && echo yes || echo no", path.display());
         let result = self.execute(&command, None).await?;
         Ok(result.stdout.trim() == "yes")
     }
 
     async fn stat(&self, path: &Path) -> ConnectionResult<FileStat> {
         // Use stat command to get file info (Linux stat format)
-        let command = format!(
-            "stat -c '%s|%a|%u|%g|%X|%Y|%F' '{}'",
-            path.display()
-        );
+        let command = format!("stat -c '%s|%a|%u|%g|%X|%Y|%F' '{}'", path.display());
         let result = self.execute(&command, None).await?;
 
         if !result.success {
@@ -712,9 +714,9 @@ impl KubernetesConnectionBuilder {
     /// Build the connection
     pub async fn build(self) -> ConnectionResult<KubernetesConnection> {
         let namespace = self.namespace.unwrap_or_else(|| "default".to_string());
-        let pod = self.pod.ok_or_else(|| {
-            ConnectionError::InvalidConfig("Pod name is required".to_string())
-        })?;
+        let pod = self
+            .pod
+            .ok_or_else(|| ConnectionError::InvalidConfig("Pod name is required".to_string()))?;
 
         let auth = self.auth.unwrap_or_else(|| KubernetesAuth::Kubeconfig {
             path: self.kubeconfig_path,
@@ -726,16 +728,14 @@ impl KubernetesConnectionBuilder {
 }
 
 /// List pods in a namespace
-pub async fn list_pods(
-    namespace: &str,
-    auth: KubernetesAuth,
-) -> ConnectionResult<Vec<PodInfo>> {
+pub async fn list_pods(namespace: &str, auth: KubernetesAuth) -> ConnectionResult<Vec<PodInfo>> {
     let client = KubernetesConnection::create_client(auth).await?;
     let pods_api: Api<Pod> = Api::namespaced(client, namespace);
 
-    let pods = pods_api.list(&ListParams::default()).await.map_err(|e| {
-        ConnectionError::ConnectionFailed(format!("Failed to list pods: {}", e))
-    })?;
+    let pods = pods_api
+        .list(&ListParams::default())
+        .await
+        .map_err(|e| ConnectionError::ConnectionFailed(format!("Failed to list pods: {}", e)))?;
 
     let pod_infos: Vec<PodInfo> = pods
         .items

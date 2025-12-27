@@ -228,9 +228,17 @@ $result | ConvertTo-Json -Compress
 "#,
             name = powershell_escape(name),
             password_section = password_section,
-            fullname = fullname.map(|f| powershell_escape(f)).unwrap_or_else(|| "$null".to_string()),
-            description = description.map(|d| powershell_escape(d)).unwrap_or_else(|| "$null".to_string()),
-            password_never_expires = if password_never_expires { "true" } else { "false" },
+            fullname = fullname
+                .map(|f| powershell_escape(f))
+                .unwrap_or_else(|| "$null".to_string()),
+            description = description
+                .map(|d| powershell_escape(d))
+                .unwrap_or_else(|| "$null".to_string()),
+            password_never_expires = if password_never_expires {
+                "true"
+            } else {
+                "false"
+            },
             account_disabled = if account_disabled { "true" } else { "false" }
         )
     }
@@ -335,7 +343,10 @@ $result | ConvertTo-Json -Compress
         groups: &[String],
         action: &GroupsAction,
     ) -> String {
-        let groups_json: Vec<String> = groups.iter().map(|g| format!("'{}'", g.replace('\'', "''"))).collect();
+        let groups_json: Vec<String> = groups
+            .iter()
+            .map(|g| format!("'{}'", g.replace('\'', "''")))
+            .collect();
 
         match action {
             GroupsAction::Add => format!(
@@ -661,11 +672,19 @@ impl Module for WinUserModule {
                         changed = true;
                         let added: Vec<String> = result["groups_added"]
                             .as_array()
-                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
                             .unwrap_or_default();
                         let removed: Vec<String> = result["groups_removed"]
                             .as_array()
-                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
                             .unwrap_or_default();
 
                         if !added.is_empty() {

@@ -343,7 +343,10 @@ fn test_task_result_with_message() {
 #[test]
 fn test_task_result_to_registered() {
     let result = TaskResult::changed();
-    let registered = result.to_registered(Some("stdout text".to_string()), Some("stderr text".to_string()));
+    let registered = result.to_registered(
+        Some("stdout text".to_string()),
+        Some("stderr text".to_string()),
+    );
 
     assert!(registered.changed);
     assert!(!registered.failed);
@@ -816,7 +819,10 @@ async fn test_failure_handling_with_rescue_block() {
     let results = executor.run_playbook(&playbook).await.unwrap();
 
     let host_result = results.get("host1").unwrap();
-    assert!(!host_result.failed, "Host should recover with ignore_errors");
+    assert!(
+        !host_result.failed,
+        "Host should recover with ignore_errors"
+    );
 }
 
 // ============================================================================
@@ -1121,28 +1127,30 @@ async fn test_delegate_to() {
 
 #[tokio::test]
 async fn test_many_hosts_execution() {
-    let hosts: Vec<&str> = (0..20).map(|i| match i {
-        0 => "host0",
-        1 => "host1",
-        2 => "host2",
-        3 => "host3",
-        4 => "host4",
-        5 => "host5",
-        6 => "host6",
-        7 => "host7",
-        8 => "host8",
-        9 => "host9",
-        10 => "host10",
-        11 => "host11",
-        12 => "host12",
-        13 => "host13",
-        14 => "host14",
-        15 => "host15",
-        16 => "host16",
-        17 => "host17",
-        18 => "host18",
-        _ => "host19",
-    }).collect();
+    let hosts: Vec<&str> = (0..20)
+        .map(|i| match i {
+            0 => "host0",
+            1 => "host1",
+            2 => "host2",
+            3 => "host3",
+            4 => "host4",
+            5 => "host5",
+            6 => "host6",
+            7 => "host7",
+            8 => "host8",
+            9 => "host9",
+            10 => "host10",
+            11 => "host11",
+            12 => "host12",
+            13 => "host13",
+            14 => "host14",
+            15 => "host15",
+            16 => "host16",
+            17 => "host17",
+            18 => "host18",
+            _ => "host19",
+        })
+        .collect();
 
     let runtime = create_runtime_with_hosts(hosts);
     let executor = Executor::with_runtime(

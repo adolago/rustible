@@ -125,8 +125,7 @@ impl ApiServer {
 
     /// Build the router with all routes.
     pub fn router(&self) -> Router {
-        let mut app = Router::new()
-            .merge(routes::api_routes(self.state.clone()));
+        let mut app = Router::new().merge(routes::api_routes(self.state.clone()));
 
         // Add CORS layer if enabled
         if self.config.enable_cors {
@@ -196,6 +195,9 @@ mod tests {
 
         assert_eq!(config.bind_address.port(), 3000);
         assert_eq!(config.jwt_secret, "my-secret");
-        assert_eq!(config.inventory_path, Some("/etc/rustible/inventory".to_string()));
+        assert_eq!(
+            config.inventory_path,
+            Some("/etc/rustible/inventory".to_string())
+        );
     }
 }

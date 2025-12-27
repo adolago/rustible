@@ -1051,10 +1051,7 @@ mod tests {
             .with_check_mode(true);
 
         assert_eq!(info.name, "my-playbook");
-        assert_eq!(
-            info.file_path,
-            Some(PathBuf::from("/path/to/playbook.yml"))
-        );
+        assert_eq!(info.file_path, Some(PathBuf::from("/path/to/playbook.yml")));
         assert_eq!(info.play_count, 3);
         assert!(info.check_mode);
     }

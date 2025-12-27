@@ -598,12 +598,17 @@ pub fn get_module_args_hint(module: &str) -> String {
         "command" | "shell" => {
             "Required: cmd (or free-form). Optional: chdir, creates, removes.".to_string()
         }
-        "apt" => "Required: name (or pkg). Optional: state, update_cache, cache_valid_time."
-            .to_string(),
+        "apt" => {
+            "Required: name (or pkg). Optional: state, update_cache, cache_valid_time.".to_string()
+        }
         "yum" | "dnf" => "Required: name. Optional: state, enablerepo, disablerepo.".to_string(),
-        "service" => "Required: name. Optional: state (started/stopped/restarted/reloaded), enabled."
-            .to_string(),
-        "user" => "Required: name. Optional: state, uid, groups, shell, home, password.".to_string(),
+        "service" => {
+            "Required: name. Optional: state (started/stopped/restarted/reloaded), enabled."
+                .to_string()
+        }
+        "user" => {
+            "Required: name. Optional: state, uid, groups, shell, home, password.".to_string()
+        }
         "group" => "Required: name. Optional: state, gid.".to_string(),
         "lineinfile" => {
             "Required: path. Optional: line, regexp, state, insertafter, insertbefore.".to_string()
@@ -619,15 +624,14 @@ pub fn get_module_args_hint(module: &str) -> String {
 pub fn get_module_execution_hint(module: &str) -> String {
     match module {
         "command" | "shell" => "Check command spelling and ensure it exists in PATH.".to_string(),
-        "copy" | "template" => {
-            "Verify source file exists and destination is writable.".to_string()
-        }
+        "copy" | "template" => "Verify source file exists and destination is writable.".to_string(),
         "file" => "Check permissions and ensure parent directories exist.".to_string(),
         "apt" => "Ensure apt repositories are configured and reachable.".to_string(),
         "yum" | "dnf" => "Ensure yum/dnf repositories are configured and reachable.".to_string(),
         "service" => "Verify the service exists and is managed by systemd/init.".to_string(),
         "user" | "group" => {
-            "Check if you have permission to manage users/groups (may need become: yes).".to_string()
+            "Check if you have permission to manage users/groups (may need become: yes)."
+                .to_string()
         }
         _ => "Check task output for specific error details.".to_string(),
     }
@@ -790,10 +794,7 @@ impl Error {
             hint,
             context,
             suggestions: vec![
-                format!(
-                    "Run 'rustible-doc {}' for module documentation",
-                    module_str
-                ),
+                format!("Run 'rustible-doc {}' for module documentation", module_str),
                 "Check YAML syntax and indentation".to_string(),
             ],
         }
@@ -979,7 +980,10 @@ impl Error {
 
         EnrichedError {
             message: format!("Role '{}' not found", role_str),
-            hint: format!("Searched paths: {}", if paths.is_empty() { "./roles" } else { &paths }),
+            hint: format!(
+                "Searched paths: {}",
+                if paths.is_empty() { "./roles" } else { &paths }
+            ),
             context: None,
             suggestions: vec![
                 "Check role name spelling".to_string(),

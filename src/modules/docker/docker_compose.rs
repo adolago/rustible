@@ -231,9 +231,9 @@ impl ComposeConfig {
         }
 
         // Parse files
-        let files = params.get_vec_string("files")?.unwrap_or_else(|| {
-            vec!["docker-compose.yml".to_string()]
-        });
+        let files = params
+            .get_vec_string("files")?
+            .unwrap_or_else(|| vec!["docker-compose.yml".to_string()]);
 
         // Parse services
         let services = params.get_vec_string("services")?.unwrap_or_default();
@@ -299,7 +299,8 @@ impl DockerComposeModule {
         }
 
         Err(ModuleError::ExecutionFailed(
-            "Docker Compose not found. Install docker-compose or Docker Compose plugin.".to_string()
+            "Docker Compose not found. Install docker-compose or Docker Compose plugin."
+                .to_string(),
         ))
     }
 
@@ -412,11 +413,11 @@ impl DockerComposeModule {
         }
 
         // Check if anything was created/recreated
-        let changed = stdout.contains("Created") ||
-                      stdout.contains("Recreated") ||
-                      stdout.contains("Starting") ||
-                      stderr.contains("Created") ||
-                      stderr.contains("Recreated");
+        let changed = stdout.contains("Created")
+            || stdout.contains("Recreated")
+            || stdout.contains("Starting")
+            || stderr.contains("Created")
+            || stderr.contains("Recreated");
 
         Ok((changed, format!("{}{}", stdout, stderr)))
     }
@@ -463,10 +464,10 @@ impl DockerComposeModule {
             )));
         }
 
-        let changed = stdout.contains("Removed") ||
-                      stdout.contains("Stopping") ||
-                      stderr.contains("Removed") ||
-                      stderr.contains("Stopping");
+        let changed = stdout.contains("Removed")
+            || stdout.contains("Stopping")
+            || stderr.contains("Removed")
+            || stderr.contains("Stopping");
 
         Ok((changed, format!("{}{}", stdout, stderr)))
     }
@@ -617,7 +618,7 @@ impl DockerComposeModule {
             Path::new(project_src).to_path_buf()
         } else {
             return Err(ModuleError::MissingParameter(
-                "Either 'project_src' or 'definition' must be provided".to_string()
+                "Either 'project_src' or 'definition' must be provided".to_string(),
             ));
         };
 
@@ -638,7 +639,8 @@ impl DockerComposeModule {
                     messages.push("Would run docker compose up".to_string());
                     changed = true;
                 } else {
-                    let (did_change, _output) = Self::compose_up(&compose_cmd, &config, &work_dir).await?;
+                    let (did_change, _output) =
+                        Self::compose_up(&compose_cmd, &config, &work_dir).await?;
                     if did_change {
                         messages.push("Started/updated compose project".to_string());
                     } else {
@@ -653,7 +655,8 @@ impl DockerComposeModule {
                     messages.push("Would run docker compose down".to_string());
                     changed = true;
                 } else {
-                    let (did_change, _) = Self::compose_down(&compose_cmd, &config, &work_dir).await?;
+                    let (did_change, _) =
+                        Self::compose_down(&compose_cmd, &config, &work_dir).await?;
                     if did_change {
                         messages.push("Stopped and removed compose project".to_string());
                     } else {
@@ -668,7 +671,8 @@ impl DockerComposeModule {
                     messages.push("Would run docker compose stop".to_string());
                     changed = true;
                 } else {
-                    let (did_change, _) = Self::compose_stop(&compose_cmd, &config, &work_dir).await?;
+                    let (did_change, _) =
+                        Self::compose_stop(&compose_cmd, &config, &work_dir).await?;
                     if did_change {
                         messages.push("Stopped compose project".to_string());
                     } else {
@@ -683,7 +687,8 @@ impl DockerComposeModule {
                     messages.push("Would run docker compose restart".to_string());
                     changed = true;
                 } else {
-                    let (did_change, _) = Self::compose_restart(&compose_cmd, &config, &work_dir).await?;
+                    let (did_change, _) =
+                        Self::compose_restart(&compose_cmd, &config, &work_dir).await?;
                     if did_change {
                         messages.push("Restarted compose project".to_string());
                     }
@@ -734,7 +739,7 @@ impl Module for DockerComposeModule {
     fn validate_params(&self, params: &ModuleParams) -> ModuleResult<()> {
         if params.get("project_src").is_none() && params.get("definition").is_none() {
             return Err(ModuleError::MissingParameter(
-                "Either 'project_src' or 'definition' must be provided".to_string()
+                "Either 'project_src' or 'definition' must be provided".to_string(),
             ));
         }
         Ok(())
@@ -751,9 +756,9 @@ impl Module for DockerComposeModule {
         let params = params.clone();
         let context = context.clone();
         std::thread::scope(|s| {
-            s.spawn(|| {
-                rt.block_on(self.execute_async(&params, &context))
-            }).join().unwrap()
+            s.spawn(|| rt.block_on(self.execute_async(&params, &context)))
+                .join()
+                .unwrap()
         })
     }
 
@@ -768,7 +773,9 @@ impl Module for DockerComposeModule {
     fn diff(&self, params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<Option<Diff>> {
         let config = ComposeConfig::from_params(params)?;
 
-        let project = config.project_name.as_deref()
+        let project = config
+            .project_name
+            .as_deref()
             .or(config.project_src.as_deref())
             .unwrap_or("unknown");
 
@@ -785,36 +792,75 @@ mod tests {
 
     #[test]
     fn test_compose_state_from_str() {
-        assert_eq!(ComposeState::from_str("present").unwrap(), ComposeState::Present);
-        assert_eq!(ComposeState::from_str("started").unwrap(), ComposeState::Present);
+        assert_eq!(
+            ComposeState::from_str("present").unwrap(),
+            ComposeState::Present
+        );
+        assert_eq!(
+            ComposeState::from_str("started").unwrap(),
+            ComposeState::Present
+        );
         assert_eq!(ComposeState::from_str("up").unwrap(), ComposeState::Present);
-        assert_eq!(ComposeState::from_str("absent").unwrap(), ComposeState::Absent);
-        assert_eq!(ComposeState::from_str("down").unwrap(), ComposeState::Absent);
-        assert_eq!(ComposeState::from_str("stopped").unwrap(), ComposeState::Stopped);
-        assert_eq!(ComposeState::from_str("restarted").unwrap(), ComposeState::Restarted);
+        assert_eq!(
+            ComposeState::from_str("absent").unwrap(),
+            ComposeState::Absent
+        );
+        assert_eq!(
+            ComposeState::from_str("down").unwrap(),
+            ComposeState::Absent
+        );
+        assert_eq!(
+            ComposeState::from_str("stopped").unwrap(),
+            ComposeState::Stopped
+        );
+        assert_eq!(
+            ComposeState::from_str("restarted").unwrap(),
+            ComposeState::Restarted
+        );
         assert!(ComposeState::from_str("invalid").is_err());
     }
 
     #[test]
     fn test_pull_policy_from_str() {
-        assert_eq!(ComposePullPolicy::from_str("always").unwrap(), ComposePullPolicy::Always);
-        assert_eq!(ComposePullPolicy::from_str("missing").unwrap(), ComposePullPolicy::Missing);
-        assert_eq!(ComposePullPolicy::from_str("never").unwrap(), ComposePullPolicy::Never);
+        assert_eq!(
+            ComposePullPolicy::from_str("always").unwrap(),
+            ComposePullPolicy::Always
+        );
+        assert_eq!(
+            ComposePullPolicy::from_str("missing").unwrap(),
+            ComposePullPolicy::Missing
+        );
+        assert_eq!(
+            ComposePullPolicy::from_str("never").unwrap(),
+            ComposePullPolicy::Never
+        );
         assert!(ComposePullPolicy::from_str("invalid").is_err());
     }
 
     #[test]
     fn test_recreate_policy_from_str() {
-        assert_eq!(RecreatePolicy::from_str("always").unwrap(), RecreatePolicy::Always);
-        assert_eq!(RecreatePolicy::from_str("never").unwrap(), RecreatePolicy::Never);
-        assert_eq!(RecreatePolicy::from_str("smart").unwrap(), RecreatePolicy::Smart);
+        assert_eq!(
+            RecreatePolicy::from_str("always").unwrap(),
+            RecreatePolicy::Always
+        );
+        assert_eq!(
+            RecreatePolicy::from_str("never").unwrap(),
+            RecreatePolicy::Never
+        );
+        assert_eq!(
+            RecreatePolicy::from_str("smart").unwrap(),
+            RecreatePolicy::Smart
+        );
         assert!(RecreatePolicy::from_str("invalid").is_err());
     }
 
     #[test]
     fn test_remove_images_from_str() {
         assert_eq!(RemoveImages::from_str("all").unwrap(), RemoveImages::All);
-        assert_eq!(RemoveImages::from_str("local").unwrap(), RemoveImages::Local);
+        assert_eq!(
+            RemoveImages::from_str("local").unwrap(),
+            RemoveImages::Local
+        );
         assert!(RemoveImages::from_str("invalid").is_err());
     }
 

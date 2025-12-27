@@ -156,9 +156,7 @@ impl ServiceConfig {
         let selector = Self::parse_string_map(params, "selector")?;
         let ports = Self::parse_ports(params)?;
         let cluster_ip = params.get_string("cluster_ip")?;
-        let external_ips = params
-            .get_vec_string("external_ips")?
-            .unwrap_or_default();
+        let external_ips = params.get_vec_string("external_ips")?.unwrap_or_default();
         let external_name = params.get_string("external_name")?;
         let load_balancer_ip = params.get_string("load_balancer_ip")?;
         let session_affinity = params.get_string("session_affinity")?;
@@ -210,11 +208,9 @@ impl ServiceConfig {
             Some(serde_json::Value::Array(arr)) => {
                 for item in arr {
                     let port = match item.get("port") {
-                        Some(serde_json::Value::Number(n)) => {
-                            n.as_i64().ok_or_else(|| {
-                                ModuleError::InvalidParameter("port must be an integer".to_string())
-                            })? as i32
-                        }
+                        Some(serde_json::Value::Number(n)) => n.as_i64().ok_or_else(|| {
+                            ModuleError::InvalidParameter("port must be an integer".to_string())
+                        })? as i32,
                         _ => {
                             return Err(ModuleError::InvalidParameter(
                                 "Each port entry must have a 'port' field".to_string(),
@@ -222,18 +218,15 @@ impl ServiceConfig {
                         }
                     };
 
-                    let target_port = item.get("target_port").and_then(|v| {
-                        v.as_i64().map(|n| n as i32)
-                    });
+                    let target_port = item
+                        .get("target_port")
+                        .and_then(|v| v.as_i64().map(|n| n as i32));
 
-                    let node_port = item.get("node_port").and_then(|v| {
-                        v.as_i64().map(|n| n as i32)
-                    });
+                    let node_port = item
+                        .get("node_port")
+                        .and_then(|v| v.as_i64().map(|n| n as i32));
 
-                    let name = item
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
+                    let name = item.get("name").and_then(|v| v.as_str()).map(String::from);
 
                     let protocol = item
                         .get("protocol")
@@ -429,7 +422,8 @@ impl K8sServiceModule {
                         if let Some(ref mut spec) = patched_service.spec {
                             // Preserve existing clusterIP if not explicitly set
                             if config.cluster_ip.is_none() {
-                                spec.cluster_ip = existing.spec.as_ref().and_then(|s| s.cluster_ip.clone());
+                                spec.cluster_ip =
+                                    existing.spec.as_ref().and_then(|s| s.cluster_ip.clone());
                             }
                         }
 
@@ -594,10 +588,9 @@ impl Module for K8sServiceModule {
 
         let before = match config.state {
             ServiceState::Present => "absent or different configuration".to_string(),
-            ServiceState::Absent => format!(
-                "Service '{}/{}' exists",
-                config.namespace, config.name
-            ),
+            ServiceState::Absent => {
+                format!("Service '{}/{}' exists", config.namespace, config.name)
+            }
         };
 
         let after = match config.state {
@@ -608,10 +601,9 @@ impl Module for K8sServiceModule {
                 config.service_type.to_k8s_string(),
                 config.ports.len()
             ),
-            ServiceState::Absent => format!(
-                "Service '{}/{}' absent",
-                config.namespace, config.name
-            ),
+            ServiceState::Absent => {
+                format!("Service '{}/{}' absent", config.namespace, config.name)
+            }
         };
 
         Ok(Some(Diff::new(before, after)))

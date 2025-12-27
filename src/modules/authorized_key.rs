@@ -32,7 +32,8 @@ static SSH_KEY_REGEX: Lazy<Regex> = Lazy::new(|| {
 
 /// Regex pattern for extracting key type and data from a public key
 static KEY_PARTS_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^([a-z0-9\-@.]+)\s+([A-Za-z0-9+/=]+)(?:\s+(.*))?$").expect("Invalid key parts regex")
+    Regex::new(r"^([a-z0-9\-@.]+)\s+([A-Za-z0-9+/=]+)(?:\s+(.*))?$")
+        .expect("Invalid key parts regex")
 });
 
 /// Desired state for an authorized key
@@ -309,11 +310,9 @@ impl AuthorizedKeyModule {
         let connection = connection.clone();
         let command = command.to_string();
         let result = std::thread::scope(|s| {
-            s.spawn(|| {
-                handle.block_on(async { connection.execute(&command, Some(options)).await })
-            })
-            .join()
-            .unwrap()
+            s.spawn(|| handle.block_on(async { connection.execute(&command, Some(options)).await }))
+                .join()
+                .unwrap()
         })
         .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
 
@@ -455,7 +454,9 @@ impl AuthorizedKeyModule {
             .join()
             .unwrap()
         })
-        .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to write authorized_keys: {}", e)))?;
+        .map_err(|e| {
+            ModuleError::ExecutionFailed(format!("Failed to write authorized_keys: {}", e))
+        })?;
 
         // Set ownership and permissions
         let dir_path = Path::new(path).parent().unwrap_or(Path::new("/"));
@@ -492,10 +493,7 @@ impl AuthorizedKeyModule {
     }
 
     /// Add a key to the list, handling options and comments
-    fn add_key(
-        existing_keys: &mut Vec<AuthorizedKey>,
-        new_key: &AuthorizedKey,
-    ) -> bool {
+    fn add_key(existing_keys: &mut Vec<AuthorizedKey>, new_key: &AuthorizedKey) -> bool {
         // Check if key already exists (by key data)
         for key in existing_keys.iter_mut() {
             if key.same_key(new_key) {
@@ -642,10 +640,7 @@ impl AuthorizedKeyModule {
         let mut output = ModuleOutput::changed(format!("{} in '{}'", action, authorized_keys_path));
 
         if context.diff_mode {
-            output = output.with_diff(Diff::new(
-                existing_lines.join("\n"),
-                new_content.join("\n"),
-            ));
+            output = output.with_diff(Diff::new(existing_lines.join("\n"), new_content.join("\n")));
         }
 
         Ok(output)
@@ -698,11 +693,11 @@ impl AuthorizedKeyModule {
         })?;
 
         // Get the authorized_keys path
-        let authorized_keys_path =
-            Self::get_authorized_keys_path(connection, user, path, context)?;
+        let authorized_keys_path = Self::get_authorized_keys_path(connection, user, path, context)?;
 
         // Read existing keys
-        let existing_lines = Self::read_authorized_keys(connection, &authorized_keys_path, context)?;
+        let existing_lines =
+            Self::read_authorized_keys(connection, &authorized_keys_path, context)?;
         let mut existing_keys = Self::parse_keys(&existing_lines);
 
         // Parse and validate the new key
@@ -785,10 +780,7 @@ impl AuthorizedKeyModule {
         let mut output = ModuleOutput::changed(format!("{} in '{}'", action, authorized_keys_path));
 
         if context.diff_mode {
-            output = output.with_diff(Diff::new(
-                existing_lines.join("\n"),
-                new_content.join("\n"),
-            ));
+            output = output.with_diff(Diff::new(existing_lines.join("\n"), new_content.join("\n")));
         }
 
         Ok(output)
@@ -969,7 +961,10 @@ mod tests {
     fn test_parse_key_with_options() {
         let key_str = r#"command="/bin/date",no-pty ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7 test"#;
         let key = AuthorizedKey::parse(key_str).unwrap();
-        assert_eq!(key.options, Some(r#"command="/bin/date",no-pty"#.to_string()));
+        assert_eq!(
+            key.options,
+            Some(r#"command="/bin/date",no-pty"#.to_string())
+        );
         assert_eq!(key.key_type, "ssh-rsa");
     }
 
@@ -999,7 +994,8 @@ mod tests {
     #[test]
     fn test_same_key() {
         let key1 = AuthorizedKey::parse(TEST_RSA_KEY).unwrap();
-        let key2 = AuthorizedKey::parse("ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7 other@host").unwrap();
+        let key2 =
+            AuthorizedKey::parse("ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7 other@host").unwrap();
         let key3 = AuthorizedKey::parse(TEST_ED25519_KEY).unwrap();
 
         assert!(key1.same_key(&key2)); // Same key, different comment
@@ -1010,7 +1006,9 @@ mod tests {
     fn test_validate_ssh_key_valid() {
         assert!(validate_ssh_key(TEST_RSA_KEY).is_ok());
         assert!(validate_ssh_key(TEST_ED25519_KEY).is_ok());
-        assert!(validate_ssh_key("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY= user").is_ok());
+        assert!(
+            validate_ssh_key("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY= user").is_ok()
+        );
     }
 
     #[test]
@@ -1114,7 +1112,10 @@ mod tests {
     #[test]
     fn test_module_classification() {
         let module = AuthorizedKeyModule;
-        assert_eq!(module.classification(), ModuleClassification::NativeTransport);
+        assert_eq!(
+            module.classification(),
+            ModuleClassification::NativeTransport
+        );
     }
 
     #[test]

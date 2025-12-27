@@ -71,10 +71,10 @@ pub mod nxos_config;
 
 // Re-export main types for convenience
 pub use common::{
-    calculate_config_checksum, generate_backup_filename, generate_config_diff,
-    parse_config_input, validate_config_lines, ConfigBackup, ConfigCommandGenerator,
-    ConfigSection, ConfigSource, IosCommandGenerator, NetworkConfig, NetworkDeviceConnection,
-    NetworkPlatform, NetworkTransport, SectionChange, SectionChangeType,
+    calculate_config_checksum, generate_backup_filename, generate_config_diff, parse_config_input,
+    validate_config_lines, ConfigBackup, ConfigCommandGenerator, ConfigSection, ConfigSource,
+    IosCommandGenerator, NetworkConfig, NetworkDeviceConnection, NetworkPlatform, NetworkTransport,
+    SectionChange, SectionChangeType,
 };
 pub use eos_config::EosConfigModule;
 pub use ios_config::{
@@ -97,12 +97,7 @@ pub fn register_network_modules(registry: &mut ModuleRegistry) {
 
 /// Get a list of all available network module names
 pub fn network_module_names() -> Vec<&'static str> {
-    vec![
-        "ios_config",
-        "junos_config",
-        "nxos_config",
-        "eos_config",
-    ]
+    vec!["ios_config", "junos_config", "nxos_config", "eos_config"]
 }
 
 #[cfg(test)]
@@ -118,7 +113,10 @@ mod tests {
     #[test]
     fn test_platform_display() {
         assert_eq!(format!("{}", NetworkPlatform::CiscoIos), "cisco_ios");
-        assert_eq!(format!("{}", NetworkPlatform::JuniperJunos), "juniper_junos");
+        assert_eq!(
+            format!("{}", NetworkPlatform::JuniperJunos),
+            "juniper_junos"
+        );
     }
 
     #[test]

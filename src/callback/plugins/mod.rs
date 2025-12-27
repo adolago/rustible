@@ -220,8 +220,8 @@ pub use logstash::{
 // Profile tasks callback
 pub use profile_tasks::{
     AggregatedTaskTiming, HostTaskTiming, HostTiming, PerformanceRecommendation,
-    ProfileTasksCallback, ProfileTasksCallbackBuilder, ProfileTasksConfig,
-    RecommendationSeverity, SortOrder, TaskTiming,
+    ProfileTasksCallback, ProfileTasksCallbackBuilder, ProfileTasksConfig, RecommendationSeverity,
+    SortOrder, TaskTiming,
 };
 
 // Splunk callback

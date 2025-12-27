@@ -63,10 +63,7 @@ pub fn powershell_escape(s: &str) -> String {
 ///
 /// This handles backticks, dollar signs, and double quotes.
 pub fn powershell_escape_double_quoted(s: &str) -> String {
-    let escaped = s
-        .replace('`', "``")
-        .replace('$', "`$")
-        .replace('"', "`\"");
+    let escaped = s.replace('`', "``").replace('$', "`$").replace('"', "`\"");
     format!("\"{}\"", escaped)
 }
 
@@ -139,7 +136,9 @@ pub fn validate_windows_username(name: &str) -> ModuleResult<()> {
     }
 
     // Windows usernames have specific restrictions
-    let invalid_chars = ['/', '\\', '[', ']', ':', ';', '|', '=', ',', '+', '*', '?', '<', '>'];
+    let invalid_chars = [
+        '/', '\\', '[', ']', ':', ';', '|', '=', ',', '+', '*', '?', '<', '>',
+    ];
     for c in invalid_chars {
         if name.contains(c) {
             return Err(ModuleError::InvalidParameter(format!(
@@ -209,10 +208,16 @@ pub async fn execute_powershell(
     // Encode the script as base64 for safe transport
     let encoded = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
-        script.encode_utf16().flat_map(|c| c.to_le_bytes()).collect::<Vec<u8>>(),
+        script
+            .encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect::<Vec<u8>>(),
     );
 
-    let command = format!("powershell.exe -NoProfile -NonInteractive -EncodedCommand {}", encoded);
+    let command = format!(
+        "powershell.exe -NoProfile -NonInteractive -EncodedCommand {}",
+        encoded
+    );
 
     let result = connection
         .execute(&command, None)
@@ -235,9 +240,7 @@ pub fn execute_powershell_sync(
 
     std::thread::scope(|s| {
         s.spawn(|| {
-            handle.block_on(async {
-                execute_powershell(connection.as_ref(), &script).await
-            })
+            handle.block_on(async { execute_powershell(connection.as_ref(), &script).await })
         })
         .join()
         .unwrap()
@@ -259,7 +262,10 @@ mod tests {
     fn test_powershell_escape_double_quoted() {
         assert_eq!(powershell_escape_double_quoted("simple"), "\"simple\"");
         assert_eq!(powershell_escape_double_quoted("with$var"), "\"with`$var\"");
-        assert_eq!(powershell_escape_double_quoted("with`backtick"), "\"with``backtick\"");
+        assert_eq!(
+            powershell_escape_double_quoted("with`backtick"),
+            "\"with``backtick\""
+        );
     }
 
     #[test]

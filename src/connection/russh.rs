@@ -3390,8 +3390,13 @@ impl HighPerformanceConnectionFactory {
         let results = futures::future::join_all(futures).await;
 
         // Reconstruct results in order
-        let mut ordered: Vec<ConnectionResult<RusshConnection>> =
-            (0..hosts.len()).map(|_| Err(ConnectionError::ConnectionFailed("Not connected".to_string()))).collect();
+        let mut ordered: Vec<ConnectionResult<RusshConnection>> = (0..hosts.len())
+            .map(|_| {
+                Err(ConnectionError::ConnectionFailed(
+                    "Not connected".to_string(),
+                ))
+            })
+            .collect();
 
         for result in results {
             match result {
@@ -3470,7 +3475,11 @@ impl HighPerformanceConnectionFactory {
 
         // Reconstruct results in order
         let mut ordered: Vec<ConnectionResult<RusshConnection>> = (0..host_configs.len())
-            .map(|_| Err(ConnectionError::ConnectionFailed("Not connected".to_string())))
+            .map(|_| {
+                Err(ConnectionError::ConnectionFailed(
+                    "Not connected".to_string(),
+                ))
+            })
             .collect();
 
         for result in results {

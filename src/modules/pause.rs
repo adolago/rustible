@@ -75,10 +75,13 @@ impl PauseModule {
         };
 
         // Disable echo
-        termios.local_flags.remove(nix::sys::termios::LocalFlags::ECHO);
+        termios
+            .local_flags
+            .remove(nix::sys::termios::LocalFlags::ECHO);
 
         // Apply settings
-        if nix::sys::termios::tcsetattr(&fd, nix::sys::termios::SetArg::TCSANOW, &termios).is_err() {
+        if nix::sys::termios::tcsetattr(&fd, nix::sys::termios::SetArg::TCSANOW, &termios).is_err()
+        {
             // Fall back to normal input
             let mut line = String::new();
             stdin.lock().read_line(&mut line)?;
@@ -310,10 +313,7 @@ impl Module for PauseModule {
                     prompt_text.trim()
                 );
                 output_data.insert("skipped".to_string(), Value::Bool(true));
-                output_data.insert(
-                    "user_input".to_string(),
-                    Value::String(String::new()),
-                );
+                output_data.insert("user_input".to_string(), Value::String(String::new()));
 
                 // Still respect any timed duration
                 if let Some(secs) = duration_opt {
@@ -495,10 +495,7 @@ mod tests {
 
         let result = module.validate_params(&params);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("non-negative"));
+        assert!(result.unwrap_err().to_string().contains("non-negative"));
     }
 
     #[test]
@@ -509,17 +506,17 @@ mod tests {
 
         let result = module.validate_params(&params);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("non-negative"));
+        assert!(result.unwrap_err().to_string().contains("non-negative"));
     }
 
     #[test]
     fn test_pause_validate_echo_boolean() {
         let module = PauseModule;
         let mut params: ModuleParams = HashMap::new();
-        params.insert("prompt".to_string(), Value::String("Enter value".to_string()));
+        params.insert(
+            "prompt".to_string(),
+            Value::String("Enter value".to_string()),
+        );
         params.insert("echo".to_string(), Value::Bool(false));
 
         assert!(module.validate_params(&params).is_ok());
@@ -637,9 +634,7 @@ mod tests {
 
         assert!(!result.changed);
         // Message depends on whether running interactively
-        assert!(
-            result.msg.contains("Would prompt") || result.msg.contains("Would skip prompt")
-        );
+        assert!(result.msg.contains("Would prompt") || result.msg.contains("Would skip prompt"));
     }
 
     #[test]

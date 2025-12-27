@@ -321,8 +321,7 @@ fn assert_playbook_success(
         assert!(
             !result.failed,
             "Host {} failed with stats: {:?}",
-            host,
-            result.stats
+            host, result.stats
         );
         assert!(
             !result.unreachable,
@@ -468,8 +467,8 @@ async fn test_e2e_docker_user_management() {
     }
 
     let executor = create_e2e_executor(&config);
-    let playbook =
-        load_e2e_playbook("03_user_management.yml").expect("Failed to load user management playbook");
+    let playbook = load_e2e_playbook("03_user_management.yml")
+        .expect("Failed to load user management playbook");
 
     println!(
         "Executing {} tasks across all hosts...",
@@ -694,8 +693,7 @@ async fn test_e2e_docker_check_mode() {
         assert!(
             !result.failed,
             "Host {} failed in check mode: {:?}",
-            host,
-            result.stats
+            host, result.stats
         );
         println!(
             "Host {} (check mode): {} would change",
@@ -750,10 +748,7 @@ async fn test_e2e_docker_parallel_execution() {
             .expect("Playbook failed");
         let duration = start.elapsed();
 
-        let total_tasks: usize = results
-            .values()
-            .map(|r| r.stats.ok + r.stats.changed)
-            .sum();
+        let total_tasks: usize = results.values().map(|r| r.stats.ok + r.stats.changed).sum();
         println!(
             "Forks={}: {} tasks in {:.2}s ({:.1} tasks/sec)",
             forks,

@@ -243,9 +243,9 @@ impl UnarchiveModule {
     fn is_excluded(path: &str, exclude_patterns: &[String], include_patterns: &[String]) -> bool {
         // If include patterns are specified, path must match at least one
         if !include_patterns.is_empty() {
-            let matches_include = include_patterns.iter().any(|pattern| {
-                Self::pattern_matches(path, pattern)
-            });
+            let matches_include = include_patterns
+                .iter()
+                .any(|pattern| Self::pattern_matches(path, pattern));
             if !matches_include {
                 return true;
             }
@@ -622,10 +622,7 @@ impl Module for UnarchiveModule {
         let temp_dir = tempfile::TempDir::new()?;
         let src_path = if remote_src || Self::is_url(&src_str) {
             // Download the file
-            let filename = src_str
-                .rsplit('/')
-                .next()
-                .unwrap_or("archive.download");
+            let filename = src_str.rsplit('/').next().unwrap_or("archive.download");
             let download_path = temp_dir.path().join(filename);
 
             if context.check_mode {
@@ -676,20 +673,22 @@ impl Module for UnarchiveModule {
             ArchiveFormat::from_str(&format_str)?
         } else {
             // Try to detect from path
-            ArchiveFormat::from_path(&src_path).or_else(|| {
-                // Try magic bytes
-                if let Ok(mut file) = File::open(&src_path) {
-                    let mut buffer = [0u8; 512];
-                    if file.read(&mut buffer).is_ok() {
-                        return ArchiveFormat::from_magic_bytes(&buffer);
+            ArchiveFormat::from_path(&src_path)
+                .or_else(|| {
+                    // Try magic bytes
+                    if let Ok(mut file) = File::open(&src_path) {
+                        let mut buffer = [0u8; 512];
+                        if file.read(&mut buffer).is_ok() {
+                            return ArchiveFormat::from_magic_bytes(&buffer);
+                        }
                     }
-                }
-                None
-            }).ok_or_else(|| {
-                ModuleError::InvalidParameter(
-                    "Cannot determine archive format. Specify 'format' parameter.".to_string(),
-                )
-            })?
+                    None
+                })
+                .ok_or_else(|| {
+                    ModuleError::InvalidParameter(
+                        "Cannot determine archive format. Specify 'format' parameter.".to_string(),
+                    )
+                })?
         };
 
         // Check mode
@@ -706,15 +705,29 @@ impl Module for UnarchiveModule {
 
         // Extract the archive
         let stats = match format {
-            ArchiveFormat::Tar => {
-                Self::extract_tar(&src_path, dest, false, &exclude_patterns, &include_patterns, keep_newer)?
-            }
-            ArchiveFormat::TarGz => {
-                Self::extract_tar(&src_path, dest, true, &exclude_patterns, &include_patterns, keep_newer)?
-            }
-            ArchiveFormat::Zip => {
-                Self::extract_zip(&src_path, dest, &exclude_patterns, &include_patterns, keep_newer)?
-            }
+            ArchiveFormat::Tar => Self::extract_tar(
+                &src_path,
+                dest,
+                false,
+                &exclude_patterns,
+                &include_patterns,
+                keep_newer,
+            )?,
+            ArchiveFormat::TarGz => Self::extract_tar(
+                &src_path,
+                dest,
+                true,
+                &exclude_patterns,
+                &include_patterns,
+                keep_newer,
+            )?,
+            ArchiveFormat::Zip => Self::extract_zip(
+                &src_path,
+                dest,
+                &exclude_patterns,
+                &include_patterns,
+                keep_newer,
+            )?,
         };
 
         // Create marker for idempotency
@@ -1086,7 +1099,10 @@ mod tests {
         assert!(UnarchiveModule::pattern_matches("file.log", "*.log"));
         assert!(UnarchiveModule::pattern_matches("test.txt", "test*"));
         assert!(UnarchiveModule::pattern_matches("anything", "*"));
-        assert!(UnarchiveModule::pattern_matches("path/to/file.log", "*.log"));
+        assert!(UnarchiveModule::pattern_matches(
+            "path/to/file.log",
+            "*.log"
+        ));
         assert!(!UnarchiveModule::pattern_matches("file.txt", "*.log"));
     }
 }

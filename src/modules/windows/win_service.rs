@@ -43,9 +43,7 @@
 //!     password: "{{ service_password }}"
 //! ```
 
-use crate::modules::windows::{
-    execute_powershell_sync, powershell_escape, validate_service_name,
-};
+use crate::modules::windows::{execute_powershell_sync, powershell_escape, validate_service_name};
 use crate::modules::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
@@ -308,7 +306,12 @@ $result | ConvertTo-Json -Compress
     ) -> String {
         let display_name = display_name.unwrap_or(name);
         let desc_section = description
-            .map(|d| format!("Set-Service -Name $serviceName -Description {}", powershell_escape(d)))
+            .map(|d| {
+                format!(
+                    "Set-Service -Name $serviceName -Description {}",
+                    powershell_escape(d)
+                )
+            })
             .unwrap_or_default();
 
         format!(

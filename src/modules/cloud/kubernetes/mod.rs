@@ -646,10 +646,7 @@ mod tests {
     #[test]
     fn test_secret_type_from_str() {
         assert_eq!(SecretType::from_str("Opaque").unwrap(), SecretType::Opaque);
-        assert_eq!(
-            SecretType::from_str("tls").unwrap(),
-            SecretType::Tls
-        );
+        assert_eq!(SecretType::from_str("tls").unwrap(), SecretType::Tls);
         assert_eq!(
             SecretType::from_str("kubernetes.io/dockerconfigjson").unwrap(),
             SecretType::DockerConfigJson
@@ -695,7 +692,10 @@ mod tests {
             .with_label("app", "nginx")
             .with_label("version", "v1");
         assert_eq!(selector.match_labels.get("app"), Some(&"nginx".to_string()));
-        assert_eq!(selector.match_labels.get("version"), Some(&"v1".to_string()));
+        assert_eq!(
+            selector.match_labels.get("version"),
+            Some(&"v1".to_string())
+        );
     }
 
     #[test]

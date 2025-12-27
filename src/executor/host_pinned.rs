@@ -162,8 +162,7 @@ impl<T: Send + 'static, R: Send + 'static> HostWorker<T, R> {
                 let mut stats = self.stats.write();
                 stats.tasks_executed += 1;
                 stats.total_execution_ms += elapsed.as_millis() as u64;
-                stats.avg_task_time_ms =
-                    stats.total_execution_ms / stats.tasks_executed;
+                stats.avg_task_time_ms = stats.total_execution_ms / stats.tasks_executed;
                 stats.last_active = Some(Instant::now());
             }
 
@@ -272,8 +271,17 @@ impl<T: Send + Sync + 'static, R: Send + 'static> HostPinnedPool<T, R> {
     ) -> HostWorkerHandle<T, R>
     where
         F: FnOnce() -> Fut + Send + 'static,
-        Fut: std::future::Future<Output = Box<dyn Fn(String, T) -> std::pin::Pin<Box<dyn std::future::Future<Output = R> + Send>> + Send + Sync>>
-            + Send
+        Fut: std::future::Future<
+                Output = Box<
+                    dyn Fn(
+                            String,
+                            T,
+                        )
+                            -> std::pin::Pin<Box<dyn std::future::Future<Output = R> + Send>>
+                        + Send
+                        + Sync,
+                >,
+            > + Send
             + 'static,
     {
         // Check if worker already exists
@@ -361,12 +369,7 @@ impl<T: Send + Sync + 'static, R: Send + 'static> HostPinnedPool<T, R> {
 
     /// Get aggregate statistics
     pub fn aggregate_stats(&self) -> PoolStats {
-        let worker_stats: Vec<_> = self
-            .workers
-            .read()
-            .values()
-            .map(|h| h.stats())
-            .collect();
+        let worker_stats: Vec<_> = self.workers.read().values().map(|h| h.stats()).collect();
 
         let total_executed: u64 = worker_stats.iter().map(|s| s.tasks_executed).sum();
         let total_failed: u64 = worker_stats.iter().map(|s| s.tasks_failed).sum();

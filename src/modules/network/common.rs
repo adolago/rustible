@@ -8,11 +8,11 @@
 
 use crate::connection::{Connection, ConnectionError, ConnectionResult};
 use crate::modules::{Diff, ModuleError, ModuleResult};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 use std::collections::HashMap;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
 
 // ============================================================================
 // Transport Types
@@ -216,7 +216,7 @@ fn parse_config_sections(content: &str, platform: NetworkPlatform) -> Vec<Config
     let mut current_section: Option<ConfigSection> = None;
     let indent_char = match platform {
         NetworkPlatform::JuniperJunos => "    ", // Junos uses 4 spaces
-        _ => " ", // IOS uses single space
+        _ => " ",                                // IOS uses single space
     };
 
     for (line_num, line) in content.lines().enumerate() {
@@ -240,30 +240,26 @@ fn parse_config_sections(content: &str, platform: NetworkPlatform) -> Vec<Config
         // Detect section headers based on platform
         let is_section_header = match platform {
             NetworkPlatform::CiscoIos | NetworkPlatform::CiscoNxos | NetworkPlatform::CiscoAsa => {
-                indent_level == 0 && (
-                    trimmed.starts_with("interface ") ||
-                    trimmed.starts_with("router ") ||
-                    trimmed.starts_with("ip ") ||
-                    trimmed.starts_with("line ") ||
-                    trimmed.starts_with("vlan ") ||
-                    trimmed.starts_with("class-map ") ||
-                    trimmed.starts_with("policy-map ") ||
-                    trimmed.starts_with("access-list ") ||
-                    trimmed.starts_with("route-map ") ||
-                    trimmed.starts_with("crypto ") ||
-                    trimmed.starts_with("aaa ")
-                )
+                indent_level == 0
+                    && (trimmed.starts_with("interface ")
+                        || trimmed.starts_with("router ")
+                        || trimmed.starts_with("ip ")
+                        || trimmed.starts_with("line ")
+                        || trimmed.starts_with("vlan ")
+                        || trimmed.starts_with("class-map ")
+                        || trimmed.starts_with("policy-map ")
+                        || trimmed.starts_with("access-list ")
+                        || trimmed.starts_with("route-map ")
+                        || trimmed.starts_with("crypto ")
+                        || trimmed.starts_with("aaa "))
             }
-            NetworkPlatform::JuniperJunos => {
-                trimmed.ends_with('{')
-            }
+            NetworkPlatform::JuniperJunos => trimmed.ends_with('{'),
             NetworkPlatform::AristaEos => {
-                indent_level == 0 && (
-                    trimmed.starts_with("interface ") ||
-                    trimmed.starts_with("router ") ||
-                    trimmed.starts_with("vlan ") ||
-                    trimmed.starts_with("ip ")
-                )
+                indent_level == 0
+                    && (trimmed.starts_with("interface ")
+                        || trimmed.starts_with("router ")
+                        || trimmed.starts_with("vlan ")
+                        || trimmed.starts_with("ip "))
             }
             _ => indent_level == 0 && !trimmed.is_empty(),
         };
@@ -326,17 +322,18 @@ pub fn generate_config_diff(before: &str, after: &str) -> Diff {
 
     Diff {
         before: format!("{} lines", before.lines().count()),
-        after: format!("{} lines ({} additions, {} deletions)",
-            after.lines().count(), additions, deletions),
+        after: format!(
+            "{} lines ({} additions, {} deletions)",
+            after.lines().count(),
+            additions,
+            deletions
+        ),
         details: Some(details),
     }
 }
 
 /// Generate a context-aware diff that understands configuration sections
-pub fn generate_section_diff(
-    before: &NetworkConfig,
-    after: &NetworkConfig,
-) -> Vec<SectionChange> {
+pub fn generate_section_diff(before: &NetworkConfig, after: &NetworkConfig) -> Vec<SectionChange> {
     let before_sections_vec = before.sections();
     let before_sections: HashMap<String, &ConfigSection> = before_sections_vec
         .iter()
@@ -367,10 +364,8 @@ pub fn generate_section_diff(
     }
 
     // Find removed sections
-    let after_paths: std::collections::HashSet<_> = after_sections
-        .iter()
-        .map(|s| &s.path)
-        .collect();
+    let after_paths: std::collections::HashSet<_> =
+        after_sections.iter().map(|s| &s.path).collect();
 
     for (path, section) in before_sections {
         if !after_paths.contains(&path) {
@@ -447,7 +442,7 @@ pub fn generate_backup_filename(
 
 /// Calculate SHA256 checksum of configuration content
 pub fn calculate_config_checksum(content: &str) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     format!("{:x}", hasher.finalize())
@@ -538,9 +533,7 @@ impl ConfigCommandGenerator for IosCommandGenerator {
     }
 
     fn rollback_config(&self, checkpoint: &str) -> Vec<String> {
-        vec![
-            format!("configure replace flash:{} force", checkpoint),
-        ]
+        vec![format!("configure replace flash:{} force", checkpoint)]
     }
 }
 
@@ -736,7 +729,8 @@ pub fn validate_config_lines(lines: &[String], platform: NetworkPlatform) -> Mod
         if trimmed.contains('\0') {
             return Err(ModuleError::InvalidParameter(format!(
                 "Line {} contains null character: {}",
-                i + 1, line
+                i + 1,
+                line
             )));
         }
 
@@ -756,10 +750,7 @@ pub fn validate_config_lines(lines: &[String], platform: NetworkPlatform) -> Mod
 }
 
 /// Generate the set of commands needed to transform one config into another
-pub fn generate_config_diff_commands(
-    before: &NetworkConfig,
-    after: &NetworkConfig,
-) -> Vec<String> {
+pub fn generate_config_diff_commands(before: &NetworkConfig, after: &NetworkConfig) -> Vec<String> {
     let before_lines: std::collections::HashSet<_> = before
         .content
         .lines()
@@ -799,16 +790,31 @@ mod tests {
 
     #[test]
     fn test_parse_transport() {
-        assert_eq!("ssh".parse::<NetworkTransport>().unwrap(), NetworkTransport::Ssh);
-        assert_eq!("netconf".parse::<NetworkTransport>().unwrap(), NetworkTransport::Netconf);
+        assert_eq!(
+            "ssh".parse::<NetworkTransport>().unwrap(),
+            NetworkTransport::Ssh
+        );
+        assert_eq!(
+            "netconf".parse::<NetworkTransport>().unwrap(),
+            NetworkTransport::Netconf
+        );
         assert!("invalid".parse::<NetworkTransport>().is_err());
     }
 
     #[test]
     fn test_parse_platform() {
-        assert_eq!("cisco_ios".parse::<NetworkPlatform>().unwrap(), NetworkPlatform::CiscoIos);
-        assert_eq!("ios".parse::<NetworkPlatform>().unwrap(), NetworkPlatform::CiscoIos);
-        assert_eq!("junos".parse::<NetworkPlatform>().unwrap(), NetworkPlatform::JuniperJunos);
+        assert_eq!(
+            "cisco_ios".parse::<NetworkPlatform>().unwrap(),
+            NetworkPlatform::CiscoIos
+        );
+        assert_eq!(
+            "ios".parse::<NetworkPlatform>().unwrap(),
+            NetworkPlatform::CiscoIos
+        );
+        assert_eq!(
+            "junos".parse::<NetworkPlatform>().unwrap(),
+            NetworkPlatform::JuniperJunos
+        );
     }
 
     #[test]
@@ -840,7 +846,8 @@ mod tests {
 
     #[test]
     fn test_backup_filename() {
-        let filename = generate_backup_filename("router1", NetworkPlatform::CiscoIos, ConfigSource::Running);
+        let filename =
+            generate_backup_filename("router1", NetworkPlatform::CiscoIos, ConfigSource::Running);
         assert!(filename.starts_with("router1_cisco_ios_running_"));
         assert!(filename.ends_with(".cfg"));
     }

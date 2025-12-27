@@ -307,7 +307,10 @@ impl K8sConfigMapModule {
                                 "ConfigMap '{}/{}' is up to date",
                                 config.namespace, config.name
                             ))
-                            .with_data("keys", serde_json::json!(config.data.keys().collect::<Vec<_>>())));
+                            .with_data(
+                                "keys",
+                                serde_json::json!(config.data.keys().collect::<Vec<_>>()),
+                            ));
                         }
 
                         if context.check_mode {
@@ -333,7 +336,10 @@ impl K8sConfigMapModule {
                             "Updated ConfigMap '{}/{}'",
                             config.namespace, config.name
                         ))
-                        .with_data("keys", serde_json::json!(config.data.keys().collect::<Vec<_>>())))
+                        .with_data(
+                            "keys",
+                            serde_json::json!(config.data.keys().collect::<Vec<_>>()),
+                        ))
                     }
                     Err(kube::Error::Api(e)) if e.code == 404 => {
                         if context.check_mode {
@@ -358,7 +364,10 @@ impl K8sConfigMapModule {
                             "Created ConfigMap '{}/{}'",
                             config.namespace, config.name
                         ))
-                        .with_data("keys", serde_json::json!(config.data.keys().collect::<Vec<_>>())))
+                        .with_data(
+                            "keys",
+                            serde_json::json!(config.data.keys().collect::<Vec<_>>()),
+                        ))
                     }
                     Err(e) => Err(ModuleError::ExecutionFailed(format!(
                         "Failed to get ConfigMap: {}",
@@ -456,10 +465,9 @@ impl Module for K8sConfigMapModule {
 
         let before = match config.state {
             ConfigMapState::Present => "absent or different configuration".to_string(),
-            ConfigMapState::Absent => format!(
-                "ConfigMap '{}/{}' exists",
-                config.namespace, config.name
-            ),
+            ConfigMapState::Absent => {
+                format!("ConfigMap '{}/{}' exists", config.namespace, config.name)
+            }
         };
 
         let after = match config.state {
@@ -469,10 +477,9 @@ impl Module for K8sConfigMapModule {
                 config.name,
                 config.data.len()
             ),
-            ConfigMapState::Absent => format!(
-                "ConfigMap '{}/{}' absent",
-                config.namespace, config.name
-            ),
+            ConfigMapState::Absent => {
+                format!("ConfigMap '{}/{}' absent", config.namespace, config.name)
+            }
         };
 
         Ok(Some(Diff::new(before, after)))

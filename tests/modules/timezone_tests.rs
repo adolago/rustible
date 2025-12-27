@@ -285,7 +285,11 @@ fn test_timezone_etc_format() {
     let etc_timezones = ["Etc/UTC", "Etc/GMT", "Etc/GMT+0", "Etc/GMT+5", "Etc/GMT-12"];
 
     for tz in etc_timezones {
-        assert!(tz.starts_with("Etc/"), "Timezone '{}' should start with Etc/", tz);
+        assert!(
+            tz.starts_with("Etc/"),
+            "Timezone '{}' should start with Etc/",
+            tz
+        );
     }
 }
 
@@ -334,8 +338,5 @@ fn test_timezone_dual_boot_configuration() {
     params.insert("hwclock".to_string(), serde_json::json!("local"));
     params.insert("ntp".to_string(), serde_json::json!(false));
 
-    assert_eq!(
-        params.get("hwclock").unwrap(),
-        &serde_json::json!("local")
-    );
+    assert_eq!(params.get("hwclock").unwrap(), &serde_json::json!("local"));
 }

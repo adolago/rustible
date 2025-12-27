@@ -202,7 +202,11 @@ impl BranchPredictor {
         // First check static patterns
         for (pattern, prediction) in &self.patterns {
             if condition.contains(pattern) {
-                trace!("Static pattern match for '{}': {:.2}", pattern, prediction.likelihood);
+                trace!(
+                    "Static pattern match for '{}': {:.2}",
+                    pattern,
+                    prediction.likelihood
+                );
                 return *prediction;
             }
         }
@@ -280,7 +284,11 @@ pub enum FileOperationType {
     /// Set file permissions
     Chmod { path: String, mode: String },
     /// Set file ownership
-    Chown { path: String, owner: String, group: Option<String> },
+    Chown {
+        path: String,
+        owner: String,
+        group: Option<String>,
+    },
     /// Delete file or directory
     Delete { path: String },
     /// Create symlink
@@ -464,9 +472,16 @@ impl Default for PackageBatchConfig {
 /// Package operation types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PackageOperation {
-    Install { name: String, version: Option<String> },
-    Remove { name: String },
-    Update { name: String },
+    Install {
+        name: String,
+        version: Option<String>,
+    },
+    Remove {
+        name: String,
+    },
+    Update {
+        name: String,
+    },
     Upgrade, // Upgrade all packages
 }
 
@@ -556,12 +571,7 @@ impl PackageBatcher {
     }
 
     /// Add a package operation to the batcher
-    pub async fn add_operation(
-        &self,
-        host: &str,
-        manager: &str,
-        operation: PackageOperation,
-    ) {
+    pub async fn add_operation(&self, host: &str, manager: &str, operation: PackageOperation) {
         let mut pending = self.pending.write().await;
         let key = (host.to_string(), manager.to_string());
 
@@ -812,27 +822,39 @@ mod tests {
         });
 
         batcher
-            .add_operation("host1", "apt", PackageOperation::Install {
-                name: "nginx".to_string(),
-                version: None,
-            })
+            .add_operation(
+                "host1",
+                "apt",
+                PackageOperation::Install {
+                    name: "nginx".to_string(),
+                    version: None,
+                },
+            )
             .await;
 
         batcher
-            .add_operation("host1", "apt", PackageOperation::Install {
-                name: "curl".to_string(),
-                version: None,
-            })
+            .add_operation(
+                "host1",
+                "apt",
+                PackageOperation::Install {
+                    name: "curl".to_string(),
+                    version: None,
+                },
+            )
             .await;
 
         // Not ready yet
         assert!(batcher.get_ready_batches().await.is_empty());
 
         batcher
-            .add_operation("host1", "apt", PackageOperation::Install {
-                name: "git".to_string(),
-                version: None,
-            })
+            .add_operation(
+                "host1",
+                "apt",
+                PackageOperation::Install {
+                    name: "git".to_string(),
+                    version: None,
+                },
+            )
             .await;
 
         // Ready now

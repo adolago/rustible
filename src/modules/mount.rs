@@ -640,10 +640,7 @@ impl Module for MountModule {
         );
 
         let after = match state {
-            MountState::Absent => format!(
-                "path: {}\nmounted: no\nfstab: (not in fstab)",
-                path
-            ),
+            MountState::Absent => format!("path: {}\nmounted: no\nfstab: (not in fstab)", path),
             MountState::Unmounted => {
                 let src = params.get_string("src")?.unwrap_or_default();
                 let fstype = params
@@ -704,12 +701,18 @@ mod tests {
 
     #[test]
     fn test_mount_state_from_str() {
-        assert_eq!(MountState::from_str("mounted").unwrap(), MountState::Mounted);
+        assert_eq!(
+            MountState::from_str("mounted").unwrap(),
+            MountState::Mounted
+        );
         assert_eq!(
             MountState::from_str("unmounted").unwrap(),
             MountState::Unmounted
         );
-        assert_eq!(MountState::from_str("present").unwrap(), MountState::Present);
+        assert_eq!(
+            MountState::from_str("present").unwrap(),
+            MountState::Present
+        );
         assert_eq!(MountState::from_str("absent").unwrap(), MountState::Absent);
         assert_eq!(
             MountState::from_str("remounted").unwrap(),

@@ -193,13 +193,19 @@ impl ConstructedConfig {
 
         // Parse compose from config
         if let Some(ref ansible_host) = config.compose.ansible_host {
-            result.compose.insert("ansible_host".to_string(), ansible_host.clone());
+            result
+                .compose
+                .insert("ansible_host".to_string(), ansible_host.clone());
         }
         if let Some(ref ansible_port) = config.compose.ansible_port {
-            result.compose.insert("ansible_port".to_string(), ansible_port.clone());
+            result
+                .compose
+                .insert("ansible_port".to_string(), ansible_port.clone());
         }
         if let Some(ref ansible_user) = config.compose.ansible_user {
-            result.compose.insert("ansible_user".to_string(), ansible_user.clone());
+            result
+                .compose
+                .insert("ansible_user".to_string(), ansible_user.clone());
         }
         for (key, value) in &config.compose.extra_vars {
             result.compose.insert(key.clone(), value.clone());
@@ -298,7 +304,9 @@ impl ConstructedConfigBuilder {
 
     /// Add a compose expression
     pub fn compose(mut self, variable: impl Into<String>, expression: impl Into<String>) -> Self {
-        self.config.compose.insert(variable.into(), expression.into());
+        self.config
+            .compose
+            .insert(variable.into(), expression.into());
         self
     }
 
@@ -346,7 +354,12 @@ impl ConstructedConfigBuilder {
         Ok(())
     }
 
-    fn has_cycle(&self, group: &str, visited: &mut HashSet<String>, path: &mut HashSet<String>) -> bool {
+    fn has_cycle(
+        &self,
+        group: &str,
+        visited: &mut HashSet<String>,
+        path: &mut HashSet<String>,
+    ) -> bool {
         if path.contains(group) {
             return true;
         }
@@ -467,7 +480,9 @@ impl ExpressionEvaluator {
         if (expr.starts_with('"') && expr.ends_with('"'))
             || (expr.starts_with('\'') && expr.ends_with('\''))
         {
-            return Ok(serde_yaml::Value::String(expr[1..expr.len() - 1].to_string()));
+            return Ok(serde_yaml::Value::String(
+                expr[1..expr.len() - 1].to_string(),
+            ));
         }
 
         // Handle numeric literals
@@ -475,7 +490,9 @@ impl ExpressionEvaluator {
             return Ok(serde_yaml::Value::Number(n.into()));
         }
         if let Ok(n) = expr.parse::<f64>() {
-            return Ok(serde_yaml::Value::Number(serde_yaml::Number::from(n as i64)));
+            return Ok(serde_yaml::Value::Number(serde_yaml::Number::from(
+                n as i64,
+            )));
         }
 
         // Handle boolean literals
@@ -518,9 +535,10 @@ impl ExpressionEvaluator {
         let parts: Vec<&str> = var_path.split('.').collect();
         let root = parts[0];
 
-        let mut current = hostvars.get(root).cloned().ok_or_else(|| {
-            ConstructedError::VariableNotFound(var_path.to_string())
-        })?;
+        let mut current = hostvars
+            .get(root)
+            .cloned()
+            .ok_or_else(|| ConstructedError::VariableNotFound(var_path.to_string()))?;
 
         for part in parts.iter().skip(1) {
             current = match current {
@@ -615,8 +633,12 @@ impl ExpressionEvaluator {
     fn parse_in_operator(expr: &str) -> Option<(&str, &str)> {
         // Pattern: "'item' in collection" or "item in collection"
         let re = Regex::new(r"^(.+?)\s+in\s+(.+)$").ok()?;
-        re.captures(expr)
-            .map(|c| (c.get(1).unwrap().as_str().trim(), c.get(2).unwrap().as_str().trim()))
+        re.captures(expr).map(|c| {
+            (
+                c.get(1).unwrap().as_str().trim(),
+                c.get(2).unwrap().as_str().trim(),
+            )
+        })
     }
 
     fn parse_comparison(expr: &str) -> Option<(&str, &str, &str)> {
@@ -690,15 +712,23 @@ impl ExpressionEvaluator {
     fn parse_default_filter(expr: &str) -> Option<(&str, &str)> {
         // Pattern: "var | default(value)" or "var | d(value)"
         let re = Regex::new(r"^(.+?)\s*\|\s*(?:default|d)\s*\(\s*(.+?)\s*\)$").ok()?;
-        re.captures(expr)
-            .map(|c| (c.get(1).unwrap().as_str().trim(), c.get(2).unwrap().as_str().trim()))
+        re.captures(expr).map(|c| {
+            (
+                c.get(1).unwrap().as_str().trim(),
+                c.get(2).unwrap().as_str().trim(),
+            )
+        })
     }
 
     fn parse_filter(expr: &str) -> Option<(&str, &str)> {
         // Pattern: "value | filter"
         let re = Regex::new(r"^(.+?)\s*\|\s*(\w+)$").ok()?;
-        re.captures(expr)
-            .map(|c| (c.get(1).unwrap().as_str().trim(), c.get(2).unwrap().as_str().trim()))
+        re.captures(expr).map(|c| {
+            (
+                c.get(1).unwrap().as_str().trim(),
+                c.get(2).unwrap().as_str().trim(),
+            )
+        })
     }
 
     fn evaluate_in_operator(
@@ -774,9 +804,7 @@ impl ExpressionEvaluator {
         match value {
             serde_yaml::Value::Null => false,
             serde_yaml::Value::Bool(b) => *b,
-            serde_yaml::Value::Number(n) => {
-                n.as_i64().map(|i| i != 0).unwrap_or(true)
-            }
+            serde_yaml::Value::Number(n) => n.as_i64().map(|i| i != 0).unwrap_or(true),
             serde_yaml::Value::String(s) => !s.is_empty(),
             serde_yaml::Value::Sequence(seq) => !seq.is_empty(),
             serde_yaml::Value::Mapping(map) => !map.is_empty(),
@@ -1190,13 +1218,19 @@ mod tests {
             "os_family".to_string(),
             serde_yaml::Value::String("RedHat".to_string()),
         );
-        vars.insert("web_port".to_string(), serde_yaml::Value::Number(8080.into()));
+        vars.insert(
+            "web_port".to_string(),
+            serde_yaml::Value::Number(8080.into()),
+        );
         vars.insert("enabled".to_string(), serde_yaml::Value::Bool(true));
 
         let mut packages = serde_yaml::Sequence::new();
         packages.push(serde_yaml::Value::String("nginx".to_string()));
         packages.push(serde_yaml::Value::String("redis".to_string()));
-        vars.insert("installed_packages".to_string(), serde_yaml::Value::Sequence(packages));
+        vars.insert(
+            "installed_packages".to_string(),
+            serde_yaml::Value::Sequence(packages),
+        );
 
         vars
     }
@@ -1212,7 +1246,9 @@ mod tests {
         assert!(!evaluator
             .evaluate_bool("environment == 'staging'", &hostvars)
             .unwrap());
-        assert!(evaluator.evaluate_bool("web_port == 8080", &hostvars).unwrap());
+        assert!(evaluator
+            .evaluate_bool("web_port == 8080", &hostvars)
+            .unwrap());
         assert!(evaluator.evaluate_bool("web_port > 80", &hostvars).unwrap());
     }
 
@@ -1221,7 +1257,9 @@ mod tests {
         let evaluator = ExpressionEvaluator::new(false);
         let hostvars = create_test_hostvars();
 
-        assert!(evaluator.evaluate_bool("environment is defined", &hostvars).unwrap());
+        assert!(evaluator
+            .evaluate_bool("environment is defined", &hostvars)
+            .unwrap());
         assert!(!evaluator
             .evaluate_bool("nonexistent is defined", &hostvars)
             .unwrap());
@@ -1249,10 +1287,16 @@ mod tests {
         let hostvars = create_test_hostvars();
 
         assert!(evaluator
-            .evaluate_bool("environment == 'production' and region == 'us-east-1'", &hostvars)
+            .evaluate_bool(
+                "environment == 'production' and region == 'us-east-1'",
+                &hostvars
+            )
             .unwrap());
         assert!(evaluator
-            .evaluate_bool("environment == 'staging' or region == 'us-east-1'", &hostvars)
+            .evaluate_bool(
+                "environment == 'staging' or region == 'us-east-1'",
+                &hostvars
+            )
             .unwrap());
         assert!(evaluator
             .evaluate_bool("not environment == 'staging'", &hostvars)
@@ -1280,10 +1324,14 @@ mod tests {
         let evaluator = ExpressionEvaluator::new(false);
         let hostvars = create_test_hostvars();
 
-        let result = evaluator.evaluate_value("region | upper", &hostvars).unwrap();
+        let result = evaluator
+            .evaluate_value("region | upper", &hostvars)
+            .unwrap();
         assert_eq!(result, serde_yaml::Value::String("US-EAST-1".to_string()));
 
-        let result = evaluator.evaluate_value("os_family | lower", &hostvars).unwrap();
+        let result = evaluator
+            .evaluate_value("os_family | lower", &hostvars)
+            .unwrap();
         assert_eq!(result, serde_yaml::Value::String("redhat".to_string()));
     }
 

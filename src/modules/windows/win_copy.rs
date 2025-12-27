@@ -34,9 +34,7 @@
 //!     dest: C:\MyApp\settings.ini
 //! ```
 
-use crate::modules::windows::{
-    execute_powershell_sync, powershell_escape, validate_windows_path,
-};
+use crate::modules::windows::{execute_powershell_sync, powershell_escape, validate_windows_path};
 use crate::modules::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
@@ -331,11 +329,10 @@ impl Module for WinCopyModule {
 
         // Check if file needs updating
         if file_exists && current_checksum == source_checksum {
-            return Ok(ModuleOutput::ok(format!(
-                "File '{}' is already up to date",
-                dest
-            ))
-            .with_data("checksum", serde_json::json!(source_checksum)));
+            return Ok(
+                ModuleOutput::ok(format!("File '{}' is already up to date", dest))
+                    .with_data("checksum", serde_json::json!(source_checksum)),
+            );
         }
 
         // Check if readonly and force is not set
@@ -476,7 +473,10 @@ mod tests {
     #[test]
     fn test_win_copy_classification() {
         let module = WinCopyModule;
-        assert_eq!(module.classification(), ModuleClassification::NativeTransport);
+        assert_eq!(
+            module.classification(),
+            ModuleClassification::NativeTransport
+        );
     }
 
     #[test]

@@ -399,17 +399,12 @@ impl ComputeInstanceConfig {
                 // Assume it's a global image name
                 Ok(format!(
                     "projects/{}/global/images/{}",
-                    self.image_project
-                        .as_deref()
-                        .unwrap_or("debian-cloud"),
+                    self.image_project.as_deref().unwrap_or("debian-cloud"),
                     image
                 ))
             }
         } else if let Some(family) = &self.image_family {
-            let project = self
-                .image_project
-                .as_deref()
-                .unwrap_or("debian-cloud");
+            let project = self.image_project.as_deref().unwrap_or("debian-cloud");
             Ok(format!(
                 "projects/{}/global/images/family/{}",
                 project, family
@@ -425,10 +420,7 @@ impl ComputeInstanceConfig {
         if self.machine_type.starts_with("zones/") || self.machine_type.starts_with("https://") {
             self.machine_type.clone()
         } else {
-            format!(
-                "zones/{}/machineTypes/{}",
-                self.zone, self.machine_type
-            )
+            format!("zones/{}/machineTypes/{}", self.zone, self.machine_type)
         }
     }
 }
@@ -686,10 +678,7 @@ impl GcpComputeInstanceModule {
         let start = std::time::Instant::now();
         let poll_interval = Duration::from_secs(5);
 
-        tracing::info!(
-            "Waiting for operation to complete (timeout: {:?})",
-            timeout
-        );
+        tracing::info!("Waiting for operation to complete (timeout: {:?})", timeout);
 
         // In a real implementation:
         // loop {
@@ -730,12 +719,22 @@ impl GcpComputeInstanceModule {
         let existing = Self::find_instance(&config.name, &config.zone, &project).await?;
 
         match config.state {
-            InstanceState::Running => self.ensure_running(&config, &project, existing, context).await,
-            InstanceState::Stopped => self.ensure_stopped(&config, &project, existing, context).await,
-            InstanceState::Terminated | InstanceState::Absent => {
-                self.ensure_deleted(&config, &project, existing, context).await
+            InstanceState::Running => {
+                self.ensure_running(&config, &project, existing, context)
+                    .await
             }
-            InstanceState::Reset => self.ensure_reset(&config, &project, existing, context).await,
+            InstanceState::Stopped => {
+                self.ensure_stopped(&config, &project, existing, context)
+                    .await
+            }
+            InstanceState::Terminated | InstanceState::Absent => {
+                self.ensure_deleted(&config, &project, existing, context)
+                    .await
+            }
+            InstanceState::Reset => {
+                self.ensure_reset(&config, &project, existing, context)
+                    .await
+            }
         }
     }
 
@@ -779,11 +778,10 @@ impl GcpComputeInstanceModule {
                     .await?;
                 }
 
-                return Ok(ModuleOutput::changed(format!(
-                    "Started instance '{}'",
-                    config.name
-                ))
-                .with_data("instance", serde_json::to_value(&instance).unwrap()));
+                return Ok(
+                    ModuleOutput::changed(format!("Started instance '{}'", config.name))
+                        .with_data("instance", serde_json::to_value(&instance).unwrap()),
+                );
             }
 
             // Instance is in some intermediate state
@@ -947,11 +945,10 @@ impl GcpComputeInstanceModule {
                 .await?;
             }
 
-            Ok(ModuleOutput::changed(format!(
-                "Reset instance '{}'",
-                config.name
-            ))
-            .with_data("instance", serde_json::to_value(&instance).unwrap()))
+            Ok(
+                ModuleOutput::changed(format!("Reset instance '{}'", config.name))
+                    .with_data("instance", serde_json::to_value(&instance).unwrap()),
+            )
         } else {
             Err(ModuleError::ExecutionFailed(format!(
                 "Instance '{}' does not exist and cannot be reset",
@@ -1016,7 +1013,13 @@ impl Module for GcpComputeInstanceModule {
 
         // Validate disk type if provided
         if let Some(disk_type) = params.get_string("disk_type")? {
-            let valid_types = ["pd-standard", "pd-ssd", "pd-balanced", "pd-extreme", "local-ssd"];
+            let valid_types = [
+                "pd-standard",
+                "pd-ssd",
+                "pd-balanced",
+                "pd-extreme",
+                "local-ssd",
+            ];
             if !valid_types.contains(&disk_type.as_str()) {
                 return Err(ModuleError::InvalidParameter(format!(
                     "Invalid disk_type '{}'. Valid types: {}",
@@ -1146,7 +1149,9 @@ impl FirewallConfig {
             allowed,
             denied,
             source_ranges: params.get_vec_string("source_ranges")?.unwrap_or_default(),
-            destination_ranges: params.get_vec_string("destination_ranges")?.unwrap_or_default(),
+            destination_ranges: params
+                .get_vec_string("destination_ranges")?
+                .unwrap_or_default(),
             source_tags: params.get_vec_string("source_tags")?.unwrap_or_default(),
             target_tags: params.get_vec_string("target_tags")?.unwrap_or_default(),
             source_service_accounts: params
@@ -1267,11 +1272,10 @@ impl GcpComputeFirewallModule {
                     }
 
                     let updated = Self::update_firewall(&config, &project).await?;
-                    Ok(ModuleOutput::changed(format!(
-                        "Updated firewall rule '{}'",
-                        config.name
-                    ))
-                    .with_data("firewall", serde_json::to_value(&updated).unwrap()))
+                    Ok(
+                        ModuleOutput::changed(format!("Updated firewall rule '{}'", config.name))
+                            .with_data("firewall", serde_json::to_value(&updated).unwrap()),
+                    )
                 } else {
                     // Create new firewall
                     if context.check_mode {
@@ -1282,11 +1286,10 @@ impl GcpComputeFirewallModule {
                     }
 
                     let firewall = Self::create_firewall(&config, &project).await?;
-                    Ok(ModuleOutput::changed(format!(
-                        "Created firewall rule '{}'",
-                        config.name
-                    ))
-                    .with_data("firewall", serde_json::to_value(&firewall).unwrap()))
+                    Ok(
+                        ModuleOutput::changed(format!("Created firewall rule '{}'", config.name))
+                            .with_data("firewall", serde_json::to_value(&firewall).unwrap()),
+                    )
                 }
             }
             FirewallState::Absent => {
@@ -1486,11 +1489,10 @@ impl GcpComputeNetworkModule {
         match config.state {
             NetworkState::Present => {
                 if let Some(network) = existing {
-                    Ok(ModuleOutput::ok(format!(
-                        "VPC network '{}' already exists",
-                        config.name
-                    ))
-                    .with_data("network", serde_json::to_value(&network).unwrap()))
+                    Ok(
+                        ModuleOutput::ok(format!("VPC network '{}' already exists", config.name))
+                            .with_data("network", serde_json::to_value(&network).unwrap()),
+                    )
                 } else {
                     if context.check_mode {
                         return Ok(ModuleOutput::changed(format!(
@@ -1680,10 +1682,7 @@ impl GcpServiceAccountModule {
         tracing::info!("Would create service account '{}'", email);
 
         Ok(ServiceAccountModuleInfo {
-            name: format!(
-                "projects/{}/serviceAccounts/{}",
-                project, email
-            ),
+            name: format!("projects/{}/serviceAccounts/{}", project, email),
             email,
             unique_id: format!("{:021}", rand::random::<u64>()),
             display_name: config.display_name.clone(),
@@ -1712,11 +1711,10 @@ impl GcpServiceAccountModule {
         match config.state {
             ServiceAccountState::Present => {
                 if let Some(sa) = existing {
-                    Ok(ModuleOutput::ok(format!(
-                        "Service account '{}' already exists",
-                        email
-                    ))
-                    .with_data("service_account", serde_json::to_value(&sa).unwrap()))
+                    Ok(
+                        ModuleOutput::ok(format!("Service account '{}' already exists", email))
+                            .with_data("service_account", serde_json::to_value(&sa).unwrap()),
+                    )
                 } else {
                     if context.check_mode {
                         return Ok(ModuleOutput::changed(format!(
@@ -1726,11 +1724,10 @@ impl GcpServiceAccountModule {
                     }
 
                     let sa = Self::create_service_account(&config, &project).await?;
-                    Ok(ModuleOutput::changed(format!(
-                        "Created service account '{}'",
-                        email
-                    ))
-                    .with_data("service_account", serde_json::to_value(&sa).unwrap()))
+                    Ok(
+                        ModuleOutput::changed(format!("Created service account '{}'", email))
+                            .with_data("service_account", serde_json::to_value(&sa).unwrap()),
+                    )
                 }
             }
             ServiceAccountState::Absent => {
@@ -1895,9 +1892,15 @@ mod tests {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!("test-instance"));
         params.insert("zone".to_string(), serde_json::json!("us-central1-a"));
-        params.insert("machine_type".to_string(), serde_json::json!("e2-standard-2"));
+        params.insert(
+            "machine_type".to_string(),
+            serde_json::json!("e2-standard-2"),
+        );
         params.insert("image_family".to_string(), serde_json::json!("debian-11"));
-        params.insert("image_project".to_string(), serde_json::json!("debian-cloud"));
+        params.insert(
+            "image_project".to_string(),
+            serde_json::json!("debian-cloud"),
+        );
 
         let config = ComputeInstanceConfig::from_params(&params).unwrap();
         assert_eq!(config.name, "test-instance");
@@ -1961,8 +1964,14 @@ mod tests {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!("test"));
         params.insert("zone".to_string(), serde_json::json!("us-central1-a"));
-        params.insert("image_family".to_string(), serde_json::json!("ubuntu-2204-lts"));
-        params.insert("image_project".to_string(), serde_json::json!("ubuntu-os-cloud"));
+        params.insert(
+            "image_family".to_string(),
+            serde_json::json!("ubuntu-2204-lts"),
+        );
+        params.insert(
+            "image_project".to_string(),
+            serde_json::json!("ubuntu-os-cloud"),
+        );
 
         let config = ComputeInstanceConfig::from_params(&params).unwrap();
         let source_image = config.get_source_image().unwrap();

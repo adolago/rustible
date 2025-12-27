@@ -24,7 +24,8 @@ use tempfile::TempDir;
 const TEST_GITHUB_ED25519: &str =
     "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 const TEST_RSA_ENTRY: &str = "example.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQtest";
-const TEST_ECDSA_ENTRY: &str = "test.example.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY=";
+const TEST_ECDSA_ENTRY: &str =
+    "test.example.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY=";
 const TEST_WITH_PORT: &str = "[example.com]:2222 ssh-rsa AAAAB3NzaC1yc2EAAAAtest";
 const TEST_WITH_MARKER: &str =
     "@cert-authority *.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest";
@@ -300,7 +301,10 @@ fn test_key_type_from_str_ecdsa() {
 
 #[test]
 fn test_key_type_from_str_security_keys() {
-    assert_eq!(KeyType::from_str("sk-ssh-ed25519").unwrap(), KeyType::SkEd25519);
+    assert_eq!(
+        KeyType::from_str("sk-ssh-ed25519").unwrap(),
+        KeyType::SkEd25519
+    );
     assert_eq!(KeyType::from_str("sk-ed25519").unwrap(), KeyType::SkEd25519);
     assert_eq!(
         KeyType::from_str("sk-ssh-ed25519@openssh.com").unwrap(),
@@ -325,9 +329,18 @@ fn test_key_type_as_openssh_str() {
     assert_eq!(KeyType::Rsa.as_openssh_str(), "ssh-rsa");
     assert_eq!(KeyType::Ed25519.as_openssh_str(), "ssh-ed25519");
     assert_eq!(KeyType::Dss.as_openssh_str(), "ssh-dss");
-    assert_eq!(KeyType::EcdsaNistp256.as_openssh_str(), "ecdsa-sha2-nistp256");
-    assert_eq!(KeyType::EcdsaNistp384.as_openssh_str(), "ecdsa-sha2-nistp384");
-    assert_eq!(KeyType::EcdsaNistp521.as_openssh_str(), "ecdsa-sha2-nistp521");
+    assert_eq!(
+        KeyType::EcdsaNistp256.as_openssh_str(),
+        "ecdsa-sha2-nistp256"
+    );
+    assert_eq!(
+        KeyType::EcdsaNistp384.as_openssh_str(),
+        "ecdsa-sha2-nistp384"
+    );
+    assert_eq!(
+        KeyType::EcdsaNistp521.as_openssh_str(),
+        "ecdsa-sha2-nistp521"
+    );
     assert_eq!(
         KeyType::SkEd25519.as_openssh_str(),
         "sk-ssh-ed25519@openssh.com"
@@ -754,7 +767,9 @@ fn test_module_classification() {
 fn test_module_parallelization_hint() {
     let module = KnownHostsModule;
     match module.parallelization_hint() {
-        ParallelizationHint::RateLimited { requests_per_second } => {
+        ParallelizationHint::RateLimited {
+            requests_per_second,
+        } => {
             assert!(requests_per_second > 0);
         }
         _ => panic!("Expected RateLimited hint"),
@@ -782,7 +797,10 @@ fn test_module_absent_removes_entry() {
     let mut params: HashMap<String, serde_json::Value> = HashMap::new();
     params.insert("name".to_string(), serde_json::json!("example.com"));
     params.insert("state".to_string(), serde_json::json!("absent"));
-    params.insert("path".to_string(), serde_json::json!(path.to_str().unwrap()));
+    params.insert(
+        "path".to_string(),
+        serde_json::json!(path.to_str().unwrap()),
+    );
 
     let context = ModuleContext::default();
     let result = module.execute(&params, &context).unwrap();
@@ -803,7 +821,10 @@ fn test_module_absent_no_change_when_not_present() {
     let mut params: HashMap<String, serde_json::Value> = HashMap::new();
     params.insert("name".to_string(), serde_json::json!("example.com"));
     params.insert("state".to_string(), serde_json::json!("absent"));
-    params.insert("path".to_string(), serde_json::json!(path.to_str().unwrap()));
+    params.insert(
+        "path".to_string(),
+        serde_json::json!(path.to_str().unwrap()),
+    );
 
     let context = ModuleContext::default();
     let result = module.execute(&params, &context).unwrap();
@@ -825,7 +846,10 @@ fn test_module_present_with_key_data() {
         "key_data".to_string(),
         serde_json::json!("AAAAC3NzaC1lZDI1NTE5testkey"),
     );
-    params.insert("path".to_string(), serde_json::json!(path.to_str().unwrap()));
+    params.insert(
+        "path".to_string(),
+        serde_json::json!(path.to_str().unwrap()),
+    );
 
     let context = ModuleContext::default();
     let result = module.execute(&params, &context).unwrap();
@@ -856,7 +880,10 @@ fn test_module_present_no_change_when_key_matches() {
         "key_data".to_string(),
         serde_json::json!("AAAAC3NzaC1lZDI1NTE5testkey"),
     );
-    params.insert("path".to_string(), serde_json::json!(path.to_str().unwrap()));
+    params.insert(
+        "path".to_string(),
+        serde_json::json!(path.to_str().unwrap()),
+    );
 
     let context = ModuleContext::default();
     let result = module.execute(&params, &context).unwrap();
@@ -874,7 +901,10 @@ fn test_module_check_mode_absent() {
     let mut params: HashMap<String, serde_json::Value> = HashMap::new();
     params.insert("name".to_string(), serde_json::json!("example.com"));
     params.insert("state".to_string(), serde_json::json!("absent"));
-    params.insert("path".to_string(), serde_json::json!(path.to_str().unwrap()));
+    params.insert(
+        "path".to_string(),
+        serde_json::json!(path.to_str().unwrap()),
+    );
 
     let context = ModuleContext::default().with_check_mode(true);
     let result = module.execute(&params, &context).unwrap();
@@ -898,7 +928,10 @@ fn test_module_check_mode_present() {
     params.insert("state".to_string(), serde_json::json!("present"));
     params.insert("key_type".to_string(), serde_json::json!("ed25519"));
     params.insert("key_data".to_string(), serde_json::json!("testkey"));
-    params.insert("path".to_string(), serde_json::json!(path.to_str().unwrap()));
+    params.insert(
+        "path".to_string(),
+        serde_json::json!(path.to_str().unwrap()),
+    );
 
     let context = ModuleContext::default().with_check_mode(true);
     let result = module.execute(&params, &context).unwrap();
@@ -922,7 +955,10 @@ fn test_module_with_port() {
     params.insert("state".to_string(), serde_json::json!("present"));
     params.insert("key_type".to_string(), serde_json::json!("ed25519"));
     params.insert("key_data".to_string(), serde_json::json!("testkey"));
-    params.insert("path".to_string(), serde_json::json!(path.to_str().unwrap()));
+    params.insert(
+        "path".to_string(),
+        serde_json::json!(path.to_str().unwrap()),
+    );
 
     let context = ModuleContext::default();
     let result = module.execute(&params, &context).unwrap();
@@ -945,7 +981,10 @@ fn test_module_with_hash_host() {
     params.insert("key_type".to_string(), serde_json::json!("ed25519"));
     params.insert("key_data".to_string(), serde_json::json!("testkey"));
     params.insert("hash_host".to_string(), serde_json::json!(true));
-    params.insert("path".to_string(), serde_json::json!(path.to_str().unwrap()));
+    params.insert(
+        "path".to_string(),
+        serde_json::json!(path.to_str().unwrap()),
+    );
 
     let context = ModuleContext::default();
     let result = module.execute(&params, &context).unwrap();

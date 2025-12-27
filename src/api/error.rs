@@ -121,8 +121,12 @@ impl IntoResponse for ApiError {
 impl From<crate::error::Error> for ApiError {
     fn from(err: crate::error::Error) -> Self {
         match err {
-            crate::error::Error::HostNotFound(h) => ApiError::NotFound(format!("Host not found: {}", h)),
-            crate::error::Error::GroupNotFound(g) => ApiError::NotFound(format!("Group not found: {}", g)),
+            crate::error::Error::HostNotFound(h) => {
+                ApiError::NotFound(format!("Host not found: {}", h))
+            }
+            crate::error::Error::GroupNotFound(g) => {
+                ApiError::NotFound(format!("Group not found: {}", g))
+            }
             crate::error::Error::PlaybookParse { path, message, .. } => {
                 ApiError::Playbook(format!("Failed to parse {}: {}", path.display(), message))
             }

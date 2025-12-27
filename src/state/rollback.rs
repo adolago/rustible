@@ -174,7 +174,8 @@ impl RollbackPlan {
 
     /// Calculate the number of affected hosts
     pub fn calculate_hosts(&mut self) {
-        let hosts: std::collections::HashSet<&String> = self.actions.iter().map(|a| &a.host).collect();
+        let hosts: std::collections::HashSet<&String> =
+            self.actions.iter().map(|a| &a.host).collect();
         self.hosts_affected = hosts.len();
     }
 
@@ -288,10 +289,14 @@ impl RollbackExecutor {
         let (module, args, description, risk) = match task.module.as_str() {
             // Package modules - uninstall what was installed
             "apt" | "yum" | "dnf" | "package" => {
-                let pkg_name = task.args.get("name")
+                let pkg_name = task
+                    .args
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                let state = task.args.get("state")
+                let state = task
+                    .args
+                    .get("state")
                     .and_then(|v| v.as_str())
                     .unwrap_or("present");
 
@@ -314,13 +319,13 @@ impl RollbackExecutor {
 
             // Service modules - reverse the action
             "service" | "systemd" => {
-                let service_name = task.args.get("name")
+                let service_name = task
+                    .args
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                let state = task.args.get("state")
-                    .and_then(|v| v.as_str());
-                let enabled = task.args.get("enabled")
-                    .and_then(|v| v.as_bool());
+                let state = task.args.get("state").and_then(|v| v.as_str());
+                let enabled = task.args.get("enabled").and_then(|v| v.as_bool());
 
                 let mut rollback_args = serde_json::json!({ "name": service_name });
 
@@ -349,13 +354,17 @@ impl RollbackExecutor {
             // File modules - restore from before_state
             "file" => {
                 if let Some(before) = &task.before_state {
-                    let path = task.args.get("path")
+                    let path = task
+                        .args
+                        .get("path")
                         .or_else(|| task.args.get("dest"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
 
                     // If file didn't exist before, remove it
-                    if before.is_null() || before.get("exists").and_then(|v| v.as_bool()) == Some(false) {
+                    if before.is_null()
+                        || before.get("exists").and_then(|v| v.as_bool()) == Some(false)
+                    {
                         (
                             "file".to_string(),
                             serde_json::json!({
@@ -393,11 +402,15 @@ impl RollbackExecutor {
             // Copy module - restore original content
             "copy" | "template" => {
                 if let Some(before) = &task.before_state {
-                    let dest = task.args.get("dest")
+                    let dest = task
+                        .args
+                        .get("dest")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
 
-                    if before.is_null() || before.get("exists").and_then(|v| v.as_bool()) == Some(false) {
+                    if before.is_null()
+                        || before.get("exists").and_then(|v| v.as_bool()) == Some(false)
+                    {
                         // File didn't exist, remove it
                         (
                             "file".to_string(),
@@ -429,10 +442,14 @@ impl RollbackExecutor {
 
             // User module
             "user" => {
-                let username = task.args.get("name")
+                let username = task
+                    .args
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                let state = task.args.get("state")
+                let state = task
+                    .args
+                    .get("state")
                     .and_then(|v| v.as_str())
                     .unwrap_or("present");
 
@@ -455,10 +472,14 @@ impl RollbackExecutor {
 
             // Group module
             "group" => {
-                let groupname = task.args.get("name")
+                let groupname = task
+                    .args
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                let state = task.args.get("state")
+                let state = task
+                    .args
+                    .get("state")
                     .and_then(|v| v.as_str())
                     .unwrap_or("present");
 
@@ -483,7 +504,9 @@ impl RollbackExecutor {
             "lineinfile" => {
                 if let Some(before) = &task.before_state {
                     if let Some(content) = before.get("content") {
-                        let path = task.args.get("path")
+                        let path = task
+                            .args
+                            .get("path")
                             .or_else(|| task.args.get("dest"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
@@ -518,14 +541,8 @@ impl RollbackExecutor {
         };
 
         Some(
-            RollbackAction::new(
-                &task.task_id,
-                &task.host,
-                module,
-                args,
-                description,
-            )
-            .with_risk_level(risk)
+            RollbackAction::new(&task.task_id, &task.host, module, args, description)
+                .with_risk_level(risk),
         )
     }
 
@@ -571,8 +588,8 @@ impl RollbackExecutor {
         }
 
         status.completed_at = Some(Utc::now());
-        status.total_duration_ms = (status.completed_at.unwrap() - status.started_at)
-            .num_milliseconds() as u64;
+        status.total_duration_ms =
+            (status.completed_at.unwrap() - status.started_at).num_milliseconds() as u64;
 
         // Determine overall status
         status.status = if status.failed == 0 && status.skipped == 0 {
@@ -690,10 +707,15 @@ mod tests {
     fn test_rollback_plan_creation() {
         let mut plan = RollbackPlan::new("session1", "test.yml");
 
-        let action1 = RollbackAction::new("task1", "host1", "apt",
-            serde_json::json!({}), "Action 1");
-        let action2 = RollbackAction::new("task2", "host2", "service",
-            serde_json::json!({}), "Action 2");
+        let action1 =
+            RollbackAction::new("task1", "host1", "apt", serde_json::json!({}), "Action 1");
+        let action2 = RollbackAction::new(
+            "task2",
+            "host2",
+            "service",
+            serde_json::json!({}),
+            "Action 2",
+        );
 
         plan.add_action(action1);
         plan.add_action(action2);
@@ -707,10 +729,13 @@ mod tests {
     fn test_generate_apt_rollback() {
         let executor = RollbackExecutor::new(StateConfig::minimal());
 
-        let task = create_changed_task("apt", serde_json::json!({
-            "name": "nginx",
-            "state": "present"
-        }));
+        let task = create_changed_task(
+            "apt",
+            serde_json::json!({
+                "name": "nginx",
+                "state": "present"
+            }),
+        );
 
         let action = executor.generate_rollback_action(&task);
         assert!(action.is_some());
@@ -724,11 +749,14 @@ mod tests {
     fn test_generate_service_rollback() {
         let executor = RollbackExecutor::new(StateConfig::minimal());
 
-        let task = create_changed_task("service", serde_json::json!({
-            "name": "nginx",
-            "state": "started",
-            "enabled": true
-        }));
+        let task = create_changed_task(
+            "service",
+            serde_json::json!({
+                "name": "nginx",
+                "state": "started",
+                "enabled": true
+            }),
+        );
 
         let action = executor.generate_rollback_action(&task);
         assert!(action.is_some());
@@ -743,9 +771,12 @@ mod tests {
     fn test_command_not_rollbackable() {
         let executor = RollbackExecutor::new(StateConfig::minimal());
 
-        let task = create_changed_task("command", serde_json::json!({
-            "_raw_params": "echo hello"
-        }));
+        let task = create_changed_task(
+            "command",
+            serde_json::json!({
+                "_raw_params": "echo hello"
+            }),
+        );
 
         let action = executor.generate_rollback_action(&task);
         assert!(action.is_none());
@@ -756,8 +787,14 @@ mod tests {
         let executor = RollbackExecutor::new(StateConfig::minimal());
 
         let tasks = vec![
-            create_changed_task("apt", serde_json::json!({"name": "nginx", "state": "present"})),
-            create_changed_task("service", serde_json::json!({"name": "nginx", "state": "started"})),
+            create_changed_task(
+                "apt",
+                serde_json::json!({"name": "nginx", "state": "present"}),
+            ),
+            create_changed_task(
+                "service",
+                serde_json::json!({"name": "nginx", "state": "started"}),
+            ),
         ];
 
         let plan = executor.create_plan(&tasks).unwrap();
@@ -769,9 +806,10 @@ mod tests {
     fn test_rollback_dry_run() {
         let executor = RollbackExecutor::new(StateConfig::minimal());
 
-        let tasks = vec![
-            create_changed_task("apt", serde_json::json!({"name": "nginx", "state": "present"})),
-        ];
+        let tasks = vec![create_changed_task(
+            "apt",
+            serde_json::json!({"name": "nginx", "state": "present"}),
+        )];
 
         let plan = executor.create_plan(&tasks).unwrap();
         let output = executor.dry_run(&plan);
@@ -784,9 +822,10 @@ mod tests {
     async fn test_rollback_execution() {
         let executor = RollbackExecutor::new(StateConfig::minimal());
 
-        let tasks = vec![
-            create_changed_task("apt", serde_json::json!({"name": "nginx", "state": "present"})),
-        ];
+        let tasks = vec![create_changed_task(
+            "apt",
+            serde_json::json!({"name": "nginx", "state": "present"}),
+        )];
 
         let plan = executor.create_plan(&tasks).unwrap();
         let status = executor.execute(&plan).await.unwrap();

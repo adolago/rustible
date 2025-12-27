@@ -47,9 +47,18 @@ fn test_service_state_reloaded() {
 
 #[test]
 fn test_service_state_case_insensitive() {
-    assert_eq!(ServiceState::from_str("STARTED").unwrap(), ServiceState::Started);
-    assert_eq!(ServiceState::from_str("Started").unwrap(), ServiceState::Started);
-    assert_eq!(ServiceState::from_str("STOPPED").unwrap(), ServiceState::Stopped);
+    assert_eq!(
+        ServiceState::from_str("STARTED").unwrap(),
+        ServiceState::Started
+    );
+    assert_eq!(
+        ServiceState::from_str("Started").unwrap(),
+        ServiceState::Started
+    );
+    assert_eq!(
+        ServiceState::from_str("STOPPED").unwrap(),
+        ServiceState::Stopped
+    );
 }
 
 #[test]
@@ -209,7 +218,9 @@ fn test_service_common_service_names() {
 
     for name in valid_services {
         assert!(!name.is_empty());
-        assert!(name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_'));
+        assert!(name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_'));
     }
 }
 

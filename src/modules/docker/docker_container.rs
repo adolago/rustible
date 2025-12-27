@@ -34,7 +34,7 @@
 #[cfg(feature = "docker")]
 use bollard::container::{
     Config, CreateContainerOptions, ListContainersOptions, RemoveContainerOptions,
-    StartContainerOptions, StopContainerOptions, RestartContainerOptions,
+    RestartContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 #[cfg(feature = "docker")]
 use bollard::models::{
@@ -174,22 +174,24 @@ impl ContainerConfig {
         };
 
         // Parse command - can be string or array
-        let command = if let Some(cmd) = params.get_string("command")? {
-            Some(shell_words::split(&cmd).map_err(|e| {
-                ModuleError::InvalidParameter(format!("Invalid command: {}", e))
-            })?)
-        } else {
-            params.get_vec_string("command")?
-        };
+        let command =
+            if let Some(cmd) = params.get_string("command")? {
+                Some(shell_words::split(&cmd).map_err(|e| {
+                    ModuleError::InvalidParameter(format!("Invalid command: {}", e))
+                })?)
+            } else {
+                params.get_vec_string("command")?
+            };
 
         // Parse entrypoint
-        let entrypoint = if let Some(ep) = params.get_string("entrypoint")? {
-            Some(shell_words::split(&ep).map_err(|e| {
-                ModuleError::InvalidParameter(format!("Invalid entrypoint: {}", e))
-            })?)
-        } else {
-            params.get_vec_string("entrypoint")?
-        };
+        let entrypoint =
+            if let Some(ep) = params.get_string("entrypoint")? {
+                Some(shell_words::split(&ep).map_err(|e| {
+                    ModuleError::InvalidParameter(format!("Invalid entrypoint: {}", e))
+                })?)
+            } else {
+                params.get_vec_string("entrypoint")?
+            };
 
         // Parse environment variables
         let env = parse_env_vars(params)?;
@@ -218,8 +220,12 @@ impl ContainerConfig {
         };
 
         // Parse capabilities
-        let capabilities_add = params.get_vec_string("capabilities_add")?.unwrap_or_default();
-        let capabilities_drop = params.get_vec_string("capabilities_drop")?.unwrap_or_default();
+        let capabilities_add = params
+            .get_vec_string("capabilities_add")?
+            .unwrap_or_default();
+        let capabilities_drop = params
+            .get_vec_string("capabilities_drop")?
+            .unwrap_or_default();
 
         Ok(Self {
             name,
@@ -336,9 +342,9 @@ fn parse_memory_string(s: &str) -> ModuleResult<i64> {
         (s.as_str(), 1i64)
     };
 
-    let value: f64 = num.parse().map_err(|_| {
-        ModuleError::InvalidParameter(format!("Invalid memory value: {}", s))
-    })?;
+    let value: f64 = num
+        .parse()
+        .map_err(|_| ModuleError::InvalidParameter(format!("Invalid memory value: {}", s)))?;
 
     Ok((value * unit as f64) as i64)
 }
@@ -356,19 +362,27 @@ impl DockerContainerModule {
     }
 
     /// Get container by name
-    async fn get_container(docker: &Docker, name: &str) -> ModuleResult<Option<ContainerInspectResponse>> {
+    async fn get_container(
+        docker: &Docker,
+        name: &str,
+    ) -> ModuleResult<Option<ContainerInspectResponse>> {
         match docker.inspect_container(name, None).await {
             Ok(info) => Ok(Some(info)),
-            Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => Ok(None),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => Ok(None),
             Err(e) => Err(ModuleError::ExecutionFailed(format!(
-                "Failed to inspect container: {}", e
+                "Failed to inspect container: {}",
+                e
             ))),
         }
     }
 
     /// Check if container is running
     fn is_running(container: &ContainerInspectResponse) -> bool {
-        container.state.as_ref()
+        container
+            .state
+            .as_ref()
             .and_then(|s| s.running)
             .unwrap_or(false)
     }
@@ -415,7 +429,9 @@ impl DockerContainerModule {
         })?;
 
         // Build environment variables
-        let env: Vec<String> = config.env.iter()
+        let env: Vec<String> = config
+            .env
+            .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
 
@@ -431,10 +447,13 @@ impl DockerContainerModule {
             };
 
             exposed_ports.insert(port_key.clone(), HashMap::new());
-            port_bindings.insert(port_key, Some(vec![PortBinding {
-                host_ip: Some("0.0.0.0".to_string()),
-                host_port: Some(host_port.clone()),
-            }]));
+            port_bindings.insert(
+                port_key,
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(host_port.clone()),
+                }]),
+            );
         }
 
         // Build restart policy
@@ -453,15 +472,31 @@ impl DockerContainerModule {
 
         // Build host config
         let host_config = HostConfig {
-            binds: if config.volumes.is_empty() { None } else { Some(config.volumes.clone()) },
-            port_bindings: if port_bindings.is_empty() { None } else { Some(port_bindings) },
+            binds: if config.volumes.is_empty() {
+                None
+            } else {
+                Some(config.volumes.clone())
+            },
+            port_bindings: if port_bindings.is_empty() {
+                None
+            } else {
+                Some(port_bindings)
+            },
             restart_policy,
             memory: config.memory,
             nano_cpus: config.cpus.map(|c| (c * 1_000_000_000.0) as i64),
             privileged: Some(config.privileged),
             readonly_rootfs: Some(config.read_only),
-            cap_add: if config.capabilities_add.is_empty() { None } else { Some(config.capabilities_add.clone()) },
-            cap_drop: if config.capabilities_drop.is_empty() { None } else { Some(config.capabilities_drop.clone()) },
+            cap_add: if config.capabilities_add.is_empty() {
+                None
+            } else {
+                Some(config.capabilities_add.clone())
+            },
+            cap_drop: if config.capabilities_drop.is_empty() {
+                None
+            } else {
+                Some(config.capabilities_drop.clone())
+            },
             network_mode: config.network.clone(),
             ..Default::default()
         };
@@ -471,8 +506,16 @@ impl DockerContainerModule {
             cmd: config.command.clone(),
             entrypoint: config.entrypoint.clone(),
             env: if env.is_empty() { None } else { Some(env) },
-            exposed_ports: if exposed_ports.is_empty() { None } else { Some(exposed_ports) },
-            labels: if config.labels.is_empty() { None } else { Some(config.labels.clone()) },
+            exposed_ports: if exposed_ports.is_empty() {
+                None
+            } else {
+                Some(exposed_ports)
+            },
+            labels: if config.labels.is_empty() {
+                None
+            } else {
+                Some(config.labels.clone())
+            },
             hostname: config.hostname.clone(),
             user: config.user.clone(),
             working_dir: config.working_dir.clone(),
@@ -485,18 +528,22 @@ impl DockerContainerModule {
             platform: None,
         };
 
-        let response = docker.create_container(Some(options), container_config).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to create container: {}", e))
-        })?;
+        let response = docker
+            .create_container(Some(options), container_config)
+            .await
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to create container: {}", e))
+            })?;
 
         Ok(response.id)
     }
 
     /// Start container
     async fn start_container(docker: &Docker, name: &str) -> ModuleResult<()> {
-        docker.start_container(name, None::<StartContainerOptions<String>>).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to start container: {}", e))
-        })
+        docker
+            .start_container(name, None::<StartContainerOptions<String>>)
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to start container: {}", e)))
     }
 
     /// Stop container
@@ -504,31 +551,45 @@ impl DockerContainerModule {
         let options = StopContainerOptions {
             t: timeout.unwrap_or(10) as i64,
         };
-        docker.stop_container(name, Some(options)).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to stop container: {}", e))
-        })
+        docker
+            .stop_container(name, Some(options))
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to stop container: {}", e)))
     }
 
     /// Restart container
-    async fn restart_container(docker: &Docker, name: &str, timeout: Option<i64>) -> ModuleResult<()> {
+    async fn restart_container(
+        docker: &Docker,
+        name: &str,
+        timeout: Option<i64>,
+    ) -> ModuleResult<()> {
         let options = RestartContainerOptions {
             t: timeout.unwrap_or(10) as i64,
         };
-        docker.restart_container(name, Some(options)).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to restart container: {}", e))
-        })
+        docker
+            .restart_container(name, Some(options))
+            .await
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to restart container: {}", e))
+            })
     }
 
     /// Remove container
-    async fn remove_container(docker: &Docker, name: &str, force: bool, volumes: bool) -> ModuleResult<()> {
+    async fn remove_container(
+        docker: &Docker,
+        name: &str,
+        force: bool,
+        volumes: bool,
+    ) -> ModuleResult<()> {
         let options = RemoveContainerOptions {
             force,
             v: volumes,
             ..Default::default()
         };
-        docker.remove_container(name, Some(options)).await.map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to remove container: {}", e))
-        })
+        docker
+            .remove_container(name, Some(options))
+            .await
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to remove container: {}", e)))
     }
 
     /// Execute the module asynchronously
@@ -553,9 +614,16 @@ impl DockerContainerModule {
                     } else {
                         // Stop if running
                         if Self::is_running(&container) {
-                            Self::stop_container(&docker, &config.name, config.stop_timeout).await?;
+                            Self::stop_container(&docker, &config.name, config.stop_timeout)
+                                .await?;
                         }
-                        Self::remove_container(&docker, &config.name, config.force_kill, config.remove_volumes).await?;
+                        Self::remove_container(
+                            &docker,
+                            &config.name,
+                            config.force_kill,
+                            config.remove_volumes,
+                        )
+                        .await?;
                         messages.push(format!("Removed container '{}'", config.name));
                         changed = true;
                     }
@@ -601,7 +669,10 @@ impl DockerContainerModule {
                     }
                 } else {
                     if context.check_mode {
-                        messages.push(format!("Would create and start container '{}'", config.name));
+                        messages.push(format!(
+                            "Would create and start container '{}'",
+                            config.name
+                        ));
                         changed = true;
                     } else {
                         // Pull image if needed
@@ -625,7 +696,8 @@ impl DockerContainerModule {
                             messages.push(format!("Would stop container '{}'", config.name));
                             changed = true;
                         } else {
-                            Self::stop_container(&docker, &config.name, config.stop_timeout).await?;
+                            Self::stop_container(&docker, &config.name, config.stop_timeout)
+                                .await?;
                             messages.push(format!("Stopped container '{}'", config.name));
                             changed = true;
                         }
@@ -691,9 +763,13 @@ impl DockerContainerModule {
 
 #[cfg(not(feature = "docker"))]
 impl DockerContainerModule {
-    fn execute_stub(&self, _params: &ModuleParams, _context: &ModuleContext) -> ModuleResult<ModuleOutput> {
+    fn execute_stub(
+        &self,
+        _params: &ModuleParams,
+        _context: &ModuleContext,
+    ) -> ModuleResult<ModuleOutput> {
         Err(ModuleError::Unsupported(
-            "Docker module requires 'docker' feature to be enabled".to_string()
+            "Docker module requires 'docker' feature to be enabled".to_string(),
         ))
     }
 }
@@ -726,15 +802,16 @@ impl Module for DockerContainerModule {
     ) -> ModuleResult<ModuleOutput> {
         #[cfg(feature = "docker")]
         {
-            let rt = tokio::runtime::Handle::try_current()
-                .map_err(|_| ModuleError::ExecutionFailed("No tokio runtime available".to_string()))?;
+            let rt = tokio::runtime::Handle::try_current().map_err(|_| {
+                ModuleError::ExecutionFailed("No tokio runtime available".to_string())
+            })?;
 
             let params = params.clone();
             let context = context.clone();
             std::thread::scope(|s| {
-                s.spawn(|| {
-                    rt.block_on(self.execute_async(&params, &context))
-                }).join().unwrap()
+                s.spawn(|| rt.block_on(self.execute_async(&params, &context)))
+                    .join()
+                    .unwrap()
             })
         }
 
@@ -768,19 +845,40 @@ mod tests {
 
     #[test]
     fn test_container_state_from_str() {
-        assert_eq!(ContainerState::from_str("present").unwrap(), ContainerState::Present);
-        assert_eq!(ContainerState::from_str("absent").unwrap(), ContainerState::Absent);
-        assert_eq!(ContainerState::from_str("started").unwrap(), ContainerState::Started);
-        assert_eq!(ContainerState::from_str("running").unwrap(), ContainerState::Started);
-        assert_eq!(ContainerState::from_str("stopped").unwrap(), ContainerState::Stopped);
-        assert_eq!(ContainerState::from_str("restarted").unwrap(), ContainerState::Restarted);
+        assert_eq!(
+            ContainerState::from_str("present").unwrap(),
+            ContainerState::Present
+        );
+        assert_eq!(
+            ContainerState::from_str("absent").unwrap(),
+            ContainerState::Absent
+        );
+        assert_eq!(
+            ContainerState::from_str("started").unwrap(),
+            ContainerState::Started
+        );
+        assert_eq!(
+            ContainerState::from_str("running").unwrap(),
+            ContainerState::Started
+        );
+        assert_eq!(
+            ContainerState::from_str("stopped").unwrap(),
+            ContainerState::Stopped
+        );
+        assert_eq!(
+            ContainerState::from_str("restarted").unwrap(),
+            ContainerState::Restarted
+        );
         assert!(ContainerState::from_str("invalid").is_err());
     }
 
     #[test]
     fn test_pull_policy_from_str() {
         assert_eq!(PullPolicy::from_str("always").unwrap(), PullPolicy::Always);
-        assert_eq!(PullPolicy::from_str("missing").unwrap(), PullPolicy::Missing);
+        assert_eq!(
+            PullPolicy::from_str("missing").unwrap(),
+            PullPolicy::Missing
+        );
         assert_eq!(PullPolicy::from_str("never").unwrap(), PullPolicy::Never);
         assert!(PullPolicy::from_str("invalid").is_err());
     }

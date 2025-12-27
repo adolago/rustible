@@ -268,7 +268,13 @@ impl DependencyNode {
     /// Generate a sanitized ID from a name
     fn generate_id(name: &str) -> String {
         name.chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect::<String>()
             .to_lowercase()
     }
@@ -498,8 +504,13 @@ impl DependencyGraph {
     }
 
     /// Register a variable producer
-    pub fn register_variable_producer(&mut self, variable: impl Into<String>, producer: impl Into<String>) {
-        self.variable_producers.insert(variable.into(), producer.into());
+    pub fn register_variable_producer(
+        &mut self,
+        variable: impl Into<String>,
+        producer: impl Into<String>,
+    ) {
+        self.variable_producers
+            .insert(variable.into(), producer.into());
     }
 
     /// Get the producer of a variable
@@ -508,8 +519,13 @@ impl DependencyGraph {
     }
 
     /// Register a resource producer
-    pub fn register_resource_producer(&mut self, resource: impl Into<String>, producer: impl Into<String>) {
-        self.resource_producers.insert(resource.into(), producer.into());
+    pub fn register_resource_producer(
+        &mut self,
+        resource: impl Into<String>,
+        producer: impl Into<String>,
+    ) {
+        self.resource_producers
+            .insert(resource.into(), producer.into());
     }
 
     /// Get the producer of a resource
@@ -692,12 +708,12 @@ impl DependencyGraph {
                 NodeType::Play => "house",
             };
             let color = match node.node_type {
-                NodeType::Task => "#4CAF50",      // Green
-                NodeType::Handler => "#FF9800",   // Orange
-                NodeType::Role => "#2196F3",      // Blue
-                NodeType::Variable => "#9C27B0",  // Purple
-                NodeType::Resource => "#795548",  // Brown
-                NodeType::Play => "#607D8B",      // Blue Grey
+                NodeType::Task => "#4CAF50",     // Green
+                NodeType::Handler => "#FF9800",  // Orange
+                NodeType::Role => "#2196F3",     // Blue
+                NodeType::Variable => "#9C27B0", // Purple
+                NodeType::Resource => "#795548", // Brown
+                NodeType::Play => "#607D8B",     // Blue Grey
             };
             output.push_str(&format!(
                 "    \"{}\" [label=\"{}\\n({})\", shape={}, fillcolor=\"{}\", style=\"filled,rounded\"];\n",
@@ -773,7 +789,10 @@ impl DependencyGraph {
                 DependencyKind::Fact => "-.-",
             };
             if let Some(desc) = &edge.description {
-                output.push_str(&format!("    {} {}|{}| {};\n", safe_from, arrow, desc, safe_to));
+                output.push_str(&format!(
+                    "    {} {}|{}| {};\n",
+                    safe_from, arrow, desc, safe_to
+                ));
             } else {
                 output.push_str(&format!("    {} {} {};\n", safe_from, arrow, safe_to));
             }
@@ -794,7 +813,12 @@ impl DependencyGraph {
             output.push_str("Execution Order:\n");
             for (i, node_id) in order.iter().enumerate() {
                 if let Some(node) = self.nodes.get(node_id) {
-                    output.push_str(&format!("  {}. {} ({})\n", i + 1, node.name, node.node_type));
+                    output.push_str(&format!(
+                        "  {}. {} ({})\n",
+                        i + 1,
+                        node.name,
+                        node.node_type
+                    ));
                     if !node.depends_on.is_empty() {
                         let deps: Vec<&str> = node.depends_on.iter().map(|s| s.as_str()).collect();
                         output.push_str(&format!("      depends on: {}\n", deps.join(", ")));
@@ -845,7 +869,8 @@ impl DependencyAnalyzer {
 
             // Track registered variables
             if let Some(ref register) = task.register {
-                self.graph.register_variable_producer(register.clone(), &task_id);
+                self.graph
+                    .register_variable_producer(register.clone(), &task_id);
             }
         }
 
@@ -870,9 +895,11 @@ impl DependencyAnalyzer {
 
             // Handler notifications create implicit ordering
             for handler_name in &task.notify {
-                let handler_id = format!("handler:{}", handler_name.to_lowercase().replace(' ', "_"));
+                let handler_id =
+                    format!("handler:{}", handler_name.to_lowercase().replace(' ', "_"));
                 if !self.graph.has_node(&handler_id) {
-                    self.graph.add_node(&handler_id, DependencyNode::handler(handler_name));
+                    self.graph
+                        .add_node(&handler_id, DependencyNode::handler(handler_name));
                 }
                 // Handler depends on the task that notifies it
                 self.graph.add_dependency_with_desc(
@@ -927,7 +954,10 @@ impl DependencyAnalyzer {
     /// Extract variable names from a template string
     fn extract_variables_from_string(&self, s: &str, vars: &mut HashSet<String>) {
         // Match {{ variable }} patterns
-        let re = regex::Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*(?:[|}\s])").unwrap();
+        let re = regex::Regex::new(
+            r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*(?:[|}\s])",
+        )
+        .unwrap();
         for cap in re.captures_iter(s) {
             if let Some(m) = cap.get(1) {
                 // Get the root variable name (before any dots)
@@ -970,8 +1000,12 @@ mod tests {
         graph.add_node("b", DependencyNode::task("Task B"));
         graph.add_node("c", DependencyNode::task("Task C"));
 
-        assert!(graph.add_dependency("b", "a", DependencyKind::Explicit).is_ok());
-        assert!(graph.add_dependency("c", "b", DependencyKind::Explicit).is_ok());
+        assert!(graph
+            .add_dependency("b", "a", DependencyKind::Explicit)
+            .is_ok());
+        assert!(graph
+            .add_dependency("c", "b", DependencyKind::Explicit)
+            .is_ok());
 
         let order = graph.topological_sort().unwrap();
         assert_eq!(order, vec!["a", "b", "c"]);
@@ -985,12 +1019,19 @@ mod tests {
         graph.add_node("b", DependencyNode::task("Task B"));
         graph.add_node("c", DependencyNode::task("Task C"));
 
-        assert!(graph.add_dependency("b", "a", DependencyKind::Explicit).is_ok());
-        assert!(graph.add_dependency("c", "b", DependencyKind::Explicit).is_ok());
+        assert!(graph
+            .add_dependency("b", "a", DependencyKind::Explicit)
+            .is_ok());
+        assert!(graph
+            .add_dependency("c", "b", DependencyKind::Explicit)
+            .is_ok());
 
         // This should fail - creates a->b->c->a cycle
         let result = graph.add_dependency("a", "c", DependencyKind::Explicit);
-        assert!(matches!(result, Err(DependencyError::CircularDependency(_))));
+        assert!(matches!(
+            result,
+            Err(DependencyError::CircularDependency(_))
+        ));
     }
 
     #[test]
@@ -1027,10 +1068,18 @@ mod tests {
         graph.add_node("c", DependencyNode::task("Task C"));
         graph.add_node("d", DependencyNode::task("Task D"));
 
-        assert!(graph.add_dependency("b", "a", DependencyKind::Explicit).is_ok());
-        assert!(graph.add_dependency("c", "a", DependencyKind::Explicit).is_ok());
-        assert!(graph.add_dependency("d", "b", DependencyKind::Explicit).is_ok());
-        assert!(graph.add_dependency("d", "c", DependencyKind::Explicit).is_ok());
+        assert!(graph
+            .add_dependency("b", "a", DependencyKind::Explicit)
+            .is_ok());
+        assert!(graph
+            .add_dependency("c", "a", DependencyKind::Explicit)
+            .is_ok());
+        assert!(graph
+            .add_dependency("d", "b", DependencyKind::Explicit)
+            .is_ok());
+        assert!(graph
+            .add_dependency("d", "c", DependencyKind::Explicit)
+            .is_ok());
 
         let order = graph.topological_sort().unwrap();
 
@@ -1058,8 +1107,12 @@ mod tests {
         graph.add_node("b", DependencyNode::task("Task B"));
         graph.add_node("c", DependencyNode::task("Task C"));
 
-        graph.add_dependency("b", "a", DependencyKind::Explicit).unwrap();
-        graph.add_dependency("c", "b", DependencyKind::Explicit).unwrap();
+        graph
+            .add_dependency("b", "a", DependencyKind::Explicit)
+            .unwrap();
+        graph
+            .add_dependency("c", "b", DependencyKind::Explicit)
+            .unwrap();
 
         let dependents_of_a = graph.get_dependents("a");
         assert!(dependents_of_a.contains("b"));
@@ -1077,8 +1130,12 @@ mod tests {
         graph.add_node("b", DependencyNode::task("Task B"));
         graph.add_node("c", DependencyNode::task("Task C"));
 
-        graph.add_dependency("b", "a", DependencyKind::Explicit).unwrap();
-        graph.add_dependency("c", "b", DependencyKind::Explicit).unwrap();
+        graph
+            .add_dependency("b", "a", DependencyKind::Explicit)
+            .unwrap();
+        graph
+            .add_dependency("c", "b", DependencyKind::Explicit)
+            .unwrap();
 
         let deps_of_c = graph.get_all_dependencies("c");
         assert!(deps_of_c.contains("a"));
@@ -1096,8 +1153,12 @@ mod tests {
         graph.add_node("b", DependencyNode::task("Task B"));
         graph.add_node("c", DependencyNode::task("Task C"));
 
-        graph.add_dependency("b", "a", DependencyKind::Explicit).unwrap();
-        graph.add_dependency("c", "b", DependencyKind::Explicit).unwrap();
+        graph
+            .add_dependency("b", "a", DependencyKind::Explicit)
+            .unwrap();
+        graph
+            .add_dependency("c", "b", DependencyKind::Explicit)
+            .unwrap();
 
         let roots: Vec<_> = graph.get_roots().into_iter().cloned().collect();
         assert_eq!(roots, vec!["a"]);
@@ -1111,7 +1172,9 @@ mod tests {
         let mut graph = DependencyGraph::new();
         graph.add_node("a", DependencyNode::task("Task A"));
         graph.add_node("b", DependencyNode::task("Task B"));
-        graph.add_dependency("b", "a", DependencyKind::Explicit).unwrap();
+        graph
+            .add_dependency("b", "a", DependencyKind::Explicit)
+            .unwrap();
 
         let dot = graph.to_dot();
         assert!(dot.contains("digraph"));
@@ -1125,7 +1188,9 @@ mod tests {
         let mut graph = DependencyGraph::new();
         graph.add_node("a", DependencyNode::task("Task A"));
         graph.add_node("b", DependencyNode::task("Task B"));
-        graph.add_dependency("b", "a", DependencyKind::Explicit).unwrap();
+        graph
+            .add_dependency("b", "a", DependencyKind::Explicit)
+            .unwrap();
 
         let mermaid = graph.to_mermaid();
         assert!(mermaid.contains("graph TD"));
@@ -1140,7 +1205,10 @@ mod tests {
         graph.add_node("task1", DependencyNode::task("Task 1"));
         graph.register_variable_producer("my_var", "task1");
 
-        assert_eq!(graph.get_variable_producer("my_var"), Some(&"task1".to_string()));
+        assert_eq!(
+            graph.get_variable_producer("my_var"),
+            Some(&"task1".to_string())
+        );
         assert_eq!(graph.get_variable_producer("other_var"), None);
     }
 
@@ -1149,7 +1217,9 @@ mod tests {
         let mut graph = DependencyGraph::new();
         graph.add_node("a", DependencyNode::task("Task A"));
         graph.add_node("b", DependencyNode::task("Task B"));
-        graph.add_dependency("b", "a", DependencyKind::Explicit).unwrap();
+        graph
+            .add_dependency("b", "a", DependencyKind::Explicit)
+            .unwrap();
 
         let removed = graph.remove_node("a");
         assert!(removed.is_some());

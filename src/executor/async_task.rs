@@ -236,9 +236,7 @@ impl AsyncJobInfo {
                 .as_secs(),
         );
         self.msg = Some(error_msg);
-        self.result = Some(TaskResult::failed(
-            self.msg.clone().unwrap_or_default(),
-        ));
+        self.result = Some(TaskResult::failed(self.msg.clone().unwrap_or_default()));
     }
 
     /// Mark job as timed out
@@ -255,9 +253,7 @@ impl AsyncJobInfo {
             "Job timed out after {} seconds",
             self.async_timeout
         ));
-        self.result = Some(TaskResult::failed(
-            self.msg.clone().unwrap_or_default(),
-        ));
+        self.result = Some(TaskResult::failed(self.msg.clone().unwrap_or_default()));
     }
 
     /// Mark job as cancelled
@@ -464,7 +460,10 @@ impl AsyncTaskManager {
                 }
                 Err(_) => {
                     // Timeout occurred
-                    error!("Async task {} timed out after {} seconds", jid_clone, timeout);
+                    error!(
+                        "Async task {} timed out after {} seconds",
+                        jid_clone, timeout
+                    );
 
                     let mut jobs_guard = jobs.write().await;
                     if let Some(job) = jobs_guard.get_mut(&jid_clone) {
@@ -504,7 +503,10 @@ impl AsyncTaskManager {
             );
         }
 
-        info!("Async task submitted: jid={}, host={}, module={}", jid, host, module);
+        info!(
+            "Async task submitted: jid={}, host={}, module={}",
+            jid, host, module
+        );
         Ok(jid)
     }
 
@@ -600,9 +602,7 @@ impl AsyncTaskManager {
     pub async fn list_running_jobs(&self, host: Option<&str>) -> Vec<AsyncJobInfo> {
         let jobs = self.jobs.read().await;
         jobs.values()
-            .filter(|j| {
-                !j.finished && host.map(|h| j.host == h).unwrap_or(true)
-            })
+            .filter(|j| !j.finished && host.map(|h| j.host == h).unwrap_or(true))
             .cloned()
             .collect()
     }
@@ -661,8 +661,14 @@ impl AsyncTaskManager {
 
             // Ensure Ansible-compatible fields
             if let Some(obj) = result_data.as_object_mut() {
-                obj.insert("ansible_job_id".to_string(), JsonValue::String(jid.to_string()));
-                obj.insert("finished".to_string(), JsonValue::Number(if info.finished { 1 } else { 0 }.into()));
+                obj.insert(
+                    "ansible_job_id".to_string(),
+                    JsonValue::String(jid.to_string()),
+                );
+                obj.insert(
+                    "finished".to_string(),
+                    JsonValue::Number(if info.finished { 1 } else { 0 }.into()),
+                );
             }
 
             let status = if info.finished {

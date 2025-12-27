@@ -73,8 +73,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use super::{
-    parse_annotations, parse_labels, validate_k8s_name, validate_k8s_namespace,
-    K8sResourceState, LabelSelector, ResourceRequirements, RollingUpdateConfig, UpdateStrategy,
+    parse_annotations, parse_labels, validate_k8s_name, validate_k8s_namespace, K8sResourceState,
+    LabelSelector, ResourceRequirements, RollingUpdateConfig, UpdateStrategy,
 };
 
 /// Deployment configuration parsed from module parameters
@@ -390,7 +390,9 @@ impl K8sDeploymentModule {
     async fn apply_deployment(config: &DeploymentConfig) -> ModuleResult<DeploymentInfo> {
         // Validate required fields for creation
         let image = config.image.as_ref().ok_or_else(|| {
-            ModuleError::MissingParameter("image is required when creating a deployment".to_string())
+            ModuleError::MissingParameter(
+                "image is required when creating a deployment".to_string(),
+            )
         })?;
 
         // In a real implementation:
@@ -600,12 +602,8 @@ impl K8sDeploymentModule {
         .await?;
 
         match config.state {
-            K8sResourceState::Present => {
-                self.ensure_present(&config, existing, context).await
-            }
-            K8sResourceState::Absent => {
-                self.ensure_absent(&config, existing, context).await
-            }
+            K8sResourceState::Present => self.ensure_present(&config, existing, context).await,
+            K8sResourceState::Absent => self.ensure_absent(&config, existing, context).await,
         }
     }
 
@@ -645,11 +643,10 @@ impl K8sDeploymentModule {
             let needs_update = self.needs_update(config, &dep);
 
             if !needs_update && !config.force {
-                return Ok(ModuleOutput::ok(format!(
-                    "Deployment '{}' is up to date",
-                    config.name
-                ))
-                .with_data("deployment", serde_json::to_value(&dep).unwrap()));
+                return Ok(
+                    ModuleOutput::ok(format!("Deployment '{}' is up to date", config.name))
+                        .with_data("deployment", serde_json::to_value(&dep).unwrap()),
+                );
             }
 
             if context.check_mode {
@@ -711,11 +708,10 @@ impl K8sDeploymentModule {
                 updated
             };
 
-            Ok(ModuleOutput::changed(format!(
-                "Updated deployment '{}'",
-                config.name
-            ))
-            .with_data("deployment", serde_json::to_value(&final_dep).unwrap()))
+            Ok(
+                ModuleOutput::changed(format!("Updated deployment '{}'", config.name))
+                    .with_data("deployment", serde_json::to_value(&final_dep).unwrap()),
+            )
         } else {
             // Create new deployment
             if context.check_mode {
@@ -741,11 +737,10 @@ impl K8sDeploymentModule {
                 created
             };
 
-            Ok(ModuleOutput::changed(format!(
-                "Created deployment '{}'",
-                config.name
-            ))
-            .with_data("deployment", serde_json::to_value(&final_dep).unwrap()))
+            Ok(
+                ModuleOutput::changed(format!("Created deployment '{}'", config.name))
+                    .with_data("deployment", serde_json::to_value(&final_dep).unwrap()),
+            )
         }
     }
 

@@ -262,14 +262,7 @@ fn test_pip_check_mode_context() {
 #[test]
 fn test_pip_common_packages() {
     let common_packages = [
-        "requests",
-        "flask",
-        "django",
-        "numpy",
-        "pandas",
-        "pytest",
-        "boto3",
-        "pyyaml",
+        "requests", "flask", "django", "numpy", "pandas", "pytest", "boto3", "pyyaml",
     ];
 
     for pkg in common_packages {

@@ -113,7 +113,8 @@ impl RunArgs {
         if inventory_path.is_none() {
             ctx.output
                 .warning("No inventory specified, using localhost");
-            ctx.output.hint("Use -i <inventory_file> to specify an inventory");
+            ctx.output
+                .hint("Use -i <inventory_file> to specify an inventory");
         }
 
         // Validate limit pattern if specified
@@ -279,17 +280,24 @@ impl RunArgs {
                 } else {
                     continue;
                 };
-                let role_tasks_path = playbook_dir.join("roles").join(&role_name).join("tasks").join("main.yml");
+                let role_tasks_path = playbook_dir
+                    .join("roles")
+                    .join(&role_name)
+                    .join("tasks")
+                    .join("main.yml");
                 if role_tasks_path.exists() {
                     if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
-                        if let Ok(role_tasks) = serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content) {
+                        if let Ok(role_tasks) =
+                            serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                        {
                             role_task_count += role_tasks.len();
                         }
                     }
                 }
             }
 
-            let total_play_tasks = pre_tasks.len() + role_task_count + tasks.len() + post_tasks.len();
+            let total_play_tasks =
+                pre_tasks.len() + role_task_count + tasks.len() + post_tasks.len();
 
             if total_play_tasks == 0 {
                 ctx.output.plan("  No tasks to execute");
@@ -305,7 +313,13 @@ impl RunArgs {
             let mut task_num = 0;
 
             // Helper closure to show a task
-            let show_task = |ctx: &mut CommandContext, task: &serde_yaml::Value, task_num: usize, total: usize, hosts: &[String], vars: &IndexMap<String, serde_yaml::Value>, me: &Self| {
+            let show_task = |ctx: &mut CommandContext,
+                             task: &serde_yaml::Value,
+                             task_num: usize,
+                             total: usize,
+                             hosts: &[String],
+                             vars: &IndexMap<String, serde_yaml::Value>,
+                             me: &Self| {
                 let task_name = task
                     .get("name")
                     .and_then(|n| n.as_str())
@@ -370,13 +384,27 @@ impl RunArgs {
                     continue;
                 };
 
-                let role_tasks_path = playbook_dir.join("roles").join(&role_name).join("tasks").join("main.yml");
+                let role_tasks_path = playbook_dir
+                    .join("roles")
+                    .join(&role_name)
+                    .join("tasks")
+                    .join("main.yml");
                 if role_tasks_path.exists() {
                     if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
-                        if let Ok(role_tasks) = serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content) {
+                        if let Ok(role_tasks) =
+                            serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                        {
                             for task in &role_tasks {
                                 task_num += 1;
-                                show_task(ctx, task, task_num, total_play_tasks, &hosts, &vars, self);
+                                show_task(
+                                    ctx,
+                                    task,
+                                    task_num,
+                                    total_play_tasks,
+                                    &hosts,
+                                    &vars,
+                                    self,
+                                );
                             }
                         }
                     }
@@ -436,10 +464,16 @@ impl RunArgs {
                     } else {
                         continue;
                     };
-                    let role_tasks_path = playbook_dir.join("roles").join(&role_name).join("tasks").join("main.yml");
+                    let role_tasks_path = playbook_dir
+                        .join("roles")
+                        .join(&role_name)
+                        .join("tasks")
+                        .join("main.yml");
                     if role_tasks_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
-                            if let Ok(role_tasks) = serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content) {
+                            if let Ok(role_tasks) =
+                                serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                            {
                                 for task in &role_tasks {
                                     if self.should_run_task(task) {
                                         total_tasks += 1;
@@ -541,7 +575,10 @@ impl RunArgs {
                     .and_then(|s| s.as_str())
                     .unwrap_or("started");
                 let templated_state = Self::template_string(state, vars);
-                format!("will ensure service {} is {}", templated_name, templated_state)
+                format!(
+                    "will ensure service {} is {}",
+                    templated_name, templated_state
+                )
             }
             "copy" => {
                 let src = args
@@ -773,7 +810,8 @@ impl RunArgs {
                 }
                 Err(e) => {
                     for host in &hosts {
-                        ctx.output.task_result(host, TaskStatus::Failed, Some(&e.to_string()));
+                        ctx.output
+                            .task_result(host, TaskStatus::Failed, Some(&e.to_string()));
                         stats.lock().await.record(host, TaskStatus::Failed);
                     }
                     return Err(anyhow::anyhow!("Failed to gather facts: {}", e));
@@ -800,23 +838,37 @@ impl RunArgs {
 
             // Load role tasks from roles/<role_name>/tasks/main.yml
             let playbook_dir = self.playbook.parent().unwrap_or(std::path::Path::new("."));
-            let role_tasks_path = playbook_dir.join("roles").join(&role_name).join("tasks").join("main.yml");
+            let role_tasks_path = playbook_dir
+                .join("roles")
+                .join(&role_name)
+                .join("tasks")
+                .join("main.yml");
 
             if role_tasks_path.exists() {
                 if let Ok(role_content) = std::fs::read_to_string(&role_tasks_path) {
-                    if let Ok(role_tasks) = serde_yaml::from_str::<Vec<serde_yaml::Value>>(&role_content) {
+                    if let Ok(role_tasks) =
+                        serde_yaml::from_str::<Vec<serde_yaml::Value>>(&role_content)
+                    {
                         // Merge role vars if present
                         let mut role_vars = vars.clone();
 
                         // Load role defaults
-                        let defaults_path = playbook_dir.join("roles").join(&role_name).join("defaults").join("main.yml");
+                        let defaults_path = playbook_dir
+                            .join("roles")
+                            .join(&role_name)
+                            .join("defaults")
+                            .join("main.yml");
                         if defaults_path.exists() {
                             if let Ok(defaults_content) = std::fs::read_to_string(&defaults_path) {
-                                if let Ok(defaults) = serde_yaml::from_str::<serde_yaml::Value>(&defaults_content) {
+                                if let Ok(defaults) =
+                                    serde_yaml::from_str::<serde_yaml::Value>(&defaults_content)
+                                {
                                     if let Some(mapping) = defaults.as_mapping() {
                                         for (k, v) in mapping {
                                             if let Some(key) = k.as_str() {
-                                                role_vars.entry(key.to_string()).or_insert(v.clone());
+                                                role_vars
+                                                    .entry(key.to_string())
+                                                    .or_insert(v.clone());
                                             }
                                         }
                                     }
@@ -825,10 +877,16 @@ impl RunArgs {
                         }
 
                         // Load role vars (higher precedence than defaults)
-                        let vars_path = playbook_dir.join("roles").join(&role_name).join("vars").join("main.yml");
+                        let vars_path = playbook_dir
+                            .join("roles")
+                            .join(&role_name)
+                            .join("vars")
+                            .join("main.yml");
                         if vars_path.exists() {
                             if let Ok(vars_content) = std::fs::read_to_string(&vars_path) {
-                                if let Ok(role_vars_file) = serde_yaml::from_str::<serde_yaml::Value>(&vars_content) {
+                                if let Ok(role_vars_file) =
+                                    serde_yaml::from_str::<serde_yaml::Value>(&vars_content)
+                                {
                                     if let Some(mapping) = role_vars_file.as_mapping() {
                                         for (k, v) in mapping {
                                             if let Some(key) = k.as_str() {
@@ -842,12 +900,17 @@ impl RunArgs {
 
                         // Execute role tasks
                         for task in &role_tasks {
-                            self.execute_task(ctx, task, &hosts, stats, &role_vars).await?;
+                            self.execute_task(ctx, task, &hosts, stats, &role_vars)
+                                .await?;
                         }
                     }
                 }
             } else {
-                ctx.output.warning(&format!("Role '{}' not found at {}", role_name, role_tasks_path.display()));
+                ctx.output.warning(&format!(
+                    "Role '{}' not found at {}",
+                    role_name,
+                    role_tasks_path.display()
+                ));
             }
         }
 

@@ -465,7 +465,8 @@ impl WorkloadCharacteristics {
 
     /// Estimate total execution time in milliseconds.
     pub fn estimate_duration_ms(&self, strategy: Strategy) -> u64 {
-        let total_work = self.host_count as u64 * self.task_count as u64 * self.avg_task_duration_ms;
+        let total_work =
+            self.host_count as u64 * self.task_count as u64 * self.avg_task_duration_ms;
 
         match strategy {
             Strategy::Linear => {
@@ -981,7 +982,9 @@ impl StrategyPlugin for LinearStrategyPlugin {
 
         // Initialize host results
         for host in hosts {
-            output.host_results.insert(host.clone(), HostRunResult::new(host));
+            output
+                .host_results
+                .insert(host.clone(), HostRunResult::new(host));
         }
 
         let task_count = task_runner.task_count();
@@ -1038,7 +1041,10 @@ impl StrategyPlugin for LinearStrategyPlugin {
         }
 
         output.duration = start.elapsed();
-        output.success = !output.host_results.values().any(|r| r.failed || r.unreachable);
+        output.success = !output
+            .host_results
+            .values()
+            .any(|r| r.failed || r.unreachable);
 
         Ok(output)
     }
@@ -1136,7 +1142,9 @@ impl StrategyPlugin for DebugStrategyPlugin {
 
         // Initialize host results
         for host in hosts {
-            output.host_results.insert(host.clone(), HostRunResult::new(host));
+            output
+                .host_results
+                .insert(host.clone(), HostRunResult::new(host));
         }
 
         let task_count = task_runner.task_count();
@@ -1206,7 +1214,10 @@ impl StrategyPlugin for DebugStrategyPlugin {
         }
 
         output.duration = start.elapsed();
-        output.success = !output.host_results.values().any(|r| r.failed || r.unreachable);
+        output.success = !output
+            .host_results
+            .values()
+            .any(|r| r.failed || r.unreachable);
 
         tracing::info!(
             "[DEBUG] Execution complete: ok={}, changed={}, failed={}, duration={:?}",
@@ -1279,8 +1290,18 @@ impl StrategyMetrics {
         if !metrics.task_durations.is_empty() {
             let sum: Duration = metrics.task_durations.iter().sum();
             metrics.avg_task_duration = sum / metrics.task_durations.len() as u32;
-            metrics.max_task_duration = metrics.task_durations.iter().max().copied().unwrap_or_default();
-            metrics.min_task_duration = metrics.task_durations.iter().min().copied().unwrap_or_default();
+            metrics.max_task_duration = metrics
+                .task_durations
+                .iter()
+                .max()
+                .copied()
+                .unwrap_or_default();
+            metrics.min_task_duration = metrics
+                .task_durations
+                .iter()
+                .min()
+                .copied()
+                .unwrap_or_default();
         }
 
         // Calculate throughput
@@ -1291,7 +1312,11 @@ impl StrategyMetrics {
 
         // Calculate efficiency
         let theoretical_parallel = output.duration.as_secs_f64() * host_count as f64;
-        let actual_serial: f64 = metrics.host_durations.values().map(|d| d.as_secs_f64()).sum();
+        let actual_serial: f64 = metrics
+            .host_durations
+            .values()
+            .map(|d| d.as_secs_f64())
+            .sum();
         if actual_serial > 0.0 {
             metrics.efficiency = theoretical_parallel / actual_serial;
         }
@@ -1467,7 +1492,13 @@ impl BenchmarkResult {
     pub fn to_line(&self) -> String {
         format!(
             "{}: mean={:?}, median={:?}, std_dev={:?}, min={:?}, max={:?} ({} iterations)",
-            self.strategy, self.mean, self.median, self.std_dev, self.min, self.max, self.iterations
+            self.strategy,
+            self.mean,
+            self.median,
+            self.std_dev,
+            self.min,
+            self.max,
+            self.iterations
         )
     }
 }
@@ -1497,8 +1528,14 @@ mod tests {
     fn test_strategy_from_str() {
         assert_eq!("linear".parse::<Strategy>().unwrap(), Strategy::Linear);
         assert_eq!("free".parse::<Strategy>().unwrap(), Strategy::Free);
-        assert_eq!("host_pinned".parse::<Strategy>().unwrap(), Strategy::HostPinned);
-        assert_eq!("host-pinned".parse::<Strategy>().unwrap(), Strategy::HostPinned);
+        assert_eq!(
+            "host_pinned".parse::<Strategy>().unwrap(),
+            Strategy::HostPinned
+        );
+        assert_eq!(
+            "host-pinned".parse::<Strategy>().unwrap(),
+            Strategy::HostPinned
+        );
         assert_eq!("debug".parse::<Strategy>().unwrap(), Strategy::Debug);
         assert!("unknown".parse::<Strategy>().is_err());
     }

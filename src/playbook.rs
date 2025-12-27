@@ -814,15 +814,15 @@ impl<'de> Deserialize<'de> for Task {
                 .map(|v| v as u32),
             delay: obj.get("delay").and_then(|v| v.as_u64()),
             until: obj.get("until").and_then(|v| v.as_str()).map(String::from),
-            block: obj.get("block").and_then(|v| {
-                serde_json::from_value::<Vec<Task>>(v.clone()).ok()
-            }),
-            rescue: obj.get("rescue").and_then(|v| {
-                serde_json::from_value::<Vec<Task>>(v.clone()).ok()
-            }),
-            always: obj.get("always").and_then(|v| {
-                serde_json::from_value::<Vec<Task>>(v.clone()).ok()
-            }),
+            block: obj
+                .get("block")
+                .and_then(|v| serde_json::from_value::<Vec<Task>>(v.clone()).ok()),
+            rescue: obj
+                .get("rescue")
+                .and_then(|v| serde_json::from_value::<Vec<Task>>(v.clone()).ok()),
+            always: obj
+                .get("always")
+                .and_then(|v| serde_json::from_value::<Vec<Task>>(v.clone()).ok()),
         })
     }
 }

@@ -14,9 +14,8 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 /// Regex pattern for validating sysctl parameter names
-static SYSCTL_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[a-zA-Z0-9_./]+$").expect("Invalid sysctl name regex")
-});
+static SYSCTL_NAME_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_./]+$").expect("Invalid sysctl name regex"));
 
 /// Desired state for a sysctl parameter
 #[derive(Debug, Clone, PartialEq)]
@@ -92,11 +91,7 @@ impl SysctlModule {
         value: &str,
         context: &ModuleContext,
     ) -> ModuleResult<()> {
-        let cmd = format!(
-            "sysctl -w {}={}",
-            shell_escape(name),
-            shell_escape(value)
-        );
+        let cmd = format!("sysctl -w {}={}", shell_escape(name), shell_escape(value));
         let (success, _, stderr) = Self::execute_command(connection, &cmd, context)?;
 
         if success {
@@ -384,10 +379,7 @@ impl Module for SysctlModule {
 
                 if config_needs_update {
                     if context.check_mode {
-                        messages.push(format!(
-                            "Would update '{}' in {}",
-                            name, sysctl_file
-                        ));
+                        messages.push(format!("Would update '{}' in {}", name, sysctl_file));
                         changed = true;
                     } else {
                         let (new_config, _) = Self::update_config(&config_content, &name, &value);

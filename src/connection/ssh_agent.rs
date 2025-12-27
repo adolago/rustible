@@ -149,7 +149,7 @@ impl AgentKeyInfo {
         Self {
             public_key: key.clone(),
             key_type,
-            comment: String::new(),  // Will be set by the agent
+            comment: String::new(), // Will be set by the agent
             fingerprint,
             supports_certificates,
         }
@@ -276,16 +276,18 @@ impl SshAgentClient {
         self.request_count.fetch_add(1, Ordering::Relaxed);
 
         // Create a fresh connection for each request since the API consumes self
-        let socket = UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| AgentError::ConnectionFailed {
+        let socket = UnixStream::connect(&self.socket_path).await.map_err(|e| {
+            AgentError::ConnectionFailed {
                 path: self.socket_path.display().to_string(),
                 message: e.to_string(),
-            })?;
+            }
+        })?;
 
         let mut agent: AgentClient<UnixStream> = AgentClient::connect(socket);
 
-        let identities = agent.request_identities().await
+        let identities = agent
+            .request_identities()
+            .await
             .map_err(|e: russh_keys::Error| AgentError::CommunicationError(e.to_string()))?;
 
         let keys: Vec<AgentKeyInfo> = identities
@@ -293,7 +295,11 @@ impl SshAgentClient {
             .map(|key| AgentKeyInfo::from_public_key(key))
             .collect();
 
-        debug!(count = keys.len(), "Listed {} keys from SSH agent", keys.len());
+        debug!(
+            count = keys.len(),
+            "Listed {} keys from SSH agent",
+            keys.len()
+        );
         Ok(keys)
     }
 
@@ -302,16 +308,18 @@ impl SshAgentClient {
         self.request_count.fetch_add(1, Ordering::Relaxed);
 
         // Create a fresh connection for each request since the API consumes self
-        let socket = UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| AgentError::ConnectionFailed {
+        let socket = UnixStream::connect(&self.socket_path).await.map_err(|e| {
+            AgentError::ConnectionFailed {
                 path: self.socket_path.display().to_string(),
                 message: e.to_string(),
-            })?;
+            }
+        })?;
 
         let mut agent: AgentClient<UnixStream> = AgentClient::connect(socket);
 
-        let identities = agent.request_identities().await
+        let identities = agent
+            .request_identities()
+            .await
             .map_err(|e: russh_keys::Error| AgentError::CommunicationError(e.to_string()))?;
 
         Ok(identities)
@@ -320,9 +328,9 @@ impl SshAgentClient {
     /// Check if a key with the given comment or fingerprint is available
     pub async fn has_key(&self, identifier: &str) -> Result<bool, AgentError> {
         let keys = self.list_keys().await?;
-        Ok(keys.iter().any(|k| {
-            k.comment.contains(identifier) || k.fingerprint.contains(identifier)
-        }))
+        Ok(keys
+            .iter()
+            .any(|k| k.comment.contains(identifier) || k.fingerprint.contains(identifier)))
     }
 
     /// Get a specific key by comment or fingerprint
@@ -353,17 +361,18 @@ impl SshAgentClient {
         self.request_count.fetch_add(1, Ordering::Relaxed);
 
         // Create a fresh connection for each request since the API consumes self
-        let socket = UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| AgentError::ConnectionFailed {
+        let socket = UnixStream::connect(&self.socket_path).await.map_err(|e| {
+            AgentError::ConnectionFailed {
                 path: self.socket_path.display().to_string(),
                 message: e.to_string(),
-            })?;
+            }
+        })?;
 
         let agent: AgentClient<UnixStream> = AgentClient::connect(socket);
 
         let (_, result) = agent.sign_request_signature(key, data).await;
-        let signature = result.map_err(|e: russh_keys::Error| AgentError::SigningFailed(e.to_string()))?;
+        let signature =
+            result.map_err(|e: russh_keys::Error| AgentError::SigningFailed(e.to_string()))?;
 
         trace!(key = %key.name(), data_len = data.len(), "Signed data with agent key");
         // Convert signature to bytes
@@ -453,7 +462,10 @@ impl AgentConnectionPool {
     }
 
     /// Create a pool with custom settings
-    pub async fn with_config(max_connections: usize, idle_timeout: Duration) -> Result<Self, AgentError> {
+    pub async fn with_config(
+        max_connections: usize,
+        idle_timeout: Duration,
+    ) -> Result<Self, AgentError> {
         let socket_path = SshAgentClient::get_agent_socket_path()?;
         Ok(Self {
             connections: RwLock::new(Vec::new()),
@@ -489,7 +501,8 @@ impl AgentConnectionPool {
             // Create new connection if under limit
             if connections.len() < self.max_connections {
                 let client = SshAgentClient::connect_to(&self.socket_path).await?;
-                self.total_connections_created.fetch_add(1, Ordering::Relaxed);
+                self.total_connections_created
+                    .fetch_add(1, Ordering::Relaxed);
                 connections.push(PooledAgentConnection {
                     client,
                     last_used: now,
@@ -728,7 +741,12 @@ impl AgentForwarder {
 
         // Check host allowlist
         if !self.config.allowed_hosts.is_empty() {
-            if !self.config.allowed_hosts.iter().any(|h| h == host || matches_host_pattern(h, host)) {
+            if !self
+                .config
+                .allowed_hosts
+                .iter()
+                .any(|h| h == host || matches_host_pattern(h, host))
+            {
                 return false;
             }
         }
@@ -743,9 +761,9 @@ impl AgentForwarder {
         }
 
         self.config.allowed_keys.iter().any(|allowed| {
-            key.comment.contains(allowed) ||
-            key.fingerprint.contains(allowed) ||
-            key.key_type.contains(allowed)
+            key.comment.contains(allowed)
+                || key.fingerprint.contains(allowed)
+                || key.key_type.contains(allowed)
         })
     }
 
@@ -761,7 +779,10 @@ impl AgentForwarder {
             return Ok(keys);
         }
 
-        Ok(keys.into_iter().filter(|k| self.is_key_allowed(k)).collect())
+        Ok(keys
+            .into_iter()
+            .filter(|k| self.is_key_allowed(k))
+            .collect())
     }
 
     /// Request a forwarded signature for authentication
@@ -776,9 +797,10 @@ impl AgentForwarder {
     ) -> Result<Vec<u8>, AgentError> {
         // Check if forwarding is allowed
         if !self.is_allowed(host) {
-            return Err(AgentError::ForwardingUnavailable(
-                format!("Agent forwarding not allowed for host: {}", host),
-            ));
+            return Err(AgentError::ForwardingUnavailable(format!(
+                "Agent forwarding not allowed for host: {}",
+                host
+            )));
         }
 
         if self.config.log_requests {
@@ -869,7 +891,11 @@ pub async fn verify_agent_connection() -> Result<AgentClientMetrics, AgentError>
 
     // Verify by listing keys
     let keys = agent.list_keys().await?;
-    debug!(count = keys.len(), "Agent verification: found {} keys", keys.len());
+    debug!(
+        count = keys.len(),
+        "Agent verification: found {} keys",
+        keys.len()
+    );
 
     Ok(agent.metrics())
 }
@@ -950,10 +976,9 @@ mod tests {
             public_key: {
                 // A valid ed25519 public key (just the base point for testing)
                 let bytes: [u8; 32] = [
-                    0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-                    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-                    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-                    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+                    0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+                    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+                    0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
                 ];
                 let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&bytes).unwrap();
                 russh_keys::key::PublicKey::Ed25519(verifying_key)

@@ -507,11 +507,7 @@ impl SlackCallback {
     /// Create a playbook start message.
     fn create_start_message(&self, playbook: &str, hosts: &[String]) -> SlackMessage {
         let host_list = if hosts.len() > 5 {
-            format!(
-                "{} and {} more",
-                hosts[..5].join(", "),
-                hosts.len() - 5
-            )
+            format!("{} and {} more", hosts[..5].join(", "), hosts.len() - 5)
         } else {
             hosts.join(", ")
         };
@@ -818,10 +814,7 @@ mod tests {
             .timeout_secs(60)
             .build();
 
-        assert_eq!(
-            config.webhook_url,
-            "https://hooks.slack.com/services/test"
-        );
+        assert_eq!(config.webhook_url, "https://hooks.slack.com/services/test");
         assert_eq!(config.channel, Some("#test".to_string()));
         assert_eq!(config.username, "TestBot");
         assert_eq!(config.icon_emoji, ":robot:");

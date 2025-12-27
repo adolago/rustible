@@ -39,12 +39,12 @@ use rustible::connection::config::{
     ConnectionConfig, HostConfig, RetryConfig, SshConfigParser, DEFAULT_RETRIES,
     DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT,
 };
+#[cfg(feature = "russh")]
+use rustible::connection::RusshConnection;
 use rustible::connection::{
     CommandResult, Connection, ConnectionError, ConnectionResult, ExecuteOptions, FileStat,
     TransferOptions,
 };
-#[cfg(feature = "russh")]
-use rustible::connection::RusshConnection;
 
 // ============================================================================
 // TEST FIXTURES DIRECTORY SETUP
@@ -452,10 +452,7 @@ mod config_parsing {
         assert_eq!(config.hostname, Some("example.com".to_string()));
         assert_eq!(config.port, Some(2222));
         assert_eq!(config.user, Some("admin".to_string()));
-        assert_eq!(
-            config.identity_file,
-            Some("~/.ssh/id_ed25519".to_string())
-        );
+        assert_eq!(config.identity_file, Some("~/.ssh/id_ed25519".to_string()));
         assert_eq!(config.connect_timeout, Some(60));
     }
 
@@ -579,8 +576,14 @@ Host lenient
 
         let hosts = SshConfigParser::parse(config).unwrap();
 
-        assert_eq!(hosts.get("strict").unwrap().strict_host_key_checking, Some(true));
-        assert_eq!(hosts.get("lenient").unwrap().strict_host_key_checking, Some(false));
+        assert_eq!(
+            hosts.get("strict").unwrap().strict_host_key_checking,
+            Some(true)
+        );
+        assert_eq!(
+            hosts.get("lenient").unwrap().strict_host_key_checking,
+            Some(false)
+        );
     }
 
     #[test]
@@ -685,10 +688,8 @@ mod auth_config {
     #[test]
     fn test_auth_config_identity_files() {
         let mut config = ConnectionConfig::default();
-        config.defaults.identity_files = vec![
-            "~/.ssh/id_ed25519".to_string(),
-            "~/.ssh/id_rsa".to_string(),
-        ];
+        config.defaults.identity_files =
+            vec!["~/.ssh/id_ed25519".to_string(), "~/.ssh/id_rsa".to_string()];
 
         assert_eq!(config.defaults.identity_files.len(), 2);
         assert!(config.defaults.identity_files[0].contains("ed25519"));
@@ -1280,7 +1281,9 @@ mod integration_tests {
         assert!(conn.path_exists(&remote_path).await.unwrap());
 
         // Clean up
-        conn.execute("rm /tmp/rustible_upload_test.txt", None).await.unwrap();
+        conn.execute("rm /tmp/rustible_upload_test.txt", None)
+            .await
+            .unwrap();
         conn.close().await.unwrap();
     }
 
@@ -1301,9 +1304,12 @@ mod integration_tests {
             .expect("Failed to connect");
 
         // Create a remote file to download
-        conn.execute("echo 'Download test content' > /tmp/rustible_download_test.txt", None)
-            .await
-            .unwrap();
+        conn.execute(
+            "echo 'Download test content' > /tmp/rustible_download_test.txt",
+            None,
+        )
+        .await
+        .unwrap();
 
         let remote_path = PathBuf::from("/tmp/rustible_download_test.txt");
         let local_path = temp_dir.path().join("downloaded.txt");
@@ -1315,7 +1321,9 @@ mod integration_tests {
         assert!(content.contains("Download test content"));
 
         // Clean up
-        conn.execute("rm /tmp/rustible_download_test.txt", None).await.unwrap();
+        conn.execute("rm /tmp/rustible_download_test.txt", None)
+            .await
+            .unwrap();
         conn.close().await.unwrap();
     }
 
@@ -1338,7 +1346,9 @@ mod integration_tests {
         let content = b"SFTP test content";
         let remote_path = PathBuf::from("/tmp/rustible_sftp_test.txt");
 
-        conn.upload_content(content, &remote_path, None).await.unwrap();
+        conn.upload_content(content, &remote_path, None)
+            .await
+            .unwrap();
 
         // Test path_exists
         assert!(conn.path_exists(&remote_path).await.unwrap());
@@ -1357,7 +1367,9 @@ mod integration_tests {
         assert!(conn.is_directory(&PathBuf::from("/tmp")).await.unwrap());
 
         // Clean up
-        conn.execute("rm /tmp/rustible_sftp_test.txt", None).await.unwrap();
+        conn.execute("rm /tmp/rustible_sftp_test.txt", None)
+            .await
+            .unwrap();
         conn.close().await.unwrap();
     }
 
@@ -1478,9 +1490,8 @@ mod ci_safe_tests {
 
         for i in 0..20 {
             let conn_clone = conn.clone();
-            let handle = tokio::spawn(async move {
-                conn_clone.execute(&format!("cmd_{}", i), None).await
-            });
+            let handle =
+                tokio::spawn(async move { conn_clone.execute(&format!("cmd_{}", i), None).await });
             handles.push(handle);
         }
 

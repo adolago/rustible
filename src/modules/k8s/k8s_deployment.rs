@@ -290,7 +290,9 @@ impl K8sDeploymentModule {
             spec: Some(DeploymentSpec {
                 replicas: Some(config.replicas),
                 selector: LabelSelector {
-                    match_labels: Some(labels.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
+                    match_labels: Some(
+                        labels.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    ),
                     ..Default::default()
                 },
                 strategy: Some(strategy),
@@ -403,8 +405,12 @@ impl K8sDeploymentModule {
 
                         // Wait for deployment if requested
                         if config.wait {
-                            Self::wait_for_deployment(&deployments, &config.name, config.wait_timeout)
-                                .await?;
+                            Self::wait_for_deployment(
+                                &deployments,
+                                &config.name,
+                                config.wait_timeout,
+                            )
+                            .await?;
                         }
 
                         Ok(ModuleOutput::changed(format!(
@@ -434,8 +440,12 @@ impl K8sDeploymentModule {
 
                         // Wait for deployment if requested
                         if config.wait {
-                            Self::wait_for_deployment(&deployments, &config.name, config.wait_timeout)
-                                .await?;
+                            Self::wait_for_deployment(
+                                &deployments,
+                                &config.name,
+                                config.wait_timeout,
+                            )
+                            .await?;
                         }
 
                         Ok(ModuleOutput::changed(format!(
@@ -599,10 +609,9 @@ impl Module for K8sDeploymentModule {
 
         let before = match config.state {
             DeploymentState::Present => "absent or different configuration".to_string(),
-            DeploymentState::Absent => format!(
-                "Deployment '{}/{}' exists",
-                config.namespace, config.name
-            ),
+            DeploymentState::Absent => {
+                format!("Deployment '{}/{}' exists", config.namespace, config.name)
+            }
         };
 
         let after = match config.state {
@@ -613,10 +622,9 @@ impl Module for K8sDeploymentModule {
                 config.replicas,
                 config.image.as_deref().unwrap_or("unspecified")
             ),
-            DeploymentState::Absent => format!(
-                "Deployment '{}/{}' absent",
-                config.namespace, config.name
-            ),
+            DeploymentState::Absent => {
+                format!("Deployment '{}/{}' absent", config.namespace, config.name)
+            }
         };
 
         Ok(Some(Diff::new(before, after)))

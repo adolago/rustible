@@ -288,20 +288,20 @@ impl StateDump {
     /// Serialize to bytes in the specified format
     pub fn to_bytes(&self, format: StateDumpFormat) -> Result<Vec<u8>, io::Error> {
         match format {
-            StateDumpFormat::Json => serde_json::to_vec(self)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
+            StateDumpFormat::Json => {
+                serde_json::to_vec(self).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            }
             StateDumpFormat::JsonPretty => serde_json::to_vec_pretty(self)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
             StateDumpFormat::Yaml => {
-                let yaml =
-                    serde_yaml::to_string(self).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                let yaml = serde_yaml::to_string(self)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 Ok(yaml.into_bytes())
             }
             StateDumpFormat::Binary => {
                 // For now, fall back to JSON for binary format
                 // In a real implementation, this would use MessagePack or similar
-                serde_json::to_vec(self)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+                serde_json::to_vec(self).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
             }
         }
     }
@@ -309,10 +309,8 @@ impl StateDump {
     /// Deserialize from bytes
     pub fn from_bytes(bytes: &[u8], format: StateDumpFormat) -> Result<Self, io::Error> {
         match format {
-            StateDumpFormat::Json | StateDumpFormat::JsonPretty => {
-                serde_json::from_slice(bytes)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-            }
+            StateDumpFormat::Json | StateDumpFormat::JsonPretty => serde_json::from_slice(bytes)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
             StateDumpFormat::Yaml => {
                 let s = std::str::from_utf8(bytes)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;

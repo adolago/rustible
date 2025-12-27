@@ -3,9 +3,7 @@
 //! This module gathers facts about the target system including OS, hardware,
 //! network, and other system information.
 
-use super::{
-    Module, ModuleContext, ModuleOutput, ModuleParams, ModuleResult, ParamExt,
-};
+use super::{Module, ModuleContext, ModuleOutput, ModuleParams, ModuleResult, ParamExt};
 use std::collections::HashMap;
 use std::fs;
 use std::process::Command;

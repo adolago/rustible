@@ -282,10 +282,17 @@ pub enum ServerSideEncryption {
 
 impl ServerSideEncryption {
     fn from_str(s: &str) -> ModuleResult<Self> {
-        match s.to_uppercase().replace('-', "_").replace(':', "_").as_str() {
+        match s
+            .to_uppercase()
+            .replace('-', "_")
+            .replace(':', "_")
+            .as_str()
+        {
             "AES256" | "AES_256" | "SSE_S3" => Ok(ServerSideEncryption::Aes256),
             "AWS_KMS" | "AWSKMS" | "KMS" | "SSE_KMS" => Ok(ServerSideEncryption::AwsKms),
-            "SSE_C" | "CUSTOMER" | "CUSTOMER_PROVIDED" => Ok(ServerSideEncryption::CustomerProvided),
+            "SSE_C" | "CUSTOMER" | "CUSTOMER_PROVIDED" => {
+                Ok(ServerSideEncryption::CustomerProvided)
+            }
             "NONE" | "" => Ok(ServerSideEncryption::None),
             _ => Err(ModuleError::InvalidParameter(format!(
                 "Invalid encryption '{}'. Valid options: AES256, aws:kms, SSE-C, none",
@@ -458,11 +465,11 @@ impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            buffer_size: 8 * 1024 * 1024,        // 8 MB
-            part_size: DEFAULT_PART_SIZE,         // 8 MB
+            buffer_size: 8 * 1024 * 1024, // 8 MB
+            part_size: DEFAULT_PART_SIZE, // 8 MB
             max_concurrent_uploads: 4,
             checksum_validation: true,
-            progress_interval: 1024 * 1024,       // 1 MB
+            progress_interval: 1024 * 1024, // 1 MB
         }
     }
 }
@@ -534,7 +541,13 @@ pub struct MultipartUploadState {
 }
 
 impl MultipartUploadState {
-    fn new(upload_id: String, bucket: String, key: String, total_size: u64, part_size: u64) -> Self {
+    fn new(
+        upload_id: String,
+        bucket: String,
+        key: String,
+        total_size: u64,
+        part_size: u64,
+    ) -> Self {
         Self {
             upload_id,
             bucket,
@@ -552,7 +565,8 @@ impl MultipartUploadState {
     }
 
     fn add_completed_part(&mut self, part_number: i32, etag: String, size: u64) {
-        self.completed_parts.push(CompletedPart { part_number, etag });
+        self.completed_parts
+            .push(CompletedPart { part_number, etag });
         self.bytes_uploaded += size;
     }
 }
@@ -629,13 +643,7 @@ impl AclGrant {
             .to_string();
 
         // Validate permission
-        let valid_permissions = [
-            "FULL_CONTROL",
-            "READ",
-            "WRITE",
-            "READ_ACP",
-            "WRITE_ACP",
-        ];
+        let valid_permissions = ["FULL_CONTROL", "READ", "WRITE", "READ_ACP", "WRITE_ACP"];
         if !valid_permissions.contains(&permission.to_uppercase().as_str()) {
             return Err(ModuleError::InvalidParameter(format!(
                 "Invalid permission '{}'. Valid permissions: {:?}",
@@ -687,26 +695,24 @@ impl BlockPublicAccessConfig {
                         }))
                     }
                 }
-                serde_json::Value::Object(obj) => {
-                    Ok(Some(Self {
-                        block_public_acls: obj
-                            .get("block_public_acls")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true),
-                        ignore_public_acls: obj
-                            .get("ignore_public_acls")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true),
-                        block_public_policy: obj
-                            .get("block_public_policy")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true),
-                        restrict_public_buckets: obj
-                            .get("restrict_public_buckets")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true),
-                    }))
-                }
+                serde_json::Value::Object(obj) => Ok(Some(Self {
+                    block_public_acls: obj
+                        .get("block_public_acls")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true),
+                    ignore_public_acls: obj
+                        .get("ignore_public_acls")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true),
+                    block_public_policy: obj
+                        .get("block_public_policy")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true),
+                    restrict_public_buckets: obj
+                        .get("restrict_public_buckets")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true),
+                })),
                 _ => Err(ModuleError::InvalidParameter(
                     "block_public_access must be a boolean or object".to_string(),
                 )),
@@ -752,7 +758,8 @@ impl StreamingUploader {
 
             // In production, this would call S3 UploadPart API
             let etag = format!("\"{}\"", Self::calculate_md5(&buffer[..bytes_read]));
-            self.state.add_completed_part(part_number, etag, bytes_read as u64);
+            self.state
+                .add_completed_part(part_number, etag, bytes_read as u64);
 
             tracing::debug!(
                 "Uploaded part {} ({} bytes) for {}/{}",
@@ -1197,10 +1204,9 @@ impl AwsS3Module {
         }
 
         if let Some(obj) = object {
-            let mut output =
-                ModuleOutput::changed(format!("Deleted s3://{}/{}", bucket, obj))
-                    .with_data("bucket", serde_json::json!(bucket))
-                    .with_data("object", serde_json::json!(obj));
+            let mut output = ModuleOutput::changed(format!("Deleted s3://{}/{}", bucket, obj))
+                .with_data("bucket", serde_json::json!(bucket))
+                .with_data("object", serde_json::json!(obj));
 
             if let Some(vid) = version_id {
                 output = output.with_data("version_id", serde_json::json!(vid));
@@ -1345,9 +1351,8 @@ impl AwsS3Module {
             ),
         };
 
-        let changed = sync_result.uploaded > 0
-            || sync_result.downloaded > 0
-            || sync_result.deleted > 0;
+        let changed =
+            sync_result.uploaded > 0 || sync_result.downloaded > 0 || sync_result.deleted > 0;
 
         let output = if changed {
             ModuleOutput::changed(msg)
@@ -1358,10 +1363,13 @@ impl AwsS3Module {
         let output = output
             .with_data("bucket", serde_json::json!(bucket))
             .with_data("prefix", serde_json::json!(prefix))
-            .with_data("direction", serde_json::json!(match direction {
-                SyncDirection::Push => "push",
-                SyncDirection::Pull => "pull",
-            }))
+            .with_data(
+                "direction",
+                serde_json::json!(match direction {
+                    SyncDirection::Push => "push",
+                    SyncDirection::Pull => "pull",
+                }),
+            )
             .with_data("delete", serde_json::json!(delete))
             .with_data("sync_result", serde_json::to_value(sync_result).unwrap());
 
@@ -1776,10 +1784,7 @@ mod tests {
     fn test_acl_parsing() {
         assert_eq!(S3Acl::from_str("private").unwrap(), S3Acl::Private);
         assert_eq!(S3Acl::from_str("public-read").unwrap(), S3Acl::PublicRead);
-        assert_eq!(
-            S3Acl::from_str("public_read").unwrap(),
-            S3Acl::PublicRead
-        );
+        assert_eq!(S3Acl::from_str("public_read").unwrap(), S3Acl::PublicRead);
         assert!(S3Acl::from_str("invalid-acl").is_err());
     }
 

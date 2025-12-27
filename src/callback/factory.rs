@@ -36,9 +36,8 @@ use std::sync::Arc;
 
 use crate::callback::config::{CallbackConfig, PluginConfig};
 use crate::callback::plugins::{
-    DiffCallback, DiffConfig, MinimalCallback,
-    NullCallback, ProgressCallback, ProgressConfig, SelectiveCallback, SelectiveConfig,
-    SummaryCallback, SummaryConfig,
+    DiffCallback, DiffConfig, MinimalCallback, NullCallback, ProgressCallback, ProgressConfig,
+    SelectiveCallback, SelectiveConfig, SummaryCallback, SummaryConfig,
 };
 use crate::traits::ExecutionCallback;
 
@@ -204,10 +203,7 @@ impl PluginFactory {
     /// ```rust,ignore
     /// let plugin = PluginFactory::create("minimal", &CallbackConfig::default())?;
     /// ```
-    pub fn create(
-        name: &str,
-        config: &CallbackConfig,
-    ) -> PluginResult<Arc<dyn ExecutionCallback>> {
+    pub fn create(name: &str, config: &CallbackConfig) -> PluginResult<Arc<dyn ExecutionCallback>> {
         let name_lower = name.to_lowercase();
 
         // Get plugin-specific config if available
@@ -228,7 +224,6 @@ impl PluginFactory {
             // Notification Plugins (temporarily disabled - notification.rs needs fixes)
             // ================================================================
             // "notification" | "notify" => Self::create_notification(config, plugin_config),
-
             _ => Err(PluginFactoryError::unknown_plugin(name)),
         }
     }
@@ -244,10 +239,7 @@ impl PluginFactory {
     ///
     /// Returns all successfully created plugins. Failed plugins are logged
     /// but don't prevent other plugins from being created.
-    pub fn create_many(
-        names: &[&str],
-        config: &CallbackConfig,
-    ) -> Vec<Arc<dyn ExecutionCallback>> {
+    pub fn create_many(names: &[&str], config: &CallbackConfig) -> Vec<Arc<dyn ExecutionCallback>> {
         names
             .iter()
             .filter_map(|name| Self::create(name, config).ok())

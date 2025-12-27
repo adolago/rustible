@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use axum::routing::{get, post, delete};
+use axum::routing::{delete, get, post};
 use axum::Router;
 
 use super::handlers;
@@ -59,8 +59,7 @@ fn protected_routes() -> Router<Arc<AppState>> {
 
 /// WebSocket routes for real-time updates.
 fn websocket_routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/jobs/:id", get(websocket::job_ws_handler))
+    Router::new().route("/jobs/:id", get(websocket::job_ws_handler))
 }
 
 #[cfg(test)]

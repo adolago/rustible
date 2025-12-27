@@ -16,8 +16,10 @@ use tokio::runtime::Handle;
 /// Regex pattern for validating cron time fields
 static CRON_FIELD_REGEX: Lazy<Regex> = Lazy::new(|| {
     // Matches: *, */N, N, N-N, N/N, N-N/N, or comma-separated combinations
-    Regex::new(r"^(\*(/[0-9]+)?|[0-9]+(-[0-9]+)?(/[0-9]+)?(,([0-9]+(-[0-9]+)?(/[0-9]+)?|\*(/[0-9]+)?))*)$")
-        .expect("Invalid cron field regex")
+    Regex::new(
+        r"^(\*(/[0-9]+)?|[0-9]+(-[0-9]+)?(/[0-9]+)?(,([0-9]+(-[0-9]+)?(/[0-9]+)?|\*(/[0-9]+)?))*)$",
+    )
+    .expect("Invalid cron field regex")
 });
 
 /// Special time shortcuts supported by cron
@@ -345,9 +347,7 @@ impl Module for CronModule {
         let hour = params
             .get_string("hour")?
             .unwrap_or_else(|| "*".to_string());
-        let day = params
-            .get_string("day")?
-            .unwrap_or_else(|| "*".to_string());
+        let day = params.get_string("day")?.unwrap_or_else(|| "*".to_string());
         let month = params
             .get_string("month")?
             .unwrap_or_else(|| "*".to_string());
@@ -460,8 +460,7 @@ impl Module for CronModule {
                     )));
                 }
 
-                let (new_crontab, is_new) =
-                    Self::update_job_in_crontab(&current_crontab, &new_job);
+                let (new_crontab, is_new) = Self::update_job_in_crontab(&current_crontab, &new_job);
                 Self::set_crontab(connection, user.as_deref(), &new_crontab, context)?;
 
                 let action = if is_new { "Created" } else { "Updated" };
@@ -534,9 +533,7 @@ impl Module for CronModule {
                 let hour = params
                     .get_string("hour")?
                     .unwrap_or_else(|| "*".to_string());
-                let day = params
-                    .get_string("day")?
-                    .unwrap_or_else(|| "*".to_string());
+                let day = params.get_string("day")?.unwrap_or_else(|| "*".to_string());
                 let month = params
                     .get_string("month")?
                     .unwrap_or_else(|| "*".to_string());
