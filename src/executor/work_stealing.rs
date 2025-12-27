@@ -572,15 +572,22 @@ impl<T: Send + Sync + Clone + 'static> WorkStealingScheduler<T> {
                             victim_idx
                         );
 
-                        // Push stolen items to our queue
-                        let mut my_queue = self.queues[my_queue_idx].lock();
-                        for item in stolen.into_iter().skip(1) {
-                            my_queue.push(item);
+                        // Convert to iterator and get the first item to return
+                        let mut iter = stolen.into_iter();
+                        let first = iter.next();
+
+                        // Push remaining stolen items to our queue
+                        let remaining: Vec<_> = iter.collect();
+                        if !remaining.is_empty() {
+                            let mut my_queue = self.queues[my_queue_idx].lock();
+                            for item in remaining {
+                                my_queue.push(item);
+                            }
                         }
 
                         // Return the first stolen item directly
-                        if let Some(first) = self.queues[my_queue_idx].lock().pop() {
-                            return Some(first);
+                        if let Some(item) = first {
+                            return Some(item);
                         }
                     }
                 } else {

@@ -1636,15 +1636,25 @@ mod integration_tests {
             scheduler.submit_balanced(WorkItem::new(i));
         }
 
-        // Create workers that process items
+        // Create workers that process items with timeout protection
         let mut handles = vec![];
         for worker_id in 0..4 {
             let scheduler = scheduler.clone();
             let completed = completed.clone();
 
             let handle = tokio::spawn(async move {
+                let start = Instant::now();
+                let timeout = Duration::from_secs(5);
+                let mut iterations = 0;
+
                 loop {
-                    if let Some(item) = scheduler.get_work(worker_id) {
+                    // Timeout protection to prevent hangs
+                    if start.elapsed() > timeout || iterations > 100 {
+                        break;
+                    }
+                    iterations += 1;
+
+                    if let Some(_item) = scheduler.get_work(worker_id) {
                         // Simulate work
                         tokio::time::sleep(Duration::from_millis(5)).await;
                         scheduler.item_processed();
@@ -1652,16 +1662,24 @@ mod integration_tests {
                     } else if scheduler.is_empty() {
                         break;
                     } else {
-                        scheduler.wait_for_work().await;
+                        // Use tokio::select with timeout to prevent indefinite waiting
+                        tokio::select! {
+                            _ = scheduler.wait_for_work() => {}
+                            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+                        }
                     }
                 }
             });
             handles.push(handle);
         }
 
-        // Wait for all workers
-        futures::future::join_all(handles).await;
+        // Wait for all workers with overall timeout
+        let _ = tokio::time::timeout(
+            Duration::from_secs(10),
+            futures::future::join_all(handles)
+        ).await;
 
+        // All items should be processed
         assert_eq!(completed.load(Ordering::SeqCst), 20);
 
         let stats = scheduler.stats();
