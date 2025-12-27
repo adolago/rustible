@@ -286,8 +286,10 @@ async fn test_absolute_path_include() {
     )
     .unwrap();
 
-    // Use absolute path
-    let includer = TaskIncluder::new("/tmp");
+    // Use absolute path - base directory must contain the temp file
+    // (on macOS, /tmp is symlinked to /private/tmp, and tempdir uses /var/folders which
+    // resolves to /private/var/folders, so we need to use temp_dir.path() as base)
+    let includer = TaskIncluder::new(temp_dir.path().to_str().unwrap());
     let spec = IncludeTasksSpec::new(tasks_file.to_str().unwrap());
 
     let parent_vars = VarStore::new();
