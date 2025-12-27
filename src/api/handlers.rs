@@ -355,7 +355,7 @@ async fn run_playbook_job(
     state.append_job_output(job_id, "Gathering facts...".to_string(), "stdout");
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-    for (i, play) in playbook.plays.iter().enumerate() {
+    for (_i, play) in playbook.plays.iter().enumerate() {
         state.append_job_output(job_id, format!("PLAY [{}] ***", play.name), "stdout");
 
         for task in play.all_tasks() {

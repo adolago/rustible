@@ -416,7 +416,7 @@ impl ComputeInstanceConfig {
     }
 
     /// Get the full machine type URL
-    fn get_machine_type_url(&self, project: &str) -> String {
+    fn get_machine_type_url(&self, _project: &str) -> String {
         if self.machine_type.starts_with("zones/") || self.machine_type.starts_with("https://") {
             self.machine_type.clone()
         } else {
@@ -1262,7 +1262,7 @@ impl GcpComputeFirewallModule {
 
         match config.state {
             FirewallState::Present => {
-                if let Some(firewall) = existing {
+                if let Some(_firewall) = existing {
                     // Update existing firewall
                     if context.check_mode {
                         return Ok(ModuleOutput::changed(format!(

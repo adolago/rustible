@@ -214,9 +214,8 @@ impl EbsVolume {
             ebs = ebs.volume_size(size);
         }
         if let Some(ref vol_type) = self.volume_type {
-            if let Ok(vt) = vol_type.parse::<VolumeType>() {
-                ebs = ebs.volume_type(vt);
-            }
+            let vt = vol_type.parse::<VolumeType>().unwrap_or(VolumeType::Gp3);
+            ebs = ebs.volume_type(vt);
         }
         if let Some(iops) = self.iops {
             ebs = ebs.iops(iops);

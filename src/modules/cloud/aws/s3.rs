@@ -1116,6 +1116,7 @@ impl AwsS3Module {
                 serde_json::json!(match encryption {
                     ServerSideEncryption::Aes256 => "AES256",
                     ServerSideEncryption::AwsKms => "aws:kms",
+                    ServerSideEncryption::CustomerProvided => "customer-provided",
                     ServerSideEncryption::None => "none",
                 }),
             );

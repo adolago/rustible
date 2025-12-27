@@ -601,7 +601,7 @@ mod tests {
         let mut handles = vec![];
 
         // Create 4 tasks with throttle of 2
-        for i in 0..4 {
+        for _i in 0..4 {
             let manager = manager.clone();
             let handle = tokio::spawn(async move {
                 let _permit = manager.acquire("task1", 2).await;

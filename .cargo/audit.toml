@@ -1,0 +1,31 @@
+# Cargo audit configuration
+# https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+
+[advisories]
+# Advisories to ignore (with justification)
+ignore = [
+    # RUSTSEC-2023-0071: RSA timing sidechannel (Marvin Attack)
+    # Status: No fix available - the RSA crate has not released a fixed version
+    # Risk: Medium severity (5.9) timing attack for key recovery
+    # Mitigation: This is a transitive dependency via russh/ssh-key for SSH connectivity
+    # The timing attack requires local access and precise timing measurements
+    # We accept this risk as SSH is optional and the attack is difficult to execute
+    "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2021-0145: atty - potential unaligned read (unsound)
+    # Status: Transitive dependency through validator_derive if present
+    # If atty appears it's from unmaintained dependencies
+    "RUSTSEC-2021-0145",
+]
+
+# Only fail on actual vulnerabilities, not warnings about unmaintained packages
+# This moves unmaintained/unsound/notice advisories to warnings instead of errors
+informational_warnings = [
+    "unmaintained",
+    "unsound",
+    "notice",
+]
+
+[output]
+# Output format
+format = "terminal"

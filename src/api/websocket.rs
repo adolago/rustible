@@ -64,7 +64,7 @@ async fn handle_socket(
     }
 
     // Spawn task to handle incoming messages (ping/pong)
-    let state_clone = state.clone();
+    let _state_clone = state.clone();
     let mut send_task = tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -126,7 +126,7 @@ async fn handle_socket(
                         }
                     }
                 }
-                Ok(Message::Ping(data)) => {
+                Ok(Message::Ping(_data)) => {
                     debug!("Received WebSocket ping");
                     // Axum/tungstenite automatically sends Pong
                 }
