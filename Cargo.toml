@@ -204,7 +204,7 @@ pretty_assertions = "1.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
 wiremock = "=0.6.2"  # Pin to avoid edition 2024 features in 0.6.3+ (requires Rust 1.85+)
 proptest = "1.4"
-async-ssh2-tokio = "0.12"
+async-ssh2-tokio = "=0.8.15"  # Pin to avoid edition 2024 features in 0.9+ (let_chains requires Rust 1.76+)
 serial_test = "3.1"
 ed25519-dalek = "2.0"
 
