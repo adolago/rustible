@@ -417,6 +417,26 @@ impl ExpressionEvaluator {
             return Ok(!hostvars.contains_key(var_name));
         }
 
+        // Handle 'or' operator first (lowest precedence, so parse first)
+        if let Some((left, right)) = Self::parse_or_operator(expr) {
+            let left_result = self.evaluate_bool(left, hostvars)?;
+            let right_result = self.evaluate_bool(right, hostvars)?;
+            return Ok(left_result || right_result);
+        }
+
+        // Handle 'and' operator (higher precedence than 'or')
+        if let Some((left, right)) = Self::parse_and_operator(expr) {
+            let left_result = self.evaluate_bool(left, hostvars)?;
+            let right_result = self.evaluate_bool(right, hostvars)?;
+            return Ok(left_result && right_result);
+        }
+
+        // Handle 'not' operator
+        if let Some(inner) = Self::parse_not_operator(expr) {
+            let inner_result = self.evaluate_bool(inner, hostvars)?;
+            return Ok(!inner_result);
+        }
+
         // Handle 'in' operator
         if let Some((item, collection)) = Self::parse_in_operator(expr) {
             return self.evaluate_in_operator(item, collection, hostvars);
@@ -425,26 +445,6 @@ impl ExpressionEvaluator {
         // Handle comparison operators
         if let Some((left, op, right)) = Self::parse_comparison(expr) {
             return self.evaluate_comparison(left, op, right, hostvars);
-        }
-
-        // Handle 'and' operator
-        if let Some((left, right)) = Self::parse_and_operator(expr) {
-            let left_result = self.evaluate_bool(left, hostvars)?;
-            let right_result = self.evaluate_bool(right, hostvars)?;
-            return Ok(left_result && right_result);
-        }
-
-        // Handle 'or' operator
-        if let Some((left, right)) = Self::parse_or_operator(expr) {
-            let left_result = self.evaluate_bool(left, hostvars)?;
-            let right_result = self.evaluate_bool(right, hostvars)?;
-            return Ok(left_result || right_result);
-        }
-
-        // Handle 'not' operator
-        if let Some(inner) = Self::parse_not_operator(expr) {
-            let inner_result = self.evaluate_bool(inner, hostvars)?;
-            return Ok(!inner_result);
         }
 
         // Try to evaluate as a truthy value

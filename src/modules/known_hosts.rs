@@ -897,7 +897,8 @@ mod tests {
 
     #[test]
     fn test_parse_known_hosts_entry_with_port() {
-        let line = "[example.com]:2222 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB...";
+        // Use valid base64 key data (the regex requires valid base64 characters only)
+        let line = "[example.com]:2222 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7test";
         let entry = KnownHostsEntry::parse(line, None).unwrap();
 
         assert_eq!(entry.hostnames, "[example.com]:2222");
@@ -906,7 +907,8 @@ mod tests {
 
     #[test]
     fn test_parse_hashed_entry() {
-        let line = "|1|F3GJvMX9f3ByPm4MQq5R7S7E/wY=|hXGJd+SqtTeGJ8jELEmYvNF0J24= ssh-ed25519 AAAAC3NzaC1...";
+        // Use valid base64 key data (the regex requires valid base64 characters only)
+        let line = "|1|F3GJvMX9f3ByPm4MQq5R7S7E/wY=|hXGJd+SqtTeGJ8jELEmYvNF0J24= ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBtest";
         let entry = KnownHostsEntry::parse(line, None).unwrap();
 
         assert!(entry.is_hashed);

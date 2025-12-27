@@ -125,10 +125,15 @@ impl Default for FactCacheConfig {
 impl FactCache {
     /// Create a new fact cache
     pub fn new(config: CacheConfig) -> Self {
+        // Use the config's default_ttl as the fact_ttl to respect user configuration
+        let fact_config = FactCacheConfig {
+            fact_ttl: config.default_ttl,
+            ..FactCacheConfig::default()
+        };
         Self {
             cache: Cache::new(CacheType::Facts, config),
             ip_to_hostname: dashmap::DashMap::new(),
-            config: FactCacheConfig::default(),
+            config: fact_config,
         }
     }
 

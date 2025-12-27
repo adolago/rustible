@@ -212,6 +212,20 @@ impl AuthorizedKey {
     }
 }
 
+/// Valid SSH key type prefixes
+const VALID_KEY_TYPES: &[&str] = &[
+    "ssh-rsa",
+    "ssh-ed25519",
+    "ssh-dss",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "sk-ssh-ed25519@openssh.com",
+    "sk-ecdsa-sha2-nistp256@openssh.com",
+    "sk-ecdsa-sha2-nistp384@openssh.com",
+    "sk-ecdsa-sha2-nistp521@openssh.com",
+];
+
 /// Validate an SSH public key format
 pub fn validate_ssh_key(key: &str) -> ModuleResult<()> {
     let key = key.trim();
@@ -223,7 +237,16 @@ pub fn validate_ssh_key(key: &str) -> ModuleResult<()> {
     }
 
     // Try to parse the key
-    AuthorizedKey::parse(key)?;
+    let parsed_key = AuthorizedKey::parse(key)?;
+
+    // Validate that the key type is a known valid SSH key type
+    if !VALID_KEY_TYPES.contains(&parsed_key.key_type.as_str()) {
+        return Err(ModuleError::InvalidParameter(format!(
+            "Invalid SSH key type '{}'. Valid types: {}",
+            parsed_key.key_type,
+            VALID_KEY_TYPES.join(", ")
+        )));
+    }
 
     Ok(())
 }

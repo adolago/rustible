@@ -4,6 +4,7 @@
 //! including per-module and per-host command statistics.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
@@ -32,9 +33,9 @@ pub struct CommandMetrics {
     /// Total bytes transferred (stderr)
     pub bytes_stderr: Counter,
     /// Per-module metrics
-    per_module: RwLock<HashMap<String, ModuleMetrics>>,
+    per_module: RwLock<HashMap<String, Arc<ModuleMetrics>>>,
     /// Per-host command metrics
-    per_host: RwLock<HashMap<String, HostCommandMetrics>>,
+    per_host: RwLock<HashMap<String, Arc<HostCommandMetrics>>>,
 }
 
 impl Default for CommandMetrics {
@@ -195,35 +196,37 @@ impl CommandMetrics {
     }
 
     /// Get or create per-module metrics
-    fn get_or_create_module_metrics(&self, module: &str) -> ModuleMetrics {
+    fn get_or_create_module_metrics(&self, module: &str) -> Arc<ModuleMetrics> {
         {
             let read_guard = self.per_module.read();
             if let Some(metrics) = read_guard.get(module) {
-                return metrics.clone();
+                return Arc::clone(metrics);
             }
         }
 
         let mut write_guard = self.per_module.write();
-        write_guard
-            .entry(module.to_string())
-            .or_insert_with(|| ModuleMetrics::new(module))
-            .clone()
+        Arc::clone(
+            write_guard
+                .entry(module.to_string())
+                .or_insert_with(|| Arc::new(ModuleMetrics::new(module))),
+        )
     }
 
     /// Get or create per-host metrics
-    fn get_or_create_host_metrics(&self, host: &str) -> HostCommandMetrics {
+    fn get_or_create_host_metrics(&self, host: &str) -> Arc<HostCommandMetrics> {
         {
             let read_guard = self.per_host.read();
             if let Some(metrics) = read_guard.get(host) {
-                return metrics.clone();
+                return Arc::clone(metrics);
             }
         }
 
         let mut write_guard = self.per_host.write();
-        write_guard
-            .entry(host.to_string())
-            .or_insert_with(|| HostCommandMetrics::new(host))
-            .clone()
+        Arc::clone(
+            write_guard
+                .entry(host.to_string())
+                .or_insert_with(|| Arc::new(HostCommandMetrics::new(host))),
+        )
     }
 
     /// Reset all metrics
@@ -537,7 +540,8 @@ impl CommandMetricsSummary {
     /// Calculate success rate
     pub fn success_rate(&self) -> f64 {
         if self.total_executed == 0 {
-            0.0
+            // No commands executed means no failures, consider as 100% success
+            100.0
         } else {
             self.total_succeeded as f64 / self.total_executed as f64 * 100.0
         }

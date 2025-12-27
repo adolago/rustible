@@ -468,7 +468,15 @@ impl BackpressureController {
 
     /// Check if backpressure is currently active.
     pub fn is_under_pressure(&self) -> bool {
-        self.available() < self.max_concurrent / 10
+        // Use saturating math to handle small max_concurrent values
+        // Under pressure when available permits are less than 10% of max
+        let threshold = self.max_concurrent / 10;
+        // For small values where threshold would be 0, consider under pressure when no permits available
+        if threshold == 0 {
+            self.available() == 0
+        } else {
+            self.available() < threshold
+        }
     }
 }
 
@@ -1077,94 +1085,102 @@ mod tests {
         assert_eq!(queue.recv().await, Some(2));
     }
 
-    #[tokio::test]
-    async fn test_task_spawner_basic() {
+    #[test]
+    fn test_task_spawner_basic() {
         let runtime = RuntimeBuilder::new(RuntimeConfig::for_testing())
             .build()
             .unwrap();
         let metrics = Arc::new(MetricsCollector::new());
         let spawner = TaskSpawner::new(runtime.handle().clone(), 100, metrics);
 
-        let rx = spawner
-            .spawn(async {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                42
-            })
-            .await;
+        runtime.block_on(async {
+            let rx = spawner
+                .spawn(async {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    42
+                })
+                .await;
 
-        let result = rx.await.unwrap().unwrap();
-        assert_eq!(result, 42);
+            let result = rx.await.unwrap().unwrap();
+            assert_eq!(result, 42);
+        });
     }
 
-    #[tokio::test]
-    async fn test_task_spawner_timeout() {
+    #[test]
+    fn test_task_spawner_timeout() {
         let runtime = RuntimeBuilder::new(RuntimeConfig::for_testing())
             .build()
             .unwrap();
         let metrics = Arc::new(MetricsCollector::new());
         let spawner = TaskSpawner::new(runtime.handle().clone(), 100, metrics);
 
-        let rx = spawner
-            .spawn_with_options(
-                async {
+        runtime.block_on(async {
+            let rx = spawner
+                .spawn_with_options(
+                    async {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        42
+                    },
+                    SpawnOptions::default().with_timeout(Duration::from_millis(50)),
+                )
+                .await;
+
+            let result = rx.await.unwrap();
+            assert!(matches!(result, Err(TaskError::Timeout(_))));
+        });
+    }
+
+    #[test]
+    fn test_task_spawner_shutdown() {
+        let runtime = RuntimeBuilder::new(RuntimeConfig::for_testing())
+            .build()
+            .unwrap();
+        let metrics = Arc::new(MetricsCollector::new());
+        let spawner = TaskSpawner::new(runtime.handle().clone(), 100, metrics);
+
+        runtime.block_on(async {
+            // Spawn a long-running task
+            let rx = spawner
+                .spawn(async {
                     tokio::time::sleep(Duration::from_secs(10)).await;
                     42
-                },
-                SpawnOptions::default().with_timeout(Duration::from_millis(50)),
-            )
-            .await;
+                })
+                .await;
 
-        let result = rx.await.unwrap();
-        assert!(matches!(result, Err(TaskError::Timeout(_))));
+            // Give task time to start
+            tokio::time::sleep(Duration::from_millis(10)).await;
+
+            // Initiate shutdown
+            spawner.shutdown();
+
+            // Task should be cancelled
+            let result = rx.await.unwrap();
+            assert!(matches!(result, Err(TaskError::Cancelled)));
+        });
     }
 
-    #[tokio::test]
-    async fn test_task_spawner_shutdown() {
+    #[test]
+    fn test_spawn_batch() {
         let runtime = RuntimeBuilder::new(RuntimeConfig::for_testing())
             .build()
             .unwrap();
         let metrics = Arc::new(MetricsCollector::new());
         let spawner = TaskSpawner::new(runtime.handle().clone(), 100, metrics);
 
-        // Spawn a long-running task
-        let rx = spawner
-            .spawn(async {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                42
-            })
-            .await;
+        runtime.block_on(async {
+            let futures: Vec<_> = (0..5)
+                .map(|i| async move {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    i * 2
+                })
+                .collect();
 
-        // Give task time to start
-        tokio::time::sleep(Duration::from_millis(10)).await;
+            let results = spawner.spawn_batch(futures).await;
 
-        // Initiate shutdown
-        spawner.shutdown();
-
-        // Task should be cancelled
-        let result = rx.await.unwrap();
-        assert!(matches!(result, Err(TaskError::Cancelled)));
-    }
-
-    #[tokio::test]
-    async fn test_spawn_batch() {
-        let runtime = RuntimeBuilder::new(RuntimeConfig::for_testing())
-            .build()
-            .unwrap();
-        let metrics = Arc::new(MetricsCollector::new());
-        let spawner = TaskSpawner::new(runtime.handle().clone(), 100, metrics);
-
-        let futures: Vec<_> = (0..5)
-            .map(|i| async move {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                i * 2
-            })
-            .collect();
-
-        let results = spawner.spawn_batch(futures).await;
-
-        assert_eq!(results.len(), 5);
-        for (i, result) in results.iter().enumerate() {
-            assert_eq!(result.as_ref().unwrap(), &(i * 2));
-        }
+            assert_eq!(results.len(), 5);
+            for (i, result) in results.iter().enumerate() {
+                assert_eq!(result.as_ref().unwrap(), &(i * 2));
+            }
+        });
     }
 }

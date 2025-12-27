@@ -293,7 +293,7 @@ impl AsyncJobInfo {
         if self.finished {
             return false;
         }
-        self.elapsed_seconds() > self.async_timeout
+        self.elapsed_seconds() >= self.async_timeout
     }
 }
 

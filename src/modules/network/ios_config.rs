@@ -387,14 +387,16 @@ impl IosConfigParams {
         };
 
         // Replace mode - handle both boolean and string
-        let replace = if let Some(b) = params.get_bool("replace")? {
+        // Try string first to support values like "block", "config", etc.
+        // Then fall back to boolean for true/false values
+        let replace = if let Some(s) = params.get_string("replace")? {
+            ReplaceMode::from_str(&s)?
+        } else if let Some(b) = params.get_bool("replace")? {
             if b {
                 ReplaceMode::Config
             } else {
                 ReplaceMode::Merge
             }
-        } else if let Some(s) = params.get_string("replace")? {
-            ReplaceMode::from_str(&s)?
         } else {
             ReplaceMode::Merge
         };

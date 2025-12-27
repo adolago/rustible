@@ -739,9 +739,14 @@ mod tests {
     #[test]
     fn test_config_negative_port() {
         let params = create_params(vec![("port", serde_json::json!(-1))]);
-        // Negative port is handled - returns None for port
-        let config = WaitForConfig::from_params(&params).unwrap();
-        assert!(config.port.is_none());
+        // Negative port should return an error
+        let result = WaitForConfig::from_params(&params);
+        assert!(result.is_err());
+        if let Err(ModuleError::InvalidParameter(msg)) = result {
+            assert!(msg.contains("port must be between 1 and 65535"));
+        } else {
+            panic!("Expected InvalidParameter error");
+        }
     }
 
     #[test]

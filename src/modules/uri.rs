@@ -670,6 +670,16 @@ impl Module for UriModule {
             .get_string("method")?
             .unwrap_or_else(|| "GET".to_string());
 
+        // In check mode, don't make actual requests - return early before needing runtime
+        if context.check_mode {
+            return Ok(ModuleOutput::ok(format!(
+                "Would make {} request to {}",
+                method, url
+            ))
+            .with_data("method", serde_json::json!(method))
+            .with_data("url", serde_json::json!(url)));
+        }
+
         // Extract headers
         let headers: HashMap<String, String> = params
             .get("headers")
@@ -782,7 +792,7 @@ impl Module for UriModule {
                 status_code_list,
                 retries,
                 retry_delay_secs,
-                context.check_mode,
+                false, // check_mode already handled above
             ));
 
         result

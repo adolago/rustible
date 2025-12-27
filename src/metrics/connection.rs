@@ -11,6 +11,9 @@ use parking_lot::RwLock;
 
 use super::types::{Counter, Gauge, Histogram, LATENCY_BUCKETS_MS};
 
+// Type alias for per-host metrics stored in Arc for shared ownership
+type PerHostMetrics = Arc<HostConnectionMetrics>;
+
 // ============================================================================
 // Connection Latency Tracker
 // ============================================================================
@@ -31,7 +34,7 @@ pub struct ConnectionMetrics {
     /// Connection reuse count
     pub connection_reuses: Counter,
     /// Per-host metrics
-    per_host: RwLock<HashMap<String, HostConnectionMetrics>>,
+    per_host: RwLock<HashMap<String, PerHostMetrics>>,
 }
 
 impl Default for ConnectionMetrics {
@@ -133,19 +136,20 @@ impl ConnectionMetrics {
     }
 
     /// Get or create per-host metrics
-    fn get_or_create_host_metrics(&self, host: &str) -> HostConnectionMetrics {
+    fn get_or_create_host_metrics(&self, host: &str) -> PerHostMetrics {
         {
             let read_guard = self.per_host.read();
             if let Some(metrics) = read_guard.get(host) {
-                return metrics.clone();
+                return Arc::clone(metrics);
             }
         }
 
         let mut write_guard = self.per_host.write();
-        write_guard
-            .entry(host.to_string())
-            .or_insert_with(|| HostConnectionMetrics::new(host))
-            .clone()
+        Arc::clone(
+            write_guard
+                .entry(host.to_string())
+                .or_insert_with(|| Arc::new(HostConnectionMetrics::new(host))),
+        )
     }
 
     /// Get summary statistics
@@ -362,7 +366,8 @@ impl ConnectionMetricsSummary {
     /// Calculate success rate
     pub fn success_rate(&self) -> f64 {
         if self.total_attempts == 0 {
-            0.0
+            // No attempts means no failures, consider as 100% success
+            100.0
         } else {
             self.total_successes as f64 / self.total_attempts as f64 * 100.0
         }

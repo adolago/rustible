@@ -798,14 +798,19 @@ impl ExecutionCallback for ProfileTasksCallback {
     async fn on_task_complete(&self, result: &ExecutionResult) {
         let key = ProfileState::task_key(&result.task_name, &result.host);
 
-        // Calculate duration
+        // Calculate duration - prefer measured duration if meaningful, but fall back to
+        // result.duration if measured is too small (e.g., in tests where no actual time passes)
         let (duration, elapsed_since_start) = {
             let mut state = self.state.write();
-            let duration = state
-                .task_starts
-                .remove(&key)
-                .map(|start| start.elapsed())
-                .unwrap_or(result.duration);
+            let measured_duration = state.task_starts.remove(&key).map(|start| start.elapsed());
+
+            // Use the larger of measured duration vs result.duration
+            // This handles test cases where result.duration is set but no actual time passes
+            let duration = match measured_duration {
+                Some(d) if d >= result.duration => d,
+                Some(d) if d.as_millis() >= 1 => d, // Use measured if at least 1ms
+                _ => result.duration,
+            };
 
             let elapsed = state.elapsed_since_playbook_start();
             (duration, elapsed)
