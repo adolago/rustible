@@ -8,7 +8,7 @@ release candidate. All required criteria must be checked, or explicitly waived.
 - Candidate version: `TBD`
 - Target beta date: `TBD`
 - Release lead: `TBD`
-- Last updated: `YYYY-MM-DD`
+- Last updated: `2026-04-15`
 
 ## Required Criteria (All Must Pass)
 
@@ -31,13 +31,13 @@ release candidate. All required criteria must be checked, or explicitly waived.
 
 - [ ] `ci.yml`, `security.yml`, and `docker.yml` are green on the candidate commit.
   - Owner: `TBD`
-  - Evidence: Workflow URLs.
+  - Evidence: Workflow URLs plus the latest `High-Risk Suite Validation` summary when beta-signoff coverage is required.
 - [ ] `cargo test --all-features` passes on the candidate commit.
   - Owner: `TBD`
   - Evidence: CI run link or local run artifact.
 - [ ] Smoke tests pass for `rustible run`, `rustible check`, and `rustible vault`.
   - Owner: `TBD`
-  - Evidence: Command transcript or automated smoke test log.
+  - Evidence: `scripts/smoke_tests.sh` log or automated CI smoke-test log.
 
 ### 3) Security and Supply Chain Gate
 
@@ -55,7 +55,7 @@ release candidate. All required criteria must be checked, or explicitly waived.
 
 - [ ] README status and limitations are current for beta-facing users.
   - Owner: `TBD`
-  - Evidence: `README.md` update link.
+  - Evidence: `README.md` update link showing alpha messaging remains in place until these criteria are satisfied.
 - [ ] `docs/FEATURE_STATUS.md` is current and matches roadmap/checklist language.
   - Owner: `TBD`
   - Evidence: Status-doc review link.

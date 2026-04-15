@@ -52,6 +52,9 @@ jobs:
           # Allow warnings for documentation (experimental features reference undefined cfg flags)
           RUSTDOCFLAGS: "-A dead_code -A unexpected_cfgs"
 
+      - name: Run CLI smoke tests
+        run: bash scripts/smoke_tests.sh
+
   # Test matrix across multiple platforms and Rust versions
   test:
     name: Test (${{ matrix.os }}, rust-${{ matrix.rust }}, ${{ matrix.features }})

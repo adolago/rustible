@@ -29,3 +29,4 @@ For canonical implementation status, see [FEATURE_STATUS.md](FEATURE_STATUS.md).
 - The older `#172`/`#173` gap-analysis references are historical and should not be used for release tracking.
 - Beta-readiness issue numbers must stay aligned with the live queue in GitHub.
 - When an issue is resolved in code, update [FEATURE_STATUS.md](FEATURE_STATUS.md), then close the issue and finally update any roadmap/checklist references.
+- Verification for implemented-in-code items should use the default CI workflows, the explicit CLI smoke path in `scripts/smoke_tests.sh`, and `.github/workflows/high-risk-suites.yml` when infrastructure-backed coverage matters.

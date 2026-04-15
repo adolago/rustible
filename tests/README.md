@@ -9,6 +9,7 @@ cargo test --tests            # Integration tests only
 cargo test -- --nocapture     # With output
 cargo test test_name          # Specific test
 cargo bench                   # Benchmarks
+bash scripts/smoke_tests.sh   # Explicit CLI smoke path
 ```
 
 ## Structure
@@ -16,6 +17,7 @@ cargo bench                   # Benchmarks
 ```
 tests/
 ├── common/           # Shared utilities and mocks
+├── cli_smoke_tests.rs # Targeted CLI smoke coverage
 ├── fixtures/         # Test data (playbooks, inventories)
 ├── executor_tests.rs # Execution engine
 ├── module_tests.rs   # Module system

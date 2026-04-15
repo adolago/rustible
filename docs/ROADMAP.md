@@ -290,6 +290,8 @@ A comprehensive roadmap for Rustible development, outlining current features, pl
 **Target**: Beta-quality baseline with current docs, reliable CI, and accurate feature status.
 
 For the canonical shipped status, see [FEATURE_STATUS.md](FEATURE_STATUS.md).
+Public release messaging remains alpha until [BETA_ENTRY_CRITERIA.md](BETA_ENTRY_CRITERIA.md)
+is satisfied on a candidate commit.
 
 ### Current Priorities
 
@@ -297,6 +299,7 @@ For the canonical shipped status, see [FEATURE_STATUS.md](FEATURE_STATUS.md).
 |------|--------|-------|
 | Docs/source-of-truth cleanup | :construction: In progress | Consolidate status in `FEATURE_STATUS.md`, then keep README and roadmap aligned. |
 | Default CI baseline | :construction: In progress | The remaining beta gate is a consistently green default CI/test suite. |
+| CLI smoke coverage | :white_check_mark: Complete | `scripts/smoke_tests.sh` and `tests/cli_smoke_tests.rs` exercise `run`, `check`, and `vault`, and the default CI path runs them explicitly. |
 | Lock rollback execution | :white_check_mark: Complete | `rustible lock rollback` now uses snapshot-backed checkpoints, supports dry-run, and executes live rollback actions. |
 | WinRM hardening | :white_check_mark: Complete | `winrm` no longer requires `experimental`; parity/integration tests cover explicit unsupported Kerberos/CredSSP behavior. |
 | AWS native module parity | :white_check_mark: Complete | `aws_iam_role`, `aws_iam_policy`, `aws_security_group_rule`, and `aws_ebs_volume` are available as native playbook modules. |
@@ -316,6 +319,7 @@ For the canonical shipped status, see [FEATURE_STATUS.md](FEATURE_STATUS.md).
 1. Keep the default CI and required workflows green on the candidate commit.
 2. Keep status docs synchronized with the real code surface.
 3. Continue treating WinRM and rollback as Beta-quality features until high-risk sign-off infrastructure is consistently available.
+4. Keep public release messaging alpha until the beta entry checklist is actually satisfied.
 
 ---
 
@@ -483,10 +487,10 @@ We track community requests and prioritize based on demand and alignment with pr
 |---------|-------|--------|----------|
 | Podman connection support | - | :white_check_mark: Complete | Medium |
 | Web UI for playbook management | - | Under consideration | Low |
-| [Terraform integration](architecture/terraform-integration.md) | - | :construction: In Progress ([PR #152](https://github.com/adolago/rustible/pull/152)) | Medium |
-| [HashiCorp Vault + AWX/Tower](architecture/awx-vault-integration.md) | - | :construction: In Progress ([PR #153](https://github.com/adolago/rustible/pull/153)) | Medium |
-| [Provider ecosystem](architecture/provider-ecosystem.md) | - | :construction: In Progress ([PR #154](https://github.com/adolago/rustible/pull/154)) | Medium |
-| [Declarative resource graph](architecture/resource-graph-model.md) | - | :construction: In Progress ([PR #155](https://github.com/adolago/rustible/pull/155)) | Medium |
+| [Terraform integration](architecture/terraform-integration.md) | - | :construction: Design tracked in architecture docs | Medium |
+| [HashiCorp Vault + AWX/Tower](architecture/awx-vault-integration.md) | - | :construction: Design tracked in architecture docs | Medium |
+| [Provider ecosystem](architecture/provider-ecosystem.md) | - | :construction: Design tracked in architecture docs | Medium |
+| [Declarative resource graph](architecture/resource-graph-model.md) | - | :construction: Design tracked in architecture docs | Medium |
 | [Compatibility gap plan](architecture/ansible-compat-gap.md) | - | Under consideration | Medium |
 | YAML anchor/alias support | - | Investigating | Medium |
 | Parallel role execution | - | Investigating | Medium |
@@ -708,6 +712,6 @@ Brief description of changes.
 
 ---
 
-*Last updated: February 2026*
+*Last updated: April 2026*
 
 *For the latest updates, see [GitHub Releases](https://github.com/rustible/rustible/releases)*

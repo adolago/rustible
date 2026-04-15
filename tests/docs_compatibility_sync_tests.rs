@@ -1857,3 +1857,111 @@ mod cargo_feature_tests {
         }
     }
 }
+
+// ============================================================================
+// Release-Doc Consistency Guards
+// ============================================================================
+
+fn repo_file(path: &str) -> String {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    fs::read_to_string(root.join(path)).unwrap_or_else(|_| panic!("Failed to read {}", path))
+}
+
+#[test]
+fn test_readme_stays_alpha_and_links_beta_tracker() {
+    let readme = repo_file("README.md");
+
+    assert!(
+        readme.contains("Rustible is currently in alpha."),
+        "README should stay alpha-facing until beta entry criteria are satisfied"
+    );
+    assert!(
+        readme.contains("docs/FEATURE_STATUS.md"),
+        "README should link to the canonical feature status doc"
+    );
+    assert!(
+        readme.contains("docs/GITHUB_ISSUES_SUMMARY.md"),
+        "README should link to the live beta-readiness tracker"
+    );
+    assert!(
+        readme.contains("docs/BETA_ENTRY_CRITERIA.md"),
+        "README should link to beta entry criteria"
+    );
+}
+
+#[test]
+fn test_release_docs_do_not_reference_legacy_repo_namespace() {
+    let paths = [
+        "README.md",
+        "docs/FEATURE_STATUS.md",
+        "docs/ROADMAP.md",
+        "docs/ALPHA_READINESS_ISSUES.md",
+        "docs/ALPHA_LAUNCH_CHECKLIST.md",
+        "docs/BETA_ENTRY_CRITERIA.md",
+        "docs/GITHUB_ISSUES_SUMMARY.md",
+    ];
+
+    for path in paths {
+        let content = repo_file(path);
+        assert!(
+            !content.contains("github.com/adolago/rustible"),
+            "{} should not reference the legacy adolago/rustible namespace",
+            path
+        );
+    }
+}
+
+#[test]
+fn test_feature_status_is_called_out_as_canonical_source() {
+    let feature_status = repo_file("docs/FEATURE_STATUS.md");
+    let roadmap = repo_file("docs/ROADMAP.md");
+    let issues = repo_file("docs/GITHUB_ISSUES_SUMMARY.md");
+
+    assert!(
+        feature_status.contains("canonical status source"),
+        "FEATURE_STATUS.md should declare itself as the canonical source"
+    );
+    assert!(
+        roadmap.contains("For the canonical shipped status"),
+        "ROADMAP.md should direct readers to FEATURE_STATUS.md"
+    );
+    assert!(
+        issues.contains("For canonical implementation status"),
+        "GITHUB_ISSUES_SUMMARY.md should direct readers to FEATURE_STATUS.md"
+    );
+}
+
+#[test]
+fn test_alpha_readiness_tracker_does_not_claim_shipped_features_are_missing() {
+    let alpha_readiness = repo_file("docs/ALPHA_READINESS_ISSUES.md");
+
+    let stale_claims = [
+        "`--ask-become-pass` is not implemented",
+        "Keyboard-interactive SSH auth is not implemented",
+        "Resource graph state comparison TODO remains for provisioning flows",
+        "`russh_auth` TODO indicates potential API drift with current russh",
+    ];
+
+    for claim in stale_claims {
+        assert!(
+            !alpha_readiness.contains(claim),
+            "Alpha readiness tracker still contains stale claim: {}",
+            claim
+        );
+    }
+}
+
+#[test]
+fn test_release_checklists_reference_smoke_path() {
+    let alpha_launch = repo_file("docs/ALPHA_LAUNCH_CHECKLIST.md");
+    let beta_entry = repo_file("docs/BETA_ENTRY_CRITERIA.md");
+
+    assert!(
+        alpha_launch.contains("scripts/smoke_tests.sh"),
+        "Alpha launch checklist should reference the explicit smoke path"
+    );
+    assert!(
+        beta_entry.contains("scripts/smoke_tests.sh"),
+        "Beta entry criteria should reference the explicit smoke path"
+    );
+}

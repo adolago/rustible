@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `aws_security_group_rule` native playbook module for standalone ingress/egress rule management
 - `aws_ebs_volume` native playbook module for EBS volume lifecycle management
+- Explicit CLI smoke suite for `run`, `check`, and vault round-trip coverage via `tests/cli_smoke_tests.rs` and `scripts/smoke_tests.sh`
 - `regex_search` filter in template engine
 - Provisioning state backends (local, S3, GCS, Azure Blob, Consul, HTTP) with locking support
 - State lifecycle CLI (`provision init`, `provision migrate`, `provision import-terraform`)
@@ -46,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - WinRM no longer requires the `experimental` feature gate
 - Agent mode fully implemented for persistent remote execution
 - `rustible lock rollback` now executes snapshot-backed rollback plans instead of placeholder behavior
+- Release docs now keep `FEATURE_STATUS.md` as the canonical source while keeping public positioning alpha until beta entry criteria are satisfied
 
 ### Fixed
 - Monitoring setup test failing due to template syntax

@@ -8,7 +8,7 @@ the checkbox is checked and both `Owner` and `Evidence` are filled in.
 - Release candidate: `TBD`
 - Target ship date: `TBD`
 - Release lead: `TBD`
-- Last updated: `YYYY-MM-DD`
+- Last updated: `2026-04-15`
 
 ## Product and Messaging
 
@@ -33,6 +33,9 @@ the checkbox is checked and both `Owner` and `Evidence` are filled in.
 - [ ] `docs/ALPHA_READINESS_ISSUES.md` is reviewed and has owner/evidence on all open risks.
   - Owner: `TBD`
   - Evidence: Last-reviewed date + updated rows in readiness doc.
+- [ ] README links to the canonical status doc and beta-readiness tracker.
+  - Owner: `TBD`
+  - Evidence: `README.md` references to `docs/FEATURE_STATUS.md` and `docs/GITHUB_ISSUES_SUMMARY.md`.
 
 ## Security and Safety
 
@@ -56,7 +59,7 @@ the checkbox is checked and both `Owner` and `Evidence` are filled in.
   - Evidence: Local run log or CI artifact.
 - [ ] Smoke tests pass for `rustible run`, `rustible check`, and `rustible vault`.
   - Owner: `TBD`
-  - Evidence: Command transcript or test script output.
+  - Evidence: `scripts/smoke_tests.sh` output or `ci.yml` smoke-test step log.
 
 ## Release and Distribution
 

@@ -12,6 +12,7 @@ read_when: You're entering the documentation and need to find the right resource
 | Getting Started | [guides/quick-start.md](guides/quick-start.md) |
 | CLI Reference | [guides/cli-reference.md](guides/cli-reference.md) |
 | Module Reference | [reference/modules/](reference/modules/) |
+| Feature Status | [FEATURE_STATUS.md](FEATURE_STATUS.md) |
 | Architecture | [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) |
 | Beta Sign-Off | [development/BETA_SIGNOFF_REQUIREMENTS.md](development/BETA_SIGNOFF_REQUIREMENTS.md) |
 

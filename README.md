@@ -19,6 +19,7 @@ performance/security characteristics.
 - Terraform-like provisioning is experimental and limited in scope; Terraform integration
   focuses on state inventory and workflow bridging, not full replacement.
 - Current shipped status is tracked in `docs/FEATURE_STATUS.md`.
+- Beta-readiness execution is tracked in `docs/GITHUB_ISSUES_SUMMARY.md`.
 - Some feature flags remain experimental and still require explicit
   `experimental` opt-in, but `winrm` no longer does.
 - Alpha readiness risks and active ownership are tracked in `docs/ALPHA_READINESS_ISSUES.md`.
@@ -221,6 +222,17 @@ Benchmarks demonstrate significant performance improvements:
 - [Architecture](docs/architecture/ARCHITECTURE.md) - Technical design
 
 ## Testing
+
+Run the default CLI smoke path:
+
+```bash
+bash scripts/smoke_tests.sh
+```
+
+That smoke suite covers `rustible run`, `rustible check`, and a vault encrypt/decrypt
+round trip. High-risk beta sign-off coverage is defined in
+`.github/workflows/high-risk-suites.yml` and documented in
+`docs/development/BETA_SIGNOFF_REQUIREMENTS.md`.
 
 ### SSH Integration Tests (Ignored)
 

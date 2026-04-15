@@ -229,6 +229,10 @@ if $VERBOSE; then
     TEST_ARGS="$TEST_ARGS --nocapture"
 fi
 
+run_test_category "CLI smoke tests" \
+    "bash scripts/smoke_tests.sh" \
+    true
+
 if $RUN_COVERAGE && [[ "$COVERAGE_TOOL" == "llvm-cov" ]]; then
     run_test_category "Library tests (with coverage)" \
         "cargo llvm-cov --lib --all-features" \

@@ -13,6 +13,8 @@ disagree, update this file first and then align secondary docs.
 - Issue numbers in status docs must be live GitHub links or omitted.
 - Any feature-status change must update this document before `README.md`, `docs/ROADMAP.md`,
   or release checklists.
+- While beta-readiness work remains in progress, `README.md` stays alpha-facing and links to
+  beta-readiness docs rather than claiming beta availability.
 
 ## Status Summary
 
@@ -28,7 +30,7 @@ disagree, update this file first and then align secondary docs.
 | AWS provisioning resources | Beta / Partial | State-backed provisioning resources exist for core AWS infrastructure, including security group rules and EBS volumes. |
 | Azure / GCP modules | Experimental | Still require `experimental` plus provider feature flags. |
 | Terraform-like provisioning | Experimental | Useful for stateful workflows and provider-backed resources, but not a full Terraform replacement. |
-| Beta readiness docs and checklists | In Progress | Beta gate docs exist; use them with the live tracker rather than the archived gap-analysis issue list. |
+| Beta readiness docs and checklists | In Progress | Beta gate docs exist; use them with the live tracker, explicit CLI smoke coverage, and the high-risk sign-off workflow rather than the archived gap-analysis issue list. |
 
 ## Beta-Readiness Tracker
 
