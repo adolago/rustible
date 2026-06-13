@@ -22,6 +22,33 @@ ignore = [
     # Risk: URL parsing edge cases with malformed Punycode
     # Mitigation: We don't process untrusted URLs from external sources
     "RUSTSEC-2024-0421",
+
+    # --- russh 0.55 transitive crypto stack -------------------------------
+    # All of the following reach us only through `russh` 0.55 (pure-Rust SSH):
+    #   russh -> aws-lc-rs -> aws-lc-sys 0.35   (RUSTSEC-2026-0044..0048)
+    #   russh -> libcrux-ml-kem -> libcrux-sha3 (RUSTSEC-2026-0074)
+    #   russh -> russh-cryptovec 0.52           (RUSTSEC-2026-0153)
+    #   russh 0.55 itself                        (RUSTSEC-2026-0154)
+    # Fix requires upgrading russh to >=0.60.3, a breaking API change (Config,
+    # Preferred, kex/mac constants, Handler trait) tracked as a separate effort.
+    # russh is optional (`russh` feature) and these are SSH-path crypto issues.
+    "RUSTSEC-2026-0044",  # aws-lc-sys: X.509 name-constraints bypass
+    "RUSTSEC-2026-0045",  # aws-lc-sys: AES-CCM tag-verification timing side-channel
+    "RUSTSEC-2026-0046",  # aws-lc-sys: PKCS7_verify cert-chain validation bypass
+    "RUSTSEC-2026-0047",  # aws-lc-sys: PKCS7_verify signature validation bypass
+    "RUSTSEC-2026-0048",  # aws-lc-sys: CRL distribution-point scope logic error
+    "RUSTSEC-2026-0074",  # libcrux-sha3: incorrect incremental SHAKE output
+    "RUSTSEC-2026-0153",  # russh-cryptovec: unchecked CryptoVec allocation
+    "RUSTSEC-2026-0154",  # russh: unbounded 32-bit allocation
+
+    # --- AWS SDK bundled rustls 0.21 / rustls-webpki 0.101.7 --------------
+    # Reaches us only through the AWS SDK (aws-config -> aws-smithy-http-client
+    # -> rustls 0.21 -> rustls-webpki 0.101.7), and only under the `aws` feature.
+    # Fix requires the AWS SDK to move onto the rustls 0.23 line; tracked
+    # separately. The default (russh/local) build does not pull this crate.
+    "RUSTSEC-2026-0098",  # rustls-webpki: URI name-constraints incorrectly accepted
+    "RUSTSEC-2026-0099",  # rustls-webpki: name-constraints accepted for non-DNS SANs
+    "RUSTSEC-2026-0104",  # rustls-webpki: reachable panic in CRL parsing
 ]
 
 # Only fail on actual vulnerabilities, not warnings about unmaintained packages

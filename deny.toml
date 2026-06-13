@@ -20,6 +20,22 @@ ignore = [
     # idna Punycode issue - transitive via validator/url; we do not parse
     # untrusted URLs from external sources.
     "RUSTSEC-2024-0421",
+    # russh 0.55 transitive crypto stack (aws-lc-sys, libcrux-sha3, russh,
+    # russh-cryptovec) - fix requires upgrading russh to >=0.60.3. See
+    # .cargo/audit.toml for the full per-advisory rationale.
+    "RUSTSEC-2026-0044",
+    "RUSTSEC-2026-0045",
+    "RUSTSEC-2026-0046",
+    "RUSTSEC-2026-0047",
+    "RUSTSEC-2026-0048",
+    "RUSTSEC-2026-0074",
+    "RUSTSEC-2026-0153",
+    "RUSTSEC-2026-0154",
+    # AWS SDK bundled rustls 0.21 / rustls-webpki 0.101.7 (aws feature only) -
+    # fix requires the AWS SDK to move onto rustls 0.23. See .cargo/audit.toml.
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
 ]
 
 [licenses]
