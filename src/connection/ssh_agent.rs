@@ -292,7 +292,7 @@ impl SshAgentClient {
 
         let keys: Vec<AgentKeyInfo> = identities
             .iter()
-            .map(AgentKeyInfo::from_public_key)
+            .map(|id| AgentKeyInfo::from_public_key(&id.public_key()))
             .collect();
 
         debug!(
@@ -322,7 +322,10 @@ impl SshAgentClient {
             .await
             .map_err(|e| AgentError::CommunicationError(e.to_string()))?;
 
-        Ok(identities)
+        Ok(identities
+            .iter()
+            .map(|id| id.public_key().into_owned())
+            .collect())
     }
 
     /// Check if a key with the given comment or fingerprint is available
@@ -982,7 +985,7 @@ mod tests {
                 let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
                 let verifying_key = ed25519_dalek::VerifyingKey::from(&signing_key);
                 let key_data = russh::keys::ssh_key::public::KeyData::Ed25519(
-                    russh::keys::ssh_key::public::Ed25519PublicKey::from(&verifying_key),
+                    russh::keys::ssh_key::public::Ed25519PublicKey(verifying_key.to_bytes()),
                 );
                 russh::keys::PublicKey::new(key_data, "")
             },
