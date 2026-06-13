@@ -323,7 +323,7 @@ mod tests {
                         &format!("test-{}", i),
                     )
                     .await;
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
             });
             handles.push(handle);
         }
@@ -331,9 +331,11 @@ mod tests {
         futures::future::join_all(handles).await;
         let elapsed = start.elapsed();
 
-        // All should execute in parallel, so total time should be close to 10ms
+        // Run in parallel: ~50ms plus scheduling overhead. A serial run would
+        // take ~500ms (10 x 50ms). The generous bound keeps the parallel-vs-serial
+        // distinction sharp while tolerating contended CI runners.
         assert!(
-            elapsed < Duration::from_millis(50),
+            elapsed < Duration::from_millis(250),
             "Fully parallel should not block: took {:?}",
             elapsed
         );
