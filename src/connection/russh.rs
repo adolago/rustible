@@ -4137,10 +4137,9 @@ mod verification_tests {
 
     // Helper to generate a dummy Ed25519 key (russh 0.54+ API)
     fn generate_key() -> PrivateKey {
-        use rand::SeedableRng;
-        // Use a seeded RNG for reproducibility in tests
-        let mut rng = rand::rngs::StdRng::from_entropy();
-        PrivateKey::random(&mut rng, Algorithm::Ed25519).expect("Failed to generate key")
+        // ssh-key expects a rand_core 0.6 RNG; use its own re-export.
+        use russh::keys::ssh_key::rand_core::OsRng;
+        PrivateKey::random(&mut OsRng, Algorithm::Ed25519).expect("Failed to generate key")
     }
 
     #[tokio::test]

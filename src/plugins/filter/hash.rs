@@ -213,10 +213,10 @@ fn compute_sha512(data: &str) -> String {
 fn generate_salt() -> String {
     use rand::Rng;
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./";
-    let mut rng = rand::rngs::OsRng;
+    let mut rng = rand::rng();
     (0..16)
         .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
+            let idx = rng.random_range(0..CHARSET.len());
             CHARSET[idx] as char
         })
         .collect()

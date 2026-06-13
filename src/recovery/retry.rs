@@ -198,8 +198,8 @@ impl BackoffStrategy {
             BackoffStrategy::DecorrelatedJitter { base, max } => {
                 // AWS decorrelated jitter: sleep = min(max, random_between(base, sleep * 3))
                 let last = last_delay.unwrap_or(*base);
-                let mut rng = rand::thread_rng();
-                let sleep = rng.gen_range(base.as_millis()..=(last.as_millis() * 3));
+                let mut rng = rand::rng();
+                let sleep = rng.random_range(base.as_millis()..=(last.as_millis() * 3));
                 Duration::from_millis(sleep as u64).min(*max)
             }
         }
@@ -372,8 +372,8 @@ impl RetryPolicy {
 
         // Apply jitter
         let delay = if self.jitter > 0.0 {
-            let mut rng = rand::thread_rng();
-            let jitter_factor = 1.0 + rng.gen_range(-self.jitter..self.jitter);
+            let mut rng = rand::rng();
+            let jitter_factor = 1.0 + rng.random_range(-self.jitter..self.jitter);
             Duration::from_millis((base_delay.as_millis() as f64 * jitter_factor) as u64)
         } else {
             base_delay

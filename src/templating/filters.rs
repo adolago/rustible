@@ -622,7 +622,6 @@ fn filter_quote(value: &Value) -> FilterResult<Value> {
 
 fn filter_shuffle(value: &Value) -> FilterResult<Value> {
     use rand::seq::SliceRandom;
-    use rand::thread_rng;
 
     let arr = value.as_array().ok_or_else(|| FilterError::InvalidInput {
         filter: "shuffle".to_string(),
@@ -630,7 +629,7 @@ fn filter_shuffle(value: &Value) -> FilterResult<Value> {
     })?;
 
     let mut result = arr.clone();
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     result.shuffle(&mut rng);
 
     Ok(Value::Array(result))

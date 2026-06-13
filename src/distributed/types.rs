@@ -532,8 +532,8 @@ impl ClusterConfig {
     /// Get random election timeout
     pub fn random_election_timeout(&self) -> Duration {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let timeout_ms = rng.gen_range(self.election_timeout_min_ms..=self.election_timeout_max_ms);
+        let mut rng = rand::rng();
+        let timeout_ms = rng.random_range(self.election_timeout_min_ms..=self.election_timeout_max_ms);
         Duration::from_millis(timeout_ms)
     }
 

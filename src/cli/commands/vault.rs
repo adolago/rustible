@@ -14,8 +14,8 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use dialoguer::theme::ColorfulTheme;
-use rand::rngs::OsRng;
-use rand::Rng;
+use aes_gcm::aead::rand_core::RngCore;
+use aes_gcm::aead::OsRng;
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
@@ -231,8 +231,10 @@ impl VaultEngine {
     /// Encrypt data
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<String> {
         // Generate random salt and nonce
-        let salt: [u8; 16] = OsRng.gen();
-        let nonce_bytes: [u8; 12] = OsRng.gen();
+        let mut salt = [0u8; 16];
+        OsRng.fill_bytes(&mut salt);
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
 
         // Derive key
         let key = self.derive_key(&salt)?;
@@ -699,7 +701,8 @@ impl VaultArgs {
                 }
 
                 // Generate a random 64-character password using hex encoding (32 random bytes = 64 hex chars)
-                let random_bytes: [u8; 32] = OsRng.gen();
+                let mut random_bytes = [0u8; 32];
+                OsRng.fill_bytes(&mut random_bytes);
                 let password: String = random_bytes.iter().map(|b| format!("{:02x}", b)).collect();
 
                 // Write the password file

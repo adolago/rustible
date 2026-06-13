@@ -1189,11 +1189,11 @@ async fn test_retry_with_jitter_simulation() {
     let base_delay = Duration::from_millis(100);
     let jitter_factor = 0.3; // 30% jitter
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut delays = Vec::new();
 
     for _ in 0..5 {
-        let jitter: f64 = rng.gen_range(-jitter_factor..jitter_factor);
+        let jitter: f64 = rng.random_range(-jitter_factor..jitter_factor);
         let jittered_delay = base_delay.mul_f64(1.0 + jitter);
         delays.push(jittered_delay);
         tokio::time::sleep(jittered_delay).await;

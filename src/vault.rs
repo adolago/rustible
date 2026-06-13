@@ -14,7 +14,7 @@ use aes_gcm::{
 use argon2::password_hash::SaltString;
 use argon2::Argon2;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use rand::rngs::OsRng;
+use aes_gcm::aead::OsRng;
 use zeroize::Zeroizing;
 
 /// Vault header marker
@@ -42,7 +42,7 @@ impl Vault {
         let key = self.derive_key(&salt)?;
 
         let cipher = Aes256Gcm::new(&key);
-        use rand::RngCore;
+        use aes_gcm::aead::rand_core::RngCore;
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = GenericArray::from_slice(&nonce_bytes);

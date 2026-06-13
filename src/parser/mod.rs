@@ -647,7 +647,7 @@ impl Parser {
             if matches!(value.kind(), ValueKind::Seq) {
                 let len = value.len().unwrap_or(0);
                 if len > 0 {
-                    let idx = rand::rngs::OsRng.gen_range(0..len);
+                    let idx = rand::rng().random_range(0..len);
                     value
                         .get_item(&Value::from(idx))
                         .unwrap_or(Value::UNDEFINED)
@@ -655,7 +655,7 @@ impl Parser {
                     Value::UNDEFINED
                 }
             } else if let Ok(max) = TryInto::<i64>::try_into(value) {
-                let n = rand::rngs::OsRng.gen_range(0..max);
+                let n = rand::rng().random_range(0..max);
                 Value::from(n)
             } else {
                 Value::UNDEFINED
@@ -668,7 +668,7 @@ impl Parser {
             if matches!(value.kind(), ValueKind::Seq) {
                 if let Ok(iter) = value.try_iter() {
                     let mut items: Vec<Value> = iter.collect();
-                    items.shuffle(&mut rand::rngs::OsRng);
+                    items.shuffle(&mut rand::rng());
                     items
                 } else {
                     Vec::new()
