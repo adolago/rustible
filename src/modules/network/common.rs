@@ -736,12 +736,11 @@ pub fn validate_config_lines(lines: &[String], platform: NetworkPlatform) -> Mod
 
         // Platform-specific validation
         match platform {
-            NetworkPlatform::CiscoIos | NetworkPlatform::CiscoNxos => {
+            NetworkPlatform::CiscoIos | NetworkPlatform::CiscoNxos
                 // IOS doesn't allow certain characters in configuration
-                if trimmed.contains('\t') && !trimmed.starts_with(' ') {
+                if trimmed.contains('\t') && !trimmed.starts_with(' ') => {
                     // Tabs are generally okay but warn about mixing
                 }
-            }
             _ => {}
         }
     }

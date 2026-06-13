@@ -3,6 +3,8 @@
 //! This module implements the `vault` subcommand for managing encrypted secrets.
 
 use super::{CommandContext, Runnable};
+use aes_gcm::aead::rand_core::RngCore;
+use aes_gcm::aead::OsRng;
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
@@ -14,8 +16,6 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use dialoguer::theme::ColorfulTheme;
-use aes_gcm::aead::rand_core::RngCore;
-use aes_gcm::aead::OsRng;
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;

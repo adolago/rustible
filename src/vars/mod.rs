@@ -8,13 +8,13 @@
 pub mod scope;
 pub mod terraform;
 
+use aes_gcm::aead::OsRng;
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
 use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
 use indexmap::IndexMap;
-use aes_gcm::aead::OsRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;

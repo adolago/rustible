@@ -33,7 +33,7 @@ impl LatencyProfile {
                 remote_ms,
             } => {
                 // Simple rack model: nodes 0..half are local, rest remote.
-                if node_index % 2 == 0 {
+                if node_index.is_multiple_of(2) {
                     *local_ms
                 } else {
                     *remote_ms
@@ -55,7 +55,7 @@ impl LatencyProfile {
                 }
             }
             LatencyProfile::Bimodal { fast_ms, slow_ms } => {
-                if node_index % 2 == 0 {
+                if node_index.is_multiple_of(2) {
                     *fast_ms
                 } else {
                     *slow_ms

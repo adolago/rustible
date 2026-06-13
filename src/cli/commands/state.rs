@@ -787,7 +787,7 @@ impl StateArgs {
             StateCommand::Mv {
                 source,
                 destination,
-                state,
+                state: _,
                 force,
             } => {
                 ctx.output.banner("STATE MV");
@@ -844,7 +844,7 @@ impl StateArgs {
             StateCommand::ReplaceProvider {
                 from_provider,
                 to_provider,
-                state,
+                state: _,
                 force,
             } => {
                 ctx.output.banner("STATE REPLACE-PROVIDER");
@@ -1009,7 +1009,7 @@ fn convert_terraform_state(tf_state: &serde_json::Value) -> serde_json::Value {
 
             // Process instances
             if let Some(instances) = resource.get("instances").and_then(|i| i.as_array()) {
-                for (idx, instance) in instances.iter().enumerate() {
+                for instance in instances.iter() {
                     let attributes = instance
                         .get("attributes")
                         .cloned()

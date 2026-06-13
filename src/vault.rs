@@ -7,6 +7,7 @@
 use crate::error::{Error, Result};
 use crate::security::SecretString;
 use aes_gcm::aead::generic_array::typenum;
+use aes_gcm::aead::OsRng;
 use aes_gcm::{
     aead::{generic_array::GenericArray, Aead},
     Aes256Gcm, KeyInit,
@@ -14,7 +15,6 @@ use aes_gcm::{
 use argon2::password_hash::SaltString;
 use argon2::Argon2;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use aes_gcm::aead::OsRng;
 use zeroize::Zeroizing;
 
 /// Vault header marker

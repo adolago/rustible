@@ -117,20 +117,25 @@ impl BestPracticesChecker {
                     );
                 }
             }
-            Some(name) if name.trim().is_empty() => {
-                if config.should_run_rule("B002", RuleCategory::BestPractices, Severity::Warning) {
-                    result.add_issue(
-                        LintIssue::new(
-                            "B002",
-                            "empty-play-name",
-                            Severity::Warning,
-                            RuleCategory::BestPractices,
-                            "Play has an empty name",
-                            Location::file(path).with_play(play_idx, None),
-                        )
-                        .with_suggestion("Provide a meaningful name for the play"),
-                    );
-                }
+            Some(name)
+                if name.trim().is_empty()
+                    && config.should_run_rule(
+                        "B002",
+                        RuleCategory::BestPractices,
+                        Severity::Warning,
+                    ) =>
+            {
+                result.add_issue(
+                    LintIssue::new(
+                        "B002",
+                        "empty-play-name",
+                        Severity::Warning,
+                        RuleCategory::BestPractices,
+                        "Play has an empty name",
+                        Location::file(path).with_play(play_idx, None),
+                    )
+                    .with_suggestion("Provide a meaningful name for the play"),
+                );
             }
             _ => {}
         }
@@ -310,22 +315,27 @@ impl BestPracticesChecker {
                     );
                 }
             }
-            Some(name) if !name.starts_with(|c: char| c.is_uppercase()) => {
-                if config.should_run_rule("B006", RuleCategory::BestPractices, Severity::Hint) {
-                    result.add_issue(
-                        LintIssue::new(
-                            "B006",
-                            "lowercase-task-name",
-                            Severity::Hint,
-                            RuleCategory::BestPractices,
-                            "Task name should start with an uppercase letter",
-                            Location::file(path)
-                                .with_play(play_idx, play_name.map(String::from))
-                                .with_task(task_idx, Some(name.to_string())),
-                        )
-                        .with_suggestion("Capitalize the first letter of the task name"),
-                    );
-                }
+            Some(name)
+                if !name.starts_with(|c: char| c.is_uppercase())
+                    && config.should_run_rule(
+                        "B006",
+                        RuleCategory::BestPractices,
+                        Severity::Hint,
+                    ) =>
+            {
+                result.add_issue(
+                    LintIssue::new(
+                        "B006",
+                        "lowercase-task-name",
+                        Severity::Hint,
+                        RuleCategory::BestPractices,
+                        "Task name should start with an uppercase letter",
+                        Location::file(path)
+                            .with_play(play_idx, play_name.map(String::from))
+                            .with_task(task_idx, Some(name.to_string())),
+                    )
+                    .with_suggestion("Capitalize the first letter of the task name"),
+                );
             }
             _ => {}
         }
