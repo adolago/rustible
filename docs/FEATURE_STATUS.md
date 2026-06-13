@@ -34,13 +34,13 @@ disagree, update this file first and then align secondary docs.
 
 ## Beta-Readiness Tracker
 
-- [#849](https://github.com/kernelfirma/rustible/issues/849) Align roadmap and feature-status docs with the live implementation
-- [#850](https://github.com/kernelfirma/rustible/issues/850) Stabilize v0.2 baseline: get default CI and test suite fully green
-- [#851](https://github.com/kernelfirma/rustible/issues/851) Complete checkpoint rollback execution in the CLI lock workflow
-- [#852](https://github.com/kernelfirma/rustible/issues/852) Harden WinRM/Windows support and define exit criteria for non-experimental status
-- [#853](https://github.com/kernelfirma/rustible/issues/853) Implement `aws_security_group_rule` as a native playbook module
-- [#854](https://github.com/kernelfirma/rustible/issues/854) Implement `aws_ebs_volume` as a native playbook module
-- [#855](https://github.com/kernelfirma/rustible/issues/855) Execution sequence tracker for beta-readiness and AWS module parity
+- [#849](https://github.com/adolago/rustible/issues/849) Align roadmap and feature-status docs with the live implementation
+- [#850](https://github.com/adolago/rustible/issues/850) Stabilize v0.2 baseline: get default CI and test suite fully green
+- [#851](https://github.com/adolago/rustible/issues/851) Complete checkpoint rollback execution in the CLI lock workflow
+- [#852](https://github.com/adolago/rustible/issues/852) Harden WinRM/Windows support and define exit criteria for non-experimental status
+- [#853](https://github.com/adolago/rustible/issues/853) Implement `aws_security_group_rule` as a native playbook module
+- [#854](https://github.com/adolago/rustible/issues/854) Implement `aws_ebs_volume` as a native playbook module
+- [#855](https://github.com/adolago/rustible/issues/855) Execution sequence tracker for beta-readiness and AWS module parity
 
 ## Known Limits Worth Calling Out
 
