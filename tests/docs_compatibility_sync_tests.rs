@@ -1901,11 +1901,13 @@ fn test_release_docs_do_not_reference_legacy_repo_namespace() {
         "docs/GITHUB_ISSUES_SUMMARY.md",
     ];
 
+    // The repository is hosted at github.com/adolago/rustible. Release docs
+    // must not reference the previous owner's namespace.
     for path in paths {
         let content = repo_file(path);
         assert!(
-            !content.contains("github.com/adolago/rustible"),
-            "{} should not reference the legacy adolago/rustible namespace",
+            !content.contains("github.com/kernelfirma/rustible"),
+            "{} should not reference the legacy kernelfirma/rustible namespace",
             path
         );
     }

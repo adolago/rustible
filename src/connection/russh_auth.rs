@@ -1069,7 +1069,7 @@ impl RusshAuthenticator {
 
         let rsa_hash = if identities
             .iter()
-            .any(|identity| identity.algorithm().is_rsa())
+            .any(|identity| identity.public_key().algorithm().is_rsa())
         {
             handle
                 .best_supported_rsa_hash()
@@ -1083,12 +1083,17 @@ impl RusshAuthenticator {
 
         // Try each identity
         for identity in identities {
-            let algorithm = identity.algorithm();
+            let algorithm = identity.public_key().algorithm();
             debug!(key_type = %algorithm.as_str(), "Trying agent identity");
 
             let hash_alg = if algorithm.is_rsa() { rsa_hash } else { None };
             match handle
-                .authenticate_publickey_with(username, identity.clone(), hash_alg, agent)
+                .authenticate_publickey_with(
+                    username,
+                    identity.public_key().into_owned(),
+                    hash_alg,
+                    agent,
+                )
                 .await
             {
                 Ok(result) => match map_auth_result(result) {

@@ -1392,7 +1392,12 @@ impl RusshConnection {
             // Use authenticate_publickey_with which accepts a Signer trait (russh 0.54+ API)
             // AgentClient implements Signer
             let result = session
-                .authenticate_publickey_with(user, identity.clone(), None, &mut agent)
+                .authenticate_publickey_with(
+                    user,
+                    identity.public_key().into_owned(),
+                    None,
+                    &mut agent,
+                )
                 .await;
 
             match result {
@@ -4137,9 +4142,19 @@ mod verification_tests {
 
     // Helper to generate a dummy Ed25519 key (russh 0.54+ API)
     fn generate_key() -> PrivateKey {
-        // ssh-key expects a rand_core 0.6 RNG; use its own re-export.
-        use russh::keys::ssh_key::rand_core::OsRng;
-        PrivateKey::random(&mut OsRng, Algorithm::Ed25519).expect("Failed to generate key")
+        // Build a fresh random Ed25519 key from a randomly-filled seed. Filling the
+        // seed with `rand` and using `from_seed` avoids coupling to the specific
+        // rand_core version that ssh-key's RNG-based constructor requires, while
+        // still producing a distinct key on each call.
+        use rand::RngCore;
+        use russh::keys::ssh_key::private::{Ed25519Keypair, KeypairData};
+        let mut seed = [0u8; 32];
+        rand::rng().fill_bytes(&mut seed);
+        PrivateKey::new(
+            KeypairData::from(Ed25519Keypair::from_seed(&seed)),
+            "rustible-test",
+        )
+        .expect("Failed to build test key")
     }
 
     #[tokio::test]

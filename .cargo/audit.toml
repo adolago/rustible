@@ -22,6 +22,15 @@ ignore = [
     # Risk: URL parsing edge cases with malformed Punycode
     # Mitigation: We don't process untrusted URLs from external sources
     "RUSTSEC-2024-0421",
+
+    # --- AWS SDK bundled rustls 0.21 / rustls-webpki 0.101.7 --------------
+    # Reaches us only through the AWS SDK (aws-config -> aws-smithy-http-client
+    # -> rustls 0.21 -> rustls-webpki 0.101.7), and only under the `aws` feature.
+    # Fix requires the AWS SDK to move onto the rustls 0.23 line; tracked
+    # separately. The default (russh/local) build does not pull this crate.
+    "RUSTSEC-2026-0098",  # rustls-webpki: URI name-constraints incorrectly accepted
+    "RUSTSEC-2026-0099",  # rustls-webpki: name-constraints accepted for non-DNS SANs
+    "RUSTSEC-2026-0104",  # rustls-webpki: reachable panic in CRL parsing
 ]
 
 # Only fail on actual vulnerabilities, not warnings about unmaintained packages
