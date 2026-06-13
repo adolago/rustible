@@ -291,9 +291,8 @@ impl KubernetesConnection {
             })?;
 
         // Handle stdin for password escalation
-        if options.escalate && options.escalate_password.is_some() {
+        if let (true, Some(password)) = (options.escalate, options.escalate_password.as_ref()) {
             if let Some(mut stdin) = attached.stdin() {
-                let password = options.escalate_password.as_ref().unwrap();
                 stdin
                     .write_all(format!("{}\n", password).as_bytes())
                     .await

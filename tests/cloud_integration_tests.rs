@@ -45,7 +45,7 @@ mod registry_integration {
 
     #[test]
     fn test_registry_with_builtins_has_cloud_modules() {
-        let registry = ModuleRegistry::with_builtins();
+        let _registry = ModuleRegistry::with_builtins();
 
         // Check AWS modules are registered (when feature enabled)
         #[cfg(feature = "aws")]

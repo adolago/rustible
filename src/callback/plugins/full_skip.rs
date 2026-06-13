@@ -263,7 +263,7 @@ impl FullSkipCallback {
             .collect();
 
         // Sort by count descending
-        result.sort_by(|a, b| b.count.cmp(&a.count));
+        result.sort_by_key(|entry| std::cmp::Reverse(entry.count));
         result
     }
 
@@ -434,7 +434,7 @@ impl FullSkipCallback {
 
             let stats = self.host_stats.read();
             let mut sorted_hosts: Vec<_> = stats.iter().collect();
-            sorted_hosts.sort_by(|a, b| b.1.skipped_tasks.cmp(&a.1.skipped_tasks));
+            sorted_hosts.sort_by_key(|(_, s)| std::cmp::Reverse(s.skipped_tasks));
 
             for (host, host_stats) in sorted_hosts.iter().take(10) {
                 if host_stats.skipped_tasks > 0 {

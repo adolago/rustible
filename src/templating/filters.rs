@@ -782,7 +782,7 @@ fn filter_median(value: &Value) -> FilterResult<Value> {
 
     nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    let median = if nums.len() % 2 == 0 {
+    let median = if nums.len().is_multiple_of(2) {
         (nums[nums.len() / 2 - 1] + nums[nums.len() / 2]) / 2.0
     } else {
         nums[nums.len() / 2]

@@ -205,7 +205,7 @@ impl StatePersistence for JsonPersistence {
         }
 
         // Sort by creation time, newest first
-        snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        snapshots.sort_by_key(|s| std::cmp::Reverse(s.created_at));
         Ok(snapshots)
     }
 
@@ -459,7 +459,7 @@ impl StatePersistence for SqlitePersistence {
         let mut snapshots: Vec<StateSnapshot> =
             self.snapshots.iter().map(|r| r.value().clone()).collect();
 
-        snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        snapshots.sort_by_key(|s| std::cmp::Reverse(s.created_at));
         Ok(snapshots)
     }
 
@@ -597,7 +597,7 @@ impl StatePersistence for MemoryPersistence {
         let mut snapshots: Vec<StateSnapshot> =
             self.snapshots.iter().map(|r| r.value().clone()).collect();
 
-        snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        snapshots.sort_by_key(|s| std::cmp::Reverse(s.created_at));
         Ok(snapshots)
     }
 

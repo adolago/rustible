@@ -482,7 +482,7 @@ impl RollbackPlan {
 
     /// Sort actions by priority (highest first)
     pub fn sort_by_priority(&mut self) {
-        self.actions.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.actions.sort_by_key(|a| std::cmp::Reverse(a.priority));
     }
 }
 

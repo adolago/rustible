@@ -54,6 +54,7 @@ use tokio::runtime::Runtime;
 // ============================================================================
 
 /// SSH benchmark configuration loaded from environment variables
+#[allow(dead_code)] // used by the env-gated ssh2 benches and unit tests
 struct SshBenchConfig {
     host: String,
     port: u16,
@@ -61,6 +62,7 @@ struct SshBenchConfig {
     key_path: String,
 }
 
+#[allow(dead_code)] // used by the env-gated ssh2 benches and unit tests
 impl SshBenchConfig {
     /// Try to load configuration from environment variables
     fn from_env() -> Option<Self> {
@@ -90,6 +92,7 @@ impl SshBenchConfig {
 }
 
 /// Get the current username
+#[allow(dead_code)] // used by the env-gated ssh2 benches and unit tests
 fn whoami() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
@@ -97,6 +100,7 @@ fn whoami() -> String {
 }
 
 /// Expand tilde in paths
+#[allow(dead_code)] // used by the env-gated ssh2 benches and unit tests
 fn expand_path(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Ok(home) = std::env::var("HOME") {
@@ -107,6 +111,7 @@ fn expand_path(path: &str) -> String {
 }
 
 /// Generate random test data of specified size
+#[allow(dead_code)] // used by the env-gated ssh2 benches and unit tests
 fn generate_test_data(size_bytes: usize) -> Vec<u8> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};

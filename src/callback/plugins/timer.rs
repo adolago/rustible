@@ -221,7 +221,7 @@ impl TimerCallback {
     pub fn get_slowest_tasks(&self, n: usize) -> Vec<TimerTaskTiming> {
         let state = self.state.read();
         let mut timings = state.task_timings.clone();
-        timings.sort_by(|a, b| b.duration.cmp(&a.duration));
+        timings.sort_by_key(|t| std::cmp::Reverse(t.duration));
         timings.into_iter().take(n).collect()
     }
 
@@ -317,7 +317,7 @@ impl TimerCallback {
 
         // Get slowest tasks
         let mut timings = state.task_timings.clone();
-        timings.sort_by(|a, b| b.duration.cmp(&a.duration));
+        timings.sort_by_key(|t| std::cmp::Reverse(t.duration));
         let slowest: Vec<_> = timings.into_iter().take(self.config.top_slowest).collect();
 
         // Print summary header

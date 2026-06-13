@@ -358,13 +358,13 @@ impl ProfileState {
         // Sort according to configuration
         match self.config.sort_order {
             SortOrder::Descending => {
-                result.sort_by(|a, b| b.max_duration.cmp(&a.max_duration));
+                result.sort_by_key(|t| std::cmp::Reverse(t.max_duration));
             }
             SortOrder::Ascending => {
-                result.sort_by(|a, b| a.max_duration.cmp(&b.max_duration));
+                result.sort_by_key(|a| a.max_duration);
             }
             SortOrder::ExecutionOrder => {
-                result.sort_by(|a, b| a.first_completed.cmp(&b.first_completed));
+                result.sort_by_key(|a| a.first_completed);
             }
             SortOrder::None => {}
         }
@@ -679,7 +679,7 @@ impl ProfileTasksCallback {
             }
 
             let mut hosts: Vec<_> = state.host_timings.iter().collect();
-            hosts.sort_by(|a, b| b.1.total_duration.cmp(&a.1.total_duration));
+            hosts.sort_by_key(|(_, t)| std::cmp::Reverse(t.total_duration));
 
             for (host, timing) in hosts {
                 let duration_str = format_duration_short(timing.total_duration);

@@ -167,7 +167,7 @@ impl StartupMetrics {
             .filter(|(_, m)| m.completed)
             .map(|(p, m)| (*p, m.duration))
             .collect();
-        phases.sort_by(|a, b| b.1.cmp(&a.1));
+        phases.sort_by_key(|p| std::cmp::Reverse(p.1));
         phases
     }
 

@@ -377,10 +377,8 @@ impl SystemdNative {
                             info.active_enter_timestamp = Some(value.to_string());
                         }
                     }
-                    "InactiveEnterTimestamp" => {
-                        if !value.is_empty() {
-                            info.inactive_enter_timestamp = Some(value.to_string());
-                        }
+                    "InactiveEnterTimestamp" if !value.is_empty() => {
+                        info.inactive_enter_timestamp = Some(value.to_string());
                     }
                     _ => {}
                 }
