@@ -589,9 +589,11 @@ impl ProvisionerContext {
 
 /// Parse array access pattern: "type.name[index].attr" -> (type, name, index, attr)
 fn parse_array_access(path: &str) -> Option<(String, String, usize, String)> {
-    let array_re =
-        Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\[(\d+)\](?:\.(.+))?$")
-            .ok()?;
+    // Optimization: Use cached regex to avoid recompiling on every template evaluation
+    let array_re = crate::utils::get_regex(
+        r"^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\[(\d+)\](?:\.(.+))?$",
+    )
+    .ok()?;
 
     let caps = array_re.captures(path)?;
     let resource_type = caps.get(1)?.as_str().to_string();
