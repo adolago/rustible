@@ -26,3 +26,9 @@ coordination/orchestration/*
 claude-flow
 # Removed Windows wrapper files per user request
 hive-mind-prompt-*.txt
+
+# Local dev artifacts
+*.diff
+test_output.txt
+bench_security
+.rustible_state/
