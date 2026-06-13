@@ -571,9 +571,9 @@ async fn main() {
         println!("└─────────────────────────────────────────────────────────────┘\n");
 
         // Generate random test data
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let test_data: Vec<u8> = (0..args.file_size_kb * 1024)
-            .map(|_| rng.gen())
+            .map(|_| rng.random())
             .collect();
 
         let remote_path = "/tmp/ssh_bench_test.dat";

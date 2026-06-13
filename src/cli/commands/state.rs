@@ -831,6 +831,7 @@ impl StateArgs {
 
                 #[cfg(not(feature = "provisioning"))]
                 {
+                    let _ = &state; // consumed by the provisioning-gated branch above
                     ctx.output.error(
                         "Provisioning feature not enabled. Rebuild with --features provisioning",
                     );
@@ -892,6 +893,7 @@ impl StateArgs {
 
                 #[cfg(not(feature = "provisioning"))]
                 {
+                    let _ = &state; // consumed by the provisioning-gated branch above
                     ctx.output.error(
                         "Provisioning feature not enabled. Rebuild with --features provisioning",
                     );
@@ -1009,7 +1011,7 @@ fn convert_terraform_state(tf_state: &serde_json::Value) -> serde_json::Value {
 
             // Process instances
             if let Some(instances) = resource.get("instances").and_then(|i| i.as_array()) {
-                for (idx, instance) in instances.iter().enumerate() {
+                for instance in instances.iter() {
                     let attributes = instance
                         .get("attributes")
                         .cloned()

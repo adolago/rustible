@@ -8,13 +8,13 @@
 pub mod scope;
 pub mod terraform;
 
+use aes_gcm::aead::OsRng;
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
 use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
 use indexmap::IndexMap;
-use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -589,7 +589,7 @@ impl Vault {
             .map_err(|e| VarsError::EncryptionError(e.to_string()))?;
 
         // Generate random nonce
-        use rand::RngCore;
+        use aes_gcm::aead::rand_core::RngCore;
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);

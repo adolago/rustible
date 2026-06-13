@@ -45,6 +45,7 @@ mod registry_integration {
 
     #[test]
     fn test_registry_with_builtins_has_cloud_modules() {
+        #[allow(unused_variables)] // used only under cloud feature gates below
         let registry = ModuleRegistry::with_builtins();
 
         // Check AWS modules are registered (when feature enabled)

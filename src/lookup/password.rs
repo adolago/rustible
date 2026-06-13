@@ -120,11 +120,11 @@ impl PasswordLookup {
         }
 
         let chars: Vec<char> = charset.chars().collect();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let password: String = (0..length)
             .map(|_| {
-                let idx = rng.gen_range(0..chars.len());
+                let idx = rng.random_range(0..chars.len());
                 chars[idx]
             })
             .collect();

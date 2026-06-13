@@ -379,11 +379,7 @@ impl<T: Send + Sync + 'static, R: Send + 'static> HostPinnedPool<T, R> {
             worker_count: worker_stats.len(),
             total_tasks_executed: total_executed,
             total_tasks_failed: total_failed,
-            avg_task_time_ms: if total_executed > 0 {
-                total_exec_ms / total_executed
-            } else {
-                0
-            },
+            avg_task_time_ms: total_exec_ms.checked_div(total_executed).unwrap_or(0),
             pending_tasks: self.total_tasks.load(Ordering::Relaxed)
                 - self.tasks_completed.load(Ordering::Relaxed),
         }

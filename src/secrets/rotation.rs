@@ -509,7 +509,7 @@ impl SecretGenerator {
         }
 
         let charset: Vec<char> = charset.chars().collect();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Guarantee at least one character from each enabled class
         let mut required: Vec<char> = Vec::new();
@@ -521,7 +521,7 @@ impl SecretGenerator {
             }
             .chars()
             .collect();
-            required.push(upper[rng.gen_range(0..upper.len())]);
+            required.push(upper[rng.random_range(0..upper.len())]);
         }
         if self.config.include_lowercase {
             let lower: Vec<char> = if self.config.exclude_ambiguous {
@@ -531,7 +531,7 @@ impl SecretGenerator {
             }
             .chars()
             .collect();
-            required.push(lower[rng.gen_range(0..lower.len())]);
+            required.push(lower[rng.random_range(0..lower.len())]);
         }
         if self.config.include_numbers {
             let digits: Vec<char> = if self.config.exclude_ambiguous {
@@ -541,19 +541,19 @@ impl SecretGenerator {
             }
             .chars()
             .collect();
-            required.push(digits[rng.gen_range(0..digits.len())]);
+            required.push(digits[rng.random_range(0..digits.len())]);
         }
         if self.config.include_special {
             let special: Vec<char> = self.config.special_chars.chars().collect();
             if !special.is_empty() {
-                required.push(special[rng.gen_range(0..special.len())]);
+                required.push(special[rng.random_range(0..special.len())]);
             }
         }
 
         let remaining = self.config.password_length.saturating_sub(required.len());
         let mut password: Vec<char> = required;
         for _ in 0..remaining {
-            password.push(charset[rng.gen_range(0..charset.len())]);
+            password.push(charset[rng.random_range(0..charset.len())]);
         }
 
         // Shuffle to avoid predictable positions for required characters
@@ -570,10 +570,10 @@ impl SecretGenerator {
         let charset: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
             .chars()
             .collect();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let key: String = (0..self.config.api_key_length)
-            .map(|_| charset[rng.gen_range(0..charset.len())])
+            .map(|_| charset[rng.random_range(0..charset.len())])
             .collect();
 
         Ok(SecretValue::String(key))
@@ -585,7 +585,7 @@ impl SecretGenerator {
         use rand::RngCore;
 
         let mut bytes = vec![0u8; 32];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        rand::rng().fill_bytes(&mut bytes);
 
         let token = URL_SAFE_NO_PAD.encode(&bytes);
         Ok(SecretValue::String(token))
@@ -596,7 +596,7 @@ impl SecretGenerator {
         use rand::RngCore;
 
         let mut key = vec![0u8; self.config.encryption_key_size];
-        rand::thread_rng().fill_bytes(&mut key);
+        rand::rng().fill_bytes(&mut key);
 
         Ok(SecretValue::Binary(key))
     }

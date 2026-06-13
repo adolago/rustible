@@ -517,8 +517,7 @@ impl SshConnection {
         })?;
 
         // Handle escalation password if needed
-        if options.escalate && options.escalate_password.is_some() {
-            let password = options.escalate_password.as_ref().unwrap();
+        if let (true, Some(password)) = (options.escalate, options.escalate_password.as_ref()) {
             channel
                 .write_all(format!("{}\n", password).as_bytes())
                 .map_err(|e| {

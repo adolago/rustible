@@ -350,9 +350,6 @@ pub fn get_user_groups(username: &str) -> NativeResult<Vec<String>> {
                 Err(_) => continue,
             };
 
-            #[cfg(not(target_os = "macos"))]
-            let gid = gid;
-
             if let Ok(Some(group)) = get_group_by_gid(gid) {
                 group_names.push(group.name);
             }

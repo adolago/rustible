@@ -877,7 +877,7 @@ impl StatsCallback {
         if !playbook_stats.module_stats.is_empty() {
             summary.push_str("\nTop modules by execution time:\n");
             let mut modules: Vec<_> = playbook_stats.module_stats.iter().collect();
-            modules.sort_by(|a, b| b.1.total_duration_ms.cmp(&a.1.total_duration_ms));
+            modules.sort_by_key(|(_, s)| std::cmp::Reverse(s.total_duration_ms));
 
             for (module, module_stats) in modules.iter().take(5) {
                 summary.push_str(&format!(

@@ -89,7 +89,7 @@ impl DriftCorrelator {
             .collect();
 
         // Sort by frequency descending so the most problematic resources appear first.
-        results.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+        results.sort_by_key(|r| std::cmp::Reverse(r.frequency));
         results
     }
 

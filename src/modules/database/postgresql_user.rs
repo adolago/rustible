@@ -881,7 +881,7 @@ mod security_tests {
             Ok(false)
         }
         async fn stat(&self, _path: &Path) -> crate::connection::ConnectionResult<FileStat> {
-            unimplemented!()
+            panic!("stat is not exercised by these tests")
         }
         async fn close(&self) -> crate::connection::ConnectionResult<()> {
             Ok(())

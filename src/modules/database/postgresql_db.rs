@@ -202,11 +202,8 @@ impl PgConnectionConfig {
     pub fn build_psql_args(&self, database: &str) -> String {
         let mut args = Vec::new();
 
-        if self.unix_socket.is_some() {
-            args.push(format!(
-                "-h {}",
-                shell_escape(self.unix_socket.as_ref().unwrap())
-            ));
+        if let Some(socket) = self.unix_socket.as_ref() {
+            args.push(format!("-h {}", shell_escape(socket)));
         } else {
             args.push(format!("-h {}", shell_escape(&self.host)));
         }
@@ -589,11 +586,8 @@ impl PostgresqlDbModule {
         let mut cmd_parts = vec!["pg_dump".to_string()];
 
         // Connection options
-        if config.conn.unix_socket.is_some() {
-            cmd_parts.push(format!(
-                "-h {}",
-                shell_escape(config.conn.unix_socket.as_ref().unwrap())
-            ));
+        if let Some(socket) = config.conn.unix_socket.as_ref() {
+            cmd_parts.push(format!("-h {}", shell_escape(socket)));
         } else {
             cmd_parts.push(format!("-h {}", shell_escape(&config.conn.host)));
         }
@@ -665,11 +659,8 @@ impl PostgresqlDbModule {
             let mut cmd_parts = vec!["pg_restore".to_string()];
 
             // Connection options
-            if config.conn.unix_socket.is_some() {
-                cmd_parts.push(format!(
-                    "-h {}",
-                    shell_escape(config.conn.unix_socket.as_ref().unwrap())
-                ));
+            if let Some(socket) = config.conn.unix_socket.as_ref() {
+                cmd_parts.push(format!("-h {}", shell_escape(socket)));
             } else {
                 cmd_parts.push(format!("-h {}", shell_escape(&config.conn.host)));
             }

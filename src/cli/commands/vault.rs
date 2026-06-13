@@ -3,6 +3,8 @@
 //! This module implements the `vault` subcommand for managing encrypted secrets.
 
 use super::{CommandContext, Runnable};
+use aes_gcm::aead::rand_core::RngCore;
+use aes_gcm::aead::OsRng;
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
@@ -14,11 +16,11 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use dialoguer::theme::ColorfulTheme;
-use rand::rngs::OsRng;
-use rand::Rng;
+use rustible::security::SecretString;
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+use zeroize::Zeroize;
 
 /// Vault header marker
 const VAULT_HEADER: &str = "$RUSTIBLE_VAULT;1.0;AES256-GCM";
@@ -202,13 +204,15 @@ pub struct LoginArgs {
 
 /// Vault encryption/decryption engine
 pub struct VaultEngine {
-    password: String,
+    password: SecretString,
 }
 
 impl VaultEngine {
     /// Create a new vault engine with the given password
-    pub fn new(password: String) -> Self {
-        Self { password }
+    pub fn new(password: impl Into<SecretString>) -> Self {
+        Self {
+            password: password.into(),
+        }
     }
 
     /// Derive an encryption key from the password
@@ -231,8 +235,10 @@ impl VaultEngine {
     /// Encrypt data
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<String> {
         // Generate random salt and nonce
-        let salt: [u8; 16] = OsRng.gen();
-        let nonce_bytes: [u8; 12] = OsRng.gen();
+        let mut salt = [0u8; 16];
+        OsRng.fill_bytes(&mut salt);
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
 
         // Derive key
         let key = self.derive_key(&salt)?;
@@ -321,24 +327,31 @@ impl VaultEngine {
     }
 }
 
-/// Get password from file or prompt
-fn get_password(password_file: Option<&PathBuf>, ctx: &CommandContext) -> Result<String> {
+/// Get password from file or prompt.
+///
+/// The password is held in zeroizing storage and transient read buffers are
+/// wiped before returning, keeping plaintext lifetime minimal.
+fn get_password(password_file: Option<&PathBuf>, ctx: &CommandContext) -> Result<SecretString> {
     if let Some(file) = password_file {
-        let password = fs::read_to_string(file)
+        let mut raw = fs::read_to_string(file)
             .with_context(|| format!("Failed to read password file: {}", file.display()))?;
-        return Ok(password.trim().to_string());
+        let password = SecretString::new(raw.trim());
+        raw.zeroize();
+        return Ok(password);
     }
 
     // Check environment variable
     if let Ok(password) = std::env::var("RUSTIBLE_VAULT_PASSWORD") {
-        return Ok(password);
+        return Ok(SecretString::new(password));
     }
 
     // Check for password file in environment
     if let Some(file) = crate::cli::env::vault_password_file() {
-        let password = fs::read_to_string(&file)
+        let mut raw = fs::read_to_string(&file)
             .with_context(|| format!("Failed to read password file: {}", file.display()))?;
-        return Ok(password.trim().to_string());
+        let password = SecretString::new(raw.trim());
+        raw.zeroize();
+        return Ok(password);
     }
 
     // Prompt for password
@@ -348,14 +361,14 @@ fn get_password(password_file: Option<&PathBuf>, ctx: &CommandContext) -> Result
         .with_prompt("🔐 Vault password")
         .interact()?;
 
-    Ok(password)
+    Ok(SecretString::new(password))
 }
 
 /// Get password with confirmation
 fn get_password_with_confirm(
     password_file: Option<&PathBuf>,
     ctx: &CommandContext,
-) -> Result<String> {
+) -> Result<SecretString> {
     if password_file.is_some() {
         return get_password(password_file, ctx);
     }
@@ -367,7 +380,7 @@ fn get_password_with_confirm(
         .with_confirmation("🔐 Confirm Vault password", "Passwords do not match")
         .interact()?;
 
-    Ok(password)
+    Ok(SecretString::new(password))
 }
 
 impl VaultArgs {
@@ -699,7 +712,8 @@ impl VaultArgs {
                 }
 
                 // Generate a random 64-character password using hex encoding (32 random bytes = 64 hex chars)
-                let random_bytes: [u8; 32] = OsRng.gen();
+                let mut random_bytes = [0u8; 32];
+                OsRng.fill_bytes(&mut random_bytes);
                 let password: String = random_bytes.iter().map(|b| format!("{:02x}", b)).collect();
 
                 // Write the password file
@@ -785,6 +799,16 @@ mod tests {
 
         assert!(VaultEngine::is_encrypted(&encrypted));
 
+        let decrypted = engine.decrypt(&encrypted).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_secret_string_password_roundtrip() {
+        let engine = VaultEngine::new(SecretString::new("s3cret"));
+
+        let plaintext = b"sensitive data";
+        let encrypted = engine.encrypt(plaintext).unwrap();
         let decrypted = engine.decrypt(&encrypted).unwrap();
         assert_eq!(decrypted, plaintext);
     }

@@ -355,11 +355,9 @@ impl MetricsCollector {
         let backpressure_events = self.backpressure_events.load(Ordering::Relaxed);
         let total_wait_time = self.total_wait_time_us.load(Ordering::Relaxed);
 
-        let avg_wait_time_us = if backpressure_events > 0 {
-            total_wait_time / backpressure_events
-        } else {
-            0
-        };
+        let avg_wait_time_us = total_wait_time
+            .checked_div(backpressure_events)
+            .unwrap_or(0);
 
         RuntimeMetrics {
             tasks_spawned,

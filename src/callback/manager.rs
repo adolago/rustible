@@ -535,7 +535,7 @@ impl CallbackManager {
             .collect();
 
         // Sort by priority (lower values first)
-        sorted.sort_by(|a, b| a.1.cmp(&b.1));
+        sorted.sort_by_key(|a| a.1);
 
         let names: Vec<String> = sorted.into_iter().map(|(name, _)| name).collect();
         *self.sorted_plugins.write() = names;

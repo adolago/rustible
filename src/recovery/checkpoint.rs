@@ -548,7 +548,7 @@ impl CheckpointStore {
             .collect();
 
         // Sort by creation time (newest first)
-        checkpoints.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        checkpoints.sort_by_key(|c| std::cmp::Reverse(c.created_at));
         checkpoints
     }
 
@@ -597,7 +597,7 @@ impl CheckpointStore {
 
         for (_, mut checkpoints) in by_playbook {
             // Sort by age (oldest first)
-            checkpoints.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+            checkpoints.sort_by_key(|a| a.created_at);
 
             let mut to_delete = Vec::new();
 

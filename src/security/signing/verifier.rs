@@ -119,7 +119,7 @@ impl ArtifactVerifier {
 
 /// Decode a hex string into bytes. Returns `None` on invalid input.
 fn hex_decode(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);

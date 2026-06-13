@@ -66,55 +66,14 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
-      - name: Create deny.toml if not exists
-        run: |
-          if [[ ! -f deny.toml ]]; then
-            cat > deny.toml << 'EOF'
-          [advisories]
-          db-path = "~/.cargo/advisory-db"
-          db-urls = ["https://github.com/rustsec/advisory-db"]
-          unmaintained = "all"
-          unsound = "workspace"
-          yanked = "warn"
-          ignore = [
-              "RUSTSEC-2023-0071",
-              "RUSTSEC-2021-0145",
-              "RUSTSEC-2024-0421",
-          ]
-
-          [licenses]
-          confidence-threshold = 0.8
-          allow = [
-              "MIT",
-              "Apache-2.0",
-              "Apache-2.0 WITH LLVM-exception",
-              "BSD-2-Clause",
-              "BSD-3-Clause",
-              "ISC",
-              "Zlib",
-              "0BSD",
-              "Unicode-DFS-2016",
-              "Unicode-3.0",
-              "MPL-2.0",
-              "CC0-1.0",
-              "OpenSSL",
-              "CDLA-Permissive-2.0",
-          ]
-
-          [bans]
-          multiple-versions = "warn"
-          wildcards = "warn"
-          highlight = "all"
-
-          [sources]
-          unknown-registry = "deny"
-          unknown-git = "warn"
-          allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-          EOF
-          fi
-
       - name: Run cargo deny
-        run: cargo deny check -W unmaintained -W unsound 2>&1 | tee license-report.txt || true
+        shell: bash
+        run: |
+          # deny.toml is checked in at the repo root. Advisories are owned by
+          # the cargo-audit job (.cargo/audit.toml); this gate covers licenses,
+          # bans, and sources, and fails the workflow on violations.
+          set -o pipefail
+          cargo deny check licenses bans sources 2>&1 | tee license-report.txt
 
       - name: Upload license report
         uses: actions/upload-artifact@v4

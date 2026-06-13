@@ -53,9 +53,11 @@ impl fmt::Debug for SigningKeyPair {
 impl SigningKeyPair {
     /// Generate a new random signing key pair.
     pub fn generate(id: impl Into<String>) -> Self {
-        use rand::RngCore;
+        use rand::TryRngCore;
         let mut key_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut key_bytes);
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut key_bytes)
+            .expect("OS entropy source unavailable");
         Self {
             id: id.into(),
             algorithm: SigningAlgorithm::Blake3Hmac,

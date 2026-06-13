@@ -622,7 +622,6 @@ fn filter_quote(value: &Value) -> FilterResult<Value> {
 
 fn filter_shuffle(value: &Value) -> FilterResult<Value> {
     use rand::seq::SliceRandom;
-    use rand::thread_rng;
 
     let arr = value.as_array().ok_or_else(|| FilterError::InvalidInput {
         filter: "shuffle".to_string(),
@@ -630,7 +629,7 @@ fn filter_shuffle(value: &Value) -> FilterResult<Value> {
     })?;
 
     let mut result = arr.clone();
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     result.shuffle(&mut rng);
 
     Ok(Value::Array(result))
@@ -783,7 +782,7 @@ fn filter_median(value: &Value) -> FilterResult<Value> {
 
     nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    let median = if nums.len() % 2 == 0 {
+    let median = if nums.len().is_multiple_of(2) {
         (nums[nums.len() / 2 - 1] + nums[nums.len() / 2]) / 2.0
     } else {
         nums[nums.len() / 2]

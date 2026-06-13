@@ -722,7 +722,7 @@ impl LogFileCallback {
         }
 
         // Sort by modification time (oldest first)
-        log_files.sort_by(|a, b| a.1.cmp(&b.1));
+        log_files.sort_by_key(|a| a.1);
 
         let now = std::time::SystemTime::now();
 

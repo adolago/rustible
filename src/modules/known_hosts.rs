@@ -297,7 +297,7 @@ fn hash_hostname(hostname: &str, port: Option<u16>) -> String {
     let target = format_hostname_for_storage(hostname, port);
 
     // Generate 20 random bytes for salt (SHA1 output size)
-    let salt: [u8; 20] = rand::thread_rng().gen();
+    let salt: [u8; 20] = rand::rng().random();
     let salt_b64 = BASE64.encode(salt);
     let hash_b64 = compute_hostname_hash(&target, &salt);
 

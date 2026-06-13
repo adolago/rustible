@@ -245,7 +245,7 @@ impl RetryPolicy {
         // Apply jitter
         if self.jitter > 0.0 {
             let jitter_range = capped_delay.as_secs_f64() * self.jitter;
-            let jitter_value = rand::thread_rng().gen_range(-jitter_range..=jitter_range);
+            let jitter_value = rand::rng().random_range(-jitter_range..=jitter_range);
             let jittered_secs = (capped_delay.as_secs_f64() + jitter_value).max(0.0);
             Duration::from_secs_f64(jittered_secs)
         } else {

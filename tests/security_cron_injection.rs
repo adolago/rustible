@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use regex::Regex;
+
     use rustible::connection::{
         CommandResult, Connection, ConnectionError, ExecuteOptions, FileStat, TransferOptions,
     };
@@ -50,7 +50,7 @@ mod tests {
             Ok(())
         }
         async fn stat(&self, _path: &Path) -> Result<FileStat, ConnectionError> {
-            unimplemented!()
+            panic!("stat is not exercised by these tests")
         }
         async fn path_exists(&self, _path: &Path) -> Result<bool, ConnectionError> {
             Ok(false)

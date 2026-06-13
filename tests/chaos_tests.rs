@@ -154,8 +154,8 @@ impl<C: Connection> ChaosConnection<C> {
 
         // Check random failure rate
         if self.failure_rate > 0.0 {
-            let mut rng = rand::thread_rng();
-            if rng.gen::<f64>() < self.failure_rate {
+            let mut rng = rand::rng();
+            if rng.random::<f64>() < self.failure_rate {
                 return Err(rustible::connection::ConnectionError::ConnectionFailed(
                     "Chaos: random failure".to_string(),
                 ));

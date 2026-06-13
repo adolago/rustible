@@ -35,13 +35,11 @@ pub fn should_sample(
                 };
             }
         }
-        "task_execution" => {
-            if rand::random::<f32>() < 0.05 {
-                return SamplingDecision {
-                    should_log: true,
-                    sampling_reason: "random".to_string(),
-                };
-            }
+        "task_execution" if rand::random::<f32>() < 0.05 => {
+            return SamplingDecision {
+                should_log: true,
+                sampling_reason: "random".to_string(),
+            };
         }
         _ => {}
     }

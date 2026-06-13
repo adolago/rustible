@@ -135,8 +135,8 @@ A comprehensive roadmap for Rustible development, outlining current features, pl
 **Cloud Modules:**
 - :white_check_mark: `aws_ec2` - AWS EC2 instances
 - :white_check_mark: `aws_s3` - AWS S3 storage
-- :white_check_mark: `azure_vm` - Azure virtual machines
-- :white_check_mark: `gcp_compute` - GCP Compute Engine
+- :test_tube: `azure_vm` - Azure virtual machines (experimental; requires `experimental` + provider feature flags)
+- :test_tube: `gcp_compute` - GCP Compute Engine (experimental; requires `experimental` + provider feature flags)
 
 **Network Device Modules:**
 - :white_check_mark: `ios_config` - Cisco IOS configuration
@@ -300,7 +300,7 @@ is satisfied on a candidate commit.
 | Docs/source-of-truth cleanup | :construction: In progress | Consolidate status in `FEATURE_STATUS.md`, then keep README and roadmap aligned. |
 | Default CI baseline | :construction: In progress | The remaining beta gate is a consistently green default CI/test suite. |
 | CLI smoke coverage | :white_check_mark: Complete | `scripts/smoke_tests.sh` and `tests/cli_smoke_tests.rs` exercise `run`, `check`, and `vault`, and the default CI path runs them explicitly. |
-| Lock rollback execution | :white_check_mark: Complete | `rustible lock rollback` now uses snapshot-backed checkpoints, supports dry-run, and executes live rollback actions. |
+| Lock rollback execution | :test_tube: Implemented (Beta quality) | `rustible lock rollback` uses snapshot-backed checkpoints, supports dry-run, and executes live rollback actions. |
 | WinRM hardening | :white_check_mark: Complete | `winrm` no longer requires `experimental`; parity/integration tests cover explicit unsupported Kerberos/CredSSP behavior. |
 | AWS native module parity | :white_check_mark: Complete | `aws_iam_role`, `aws_iam_policy`, `aws_security_group_rule`, and `aws_ebs_volume` are available as native playbook modules. |
 
@@ -309,7 +309,7 @@ is satisfied on a candidate commit.
 | Area | Status | Description |
 |------|--------|-------------|
 | Execution preview | :white_check_mark: Complete | Plan structures and preview output are already present in the CLI. |
-| Checkpoint rollback | :white_check_mark: Complete | Checkpoints include snapshot metadata and rollback can restore recorded state transitions. |
+| Checkpoint rollback | :test_tube: Beta | Checkpoints include snapshot metadata and rollback can restore recorded state transitions. |
 | Windows targeting | :test_tube: Beta | Linux/macOS controllers can target Windows hosts over WinRM with Beta-level support. |
 | AWS module coverage | :test_tube: Beta | Native AWS coverage includes EC2, S3, IAM roles/policies, standalone SG rules, and EBS volumes. |
 | State manifests | :construction: In progress | State and lockfile foundations exist; remote/state-team workflows continue to mature. |

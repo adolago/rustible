@@ -1015,9 +1015,9 @@ impl TemplateResolver {
 
         // Check if the entire string is a single template (return raw value)
         if captures.len() == 1 {
-            let full_match = captures[0].get(0).unwrap().as_str();
+            let full_match = captures[0].get(0).map_or("", |m| m.as_str());
             if s.trim() == full_match {
-                let path = captures[0].get(1).unwrap().as_str().trim();
+                let path = captures[0].get(1).map_or("", |m| m.as_str()).trim();
 
                 // Try direct context lookup first
                 if let Some(value) = ctx.get_value(path) {
@@ -1064,8 +1064,11 @@ impl TemplateResolver {
                 // Fall back to manual replacement
                 let mut result = s.to_string();
                 for cap in &captures {
-                    let full_match = cap.get(0).unwrap().as_str();
-                    let path = cap.get(1).unwrap().as_str().trim();
+                    let (Some(full), Some(path_match)) = (cap.get(0), cap.get(1)) else {
+                        continue;
+                    };
+                    let full_match = full.as_str();
+                    let path = path_match.as_str().trim();
 
                     if let Some(value) = ctx.get_value(path) {
                         let replacement = match value {

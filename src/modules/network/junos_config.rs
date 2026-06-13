@@ -1267,11 +1267,8 @@ impl JunosConfigModule {
 
             Self::commit_cli(connection.as_ref(), &commit_opts, context).await?;
 
-            if config.commit_confirm.is_some() {
-                messages.push(format!(
-                    "Committed with {} minute confirm timeout",
-                    config.commit_confirm.unwrap()
-                ));
+            if let Some(confirm) = config.commit_confirm {
+                messages.push(format!("Committed with {} minute confirm timeout", confirm));
             } else {
                 messages.push("Committed configuration".to_string());
             }

@@ -1591,8 +1591,7 @@ impl Connection for RusshConnection {
             })?;
 
             // Handle escalation password if needed
-            if options.escalate && options.escalate_password.is_some() {
-                let password = options.escalate_password.as_ref().unwrap();
+            if let (true, Some(password)) = (options.escalate, options.escalate_password.as_ref()) {
                 let password_data = format!("{}\n", password);
                 let mut cursor = tokio::io::BufReader::new(password_data.as_bytes());
                 channel.data(&mut cursor).await.map_err(|e| {
@@ -2781,9 +2780,10 @@ impl<'a> PipelinedExecutor<'a> {
                 continue;
             }
 
-            if cmd.options.escalate && cmd.options.escalate_password.is_some() {
+            if let (true, Some(password)) =
+                (cmd.options.escalate, cmd.options.escalate_password.as_ref())
+            {
                 if let Some(Some(channel)) = channels.get_mut(idx) {
-                    let password = cmd.options.escalate_password.as_ref().unwrap();
                     let password_data = format!("{}\n", password);
                     let mut cursor = tokio::io::BufReader::new(password_data.as_bytes());
 
@@ -2803,7 +2803,7 @@ impl<'a> PipelinedExecutor<'a> {
 
         let collect_futures: Vec<_> = channels
             .into_iter()
-            .zip(channel_errors.into_iter())
+            .zip(channel_errors)
             .zip(commands.iter())
             .map(|((channel_opt, error_opt), cmd)| {
                 let timeout = cmd.options.timeout.or(default_timeout);
@@ -4137,10 +4137,9 @@ mod verification_tests {
 
     // Helper to generate a dummy Ed25519 key (russh 0.54+ API)
     fn generate_key() -> PrivateKey {
-        use rand::SeedableRng;
-        // Use a seeded RNG for reproducibility in tests
-        let mut rng = rand::rngs::StdRng::from_entropy();
-        PrivateKey::random(&mut rng, Algorithm::Ed25519).expect("Failed to generate key")
+        // ssh-key expects a rand_core 0.6 RNG; use its own re-export.
+        use russh::keys::ssh_key::rand_core::OsRng;
+        PrivateKey::random(&mut OsRng, Algorithm::Ed25519).expect("Failed to generate key")
     }
 
     #[tokio::test]

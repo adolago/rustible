@@ -82,11 +82,9 @@ impl DiffStats {
 
         // Create a visual bar (max 50 chars wide)
         let bar_width = 50.min(total);
-        let insert_width = if total > 0 {
-            (self.insertions * bar_width) / total
-        } else {
-            0
-        };
+        let insert_width = (self.insertions * bar_width)
+            .checked_div(total)
+            .unwrap_or(0);
         let delete_width = bar_width - insert_width;
 
         let insert_bar = "+".repeat(insert_width);
