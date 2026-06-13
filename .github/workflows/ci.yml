@@ -42,9 +42,10 @@ jobs:
 
       - name: Run clippy
         run: |
-          # Run clippy on lib and bin only (tests have compilation issues with feature combinations)
-          # Note: Using default features only; --all-features includes experimental cloud modules
-          cargo clippy --lib --bins
+          # Default features only; --all-features includes experimental cloud modules.
+          # Warnings are a hard failure; test code gets unwrap/expect allowances
+          # via clippy.toml rather than being skipped.
+          cargo clippy --all-targets -- -D warnings
 
       - name: Check documentation
         run: cargo doc --no-deps

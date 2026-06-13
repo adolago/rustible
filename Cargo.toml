@@ -91,6 +91,12 @@ readme = "README.md"
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)', 'cfg(tarpaulin_include)'] }
 
+[lints.clippy]
+# Leftover debugging aids must not land on main.
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "warn"
+
 [lib]
 name = "rustible"
 path = "src/lib.rs"
