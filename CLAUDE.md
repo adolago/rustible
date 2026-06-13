@@ -1,9 +1,12 @@
 # Rustible
 
 ## Build Commands
-- `npm run build` - Build project
-- `npm run test` - Run tests
-- `npm run lint` - Linting
+- `cargo check` - Fast typecheck; `cargo build` - Build project
+- `cargo test -- --test-threads=1` - Run tests (CI runs single-threaded)
+- `cargo clippy --lib --bins -- -D warnings` - Lint
+- `cargo fmt --all -- --check` - Format check
+
+Canonical feature/implementation status lives in `docs/FEATURE_STATUS.md`.
 
 ## Important Rules
 - Do what has been asked; nothing more, nothing less.
