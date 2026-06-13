@@ -11,6 +11,19 @@ use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Serialize for line-oriented JSON output without panicking; emits a JSON
+/// error object if serialization itself fails.
+fn json_line<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {}"}}"#, e))
+}
+
+/// Pretty-printing variant of [`json_line`].
+fn json_pretty<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_string_pretty(value)
+        .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {}"}}"#, e))
+}
+
 /// Task execution status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -223,7 +236,7 @@ impl OutputFormatter {
                 "message": message,
                 "duration_ms": duration.map(|d| d.as_millis())
             });
-            println!("{}", serde_json::to_string(&result).unwrap());
+            println!("{}", json_line(&result));
             return;
         }
 
@@ -319,7 +332,7 @@ impl OutputFormatter {
                 "status": status.as_str(),
                 "details": details
             });
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            println!("{}", json_pretty(&result));
             return;
         }
 
@@ -342,7 +355,7 @@ impl OutputFormatter {
                 "hosts": &stats.hosts,
                 "duration_ms": duration.as_millis(),
             });
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            println!("{}", json_pretty(&result));
             return;
         }
 
@@ -613,10 +626,7 @@ impl OutputFormatter {
                 "type": "success",
                 "message": message
             });
-            println!(
-                "{}",
-                serde_json::to_string(&success).expect("Failed to serialize output")
-            );
+            println!("{}", json_line(&success));
             return;
         }
 
@@ -634,7 +644,7 @@ impl OutputFormatter {
                 "type": "error",
                 "message": message
             });
-            eprintln!("{}", serde_json::to_string(&err).unwrap());
+            eprintln!("{}", json_line(&err));
             return;
         }
 
@@ -652,7 +662,7 @@ impl OutputFormatter {
                 "type": "diagnostic",
                 "message": message
             });
-            eprintln!("{}", serde_json::to_string(&err).unwrap());
+            eprintln!("{}", json_line(&err));
             return;
         }
 
@@ -666,7 +676,7 @@ impl OutputFormatter {
                 "type": "warning",
                 "message": message
             });
-            eprintln!("{}", serde_json::to_string(&warn).unwrap());
+            eprintln!("{}", json_line(&warn));
             return;
         }
 
@@ -684,7 +694,7 @@ impl OutputFormatter {
                 "type": "hint",
                 "message": message
             });
-            eprintln!("{}", serde_json::to_string(&hint).unwrap());
+            eprintln!("{}", json_line(&hint));
             return;
         }
 
@@ -706,7 +716,7 @@ impl OutputFormatter {
                 "type": "info",
                 "message": message
             });
-            println!("{}", serde_json::to_string(&info).unwrap());
+            println!("{}", json_line(&info));
             return;
         }
 
@@ -724,7 +734,7 @@ impl OutputFormatter {
                 "type": "created",
                 "message": message
             });
-            println!("{}", serde_json::to_string(&success).unwrap());
+            println!("{}", json_line(&success));
             return;
         }
 
@@ -742,7 +752,7 @@ impl OutputFormatter {
                 "type": "skipped",
                 "message": message
             });
-            println!("{}", serde_json::to_string(&success).unwrap());
+            println!("{}", json_line(&success));
             return;
         }
 
@@ -760,7 +770,7 @@ impl OutputFormatter {
                 "type": "plan",
                 "message": message
             });
-            println!("{}", serde_json::to_string(&plan).unwrap());
+            println!("{}", json_line(&plan));
             return;
         }
 
@@ -779,7 +789,7 @@ impl OutputFormatter {
                 "type": "debug",
                 "message": message
             });
-            println!("{}", serde_json::to_string(&debug).unwrap());
+            println!("{}", json_line(&debug));
             return;
         }
 
@@ -799,7 +809,7 @@ impl OutputFormatter {
                 "before": old,
                 "after": new
             });
-            println!("{}", serde_json::to_string(&diff).unwrap());
+            println!("{}", json_line(&diff));
             return;
         }
 
@@ -874,7 +884,7 @@ impl OutputFormatter {
                 "title": title,
                 "items": items
             });
-            println!("{}", serde_json::to_string_pretty(&list).unwrap());
+            println!("{}", json_pretty(&list));
             return;
         }
 
@@ -902,7 +912,7 @@ impl OutputFormatter {
                 "headers": headers,
                 "rows": rows
             });
-            println!("{}", serde_json::to_string_pretty(&table).unwrap());
+            println!("{}", json_pretty(&table));
             return;
         }
 
@@ -991,7 +1001,7 @@ impl OutputFormatter {
                 "resource_name": resource_name,
                 "details": details
             });
-            println!("{}", serde_json::to_string(&change).unwrap());
+            println!("{}", json_line(&change));
             return;
         }
 
@@ -1072,7 +1082,7 @@ impl OutputFormatter {
                 "to_change": to_change,
                 "to_destroy": to_destroy
             });
-            println!("{}", serde_json::to_string(&summary).unwrap());
+            println!("{}", json_line(&summary));
             return;
         }
 

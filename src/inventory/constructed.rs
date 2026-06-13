@@ -943,7 +943,9 @@ impl ConstructedPlugin {
         // Process each host
         for host_name in &host_names {
             let hostvars = {
-                let host = inventory.get_host(host_name).unwrap();
+                let Some(host) = inventory.get_host(host_name) else {
+                    continue;
+                };
                 inventory.get_host_vars(host)
             };
 

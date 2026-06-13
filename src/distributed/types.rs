@@ -24,7 +24,7 @@ impl ControllerId {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_nanos();
         Self(format!("ctrl-{:x}", timestamp))
     }
@@ -51,7 +51,7 @@ impl WorkUnitId {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_nanos();
         Self(format!("wu-{:x}", timestamp))
     }
@@ -78,7 +78,7 @@ impl RunId {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_nanos();
         Self(format!("run-{:x}", timestamp))
     }
@@ -306,7 +306,7 @@ impl WorkUnit {
         use std::time::{SystemTime, UNIX_EPOCH};
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64;
 
         Self {
@@ -383,7 +383,7 @@ impl WorkUnitCheckpoint {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64;
 
         Self {
@@ -435,7 +435,7 @@ impl Heartbeat {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64;
 
         Self {
@@ -495,7 +495,7 @@ impl Default for ClusterConfig {
         Self {
             cluster_id: "rustible-default".to_string(),
             controller_id: ControllerId::generate(),
-            bind_address: "0.0.0.0:9000".parse().unwrap(),
+            bind_address: "0.0.0.0:9000".parse().expect("static default bind address"),
             peers: Vec::new(),
             election_timeout_min_ms: 150,
             election_timeout_max_ms: 300,
@@ -533,7 +533,8 @@ impl ClusterConfig {
     pub fn random_election_timeout(&self) -> Duration {
         use rand::Rng;
         let mut rng = rand::rng();
-        let timeout_ms = rng.random_range(self.election_timeout_min_ms..=self.election_timeout_max_ms);
+        let timeout_ms =
+            rng.random_range(self.election_timeout_min_ms..=self.election_timeout_max_ms);
         Duration::from_millis(timeout_ms)
     }
 
