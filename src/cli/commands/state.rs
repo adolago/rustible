@@ -787,7 +787,7 @@ impl StateArgs {
             StateCommand::Mv {
                 source,
                 destination,
-                state: _,
+                state,
                 force,
             } => {
                 ctx.output.banner("STATE MV");
@@ -831,6 +831,7 @@ impl StateArgs {
 
                 #[cfg(not(feature = "provisioning"))]
                 {
+                    let _ = &state; // consumed by the provisioning-gated branch above
                     ctx.output.error(
                         "Provisioning feature not enabled. Rebuild with --features provisioning",
                     );
@@ -844,7 +845,7 @@ impl StateArgs {
             StateCommand::ReplaceProvider {
                 from_provider,
                 to_provider,
-                state: _,
+                state,
                 force,
             } => {
                 ctx.output.banner("STATE REPLACE-PROVIDER");
@@ -892,6 +893,7 @@ impl StateArgs {
 
                 #[cfg(not(feature = "provisioning"))]
                 {
+                    let _ = &state; // consumed by the provisioning-gated branch above
                     ctx.output.error(
                         "Provisioning feature not enabled. Rebuild with --features provisioning",
                     );
