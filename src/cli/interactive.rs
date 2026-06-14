@@ -63,6 +63,13 @@ impl InteractiveSession {
                 .bold()
         );
         println!();
+        let _ = self.term.write_line(&format!(
+            "  {}",
+            "Tip: Use arrow keys to navigate menus, Space to select multiple items, Enter to confirm"
+                .cyan()
+                .dimmed()
+        ));
+        println!();
     }
 
     /// Prompt for main menu action
