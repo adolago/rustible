@@ -259,10 +259,10 @@ fn sanitize_command(command: &str) -> String {
         (r"(API_KEY[=:])\S+", "$1[REDACTED]"),
     ];
 
-    let mut result = cmd;
+    let mut result = cmd.to_string();
     for (pattern, replacement) in patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            result = re.replace_all(&result, replacement).to_string();
+        if let Ok(re) = crate::utils::get_regex(pattern) {
+            result = re.replace_all(&result, replacement).into_owned();
         }
     }
 
