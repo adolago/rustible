@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
-use regex::Regex;
+use crate::utils::regex_cache::get_regex;
 
 use crate::connection::{Connection, ExecuteOptions};
 use crate::modules::{
@@ -144,7 +144,7 @@ fn validate_opensm_config(
     let mut warnings = Vec::new();
 
     if let Some(ref prefix) = subnet_prefix {
-        let re = Regex::new(r"^0x[0-9a-fA-F]{16}$").unwrap();
+        let re = get_regex(r"^0x[0-9a-fA-F]{16}$").unwrap();
         if !re.is_match(prefix) {
             errors.push(format!(
                 "Invalid subnet_prefix '{}': must match 0x followed by 16 hex digits \
@@ -311,7 +311,7 @@ fn parse_sm_role(sminfo_output: &str) -> &'static str {
         return "standby";
     }
     // Check for numeric state
-    if let Some(caps) = Regex::new(r"state\s+(\d+)").unwrap().captures(&lower) {
+    if let Some(caps) = get_regex(r"state\s+(\d+)").unwrap().captures(&lower) {
         if let Some(m) = caps.get(1) {
             match m.as_str() {
                 "4" => return "master",
