@@ -589,9 +589,11 @@ impl ProvisionerContext {
 
 /// Parse array access pattern: "type.name[index].attr" -> (type, name, index, attr)
 fn parse_array_access(path: &str) -> Option<(String, String, usize, String)> {
-    let array_re =
+    static ARRAY_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let array_re = ARRAY_RE.get_or_init(|| {
         Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\[(\d+)\](?:\.(.+))?$")
-            .ok()?;
+            .expect("Invalid regex")
+    });
 
     let caps = array_re.captures(path)?;
     let resource_type = caps.get(1)?.as_str().to_string();
