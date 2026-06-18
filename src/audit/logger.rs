@@ -100,7 +100,14 @@ impl FileLogger {
             }
         }
 
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(&path)?;
 
         Ok(Self {
             path,
@@ -159,10 +166,14 @@ impl FileLogger {
         std::fs::rename(&self.path, &rotated)?;
 
         // Open new file
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(&self.path)?;
 
         let mut writer = self.writer.lock().unwrap();
         *writer = BufWriter::new(file);
