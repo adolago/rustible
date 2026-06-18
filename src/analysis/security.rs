@@ -399,10 +399,14 @@ impl SecurityAnalyzer {
 
         if let Some(cmd) = cmd {
             // Check for unquoted variable expansion
-            let var_pattern = Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap();
+            static VAR_PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+            let var_pattern =
+                VAR_PATTERN.get_or_init(|| Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap());
             if var_pattern.is_match(cmd) {
                 // Check if the variable is properly quoted
-                let quoted_var = Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap();
+                static QUOTED_VAR: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+                let quoted_var = QUOTED_VAR
+                    .get_or_init(|| Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap());
                 if !quoted_var.is_match(cmd) {
                     findings.push(
                         AnalysisFinding::new(
