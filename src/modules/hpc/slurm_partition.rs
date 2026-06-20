@@ -17,8 +17,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use once_cell::sync::Lazy;
 use regex::Regex;
 use tokio::runtime::Handle;
+
+// Cached regexes to avoid expensive compilation on every validation call.
+// This improves performance significantly when validating many partition attributes.
+static MAX_TIME_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^(\d+(-\d+(:\d+(:\d+)?)?)?|\d+(:\d+(:\d+)?)?)$").unwrap());
+
+static HOSTLIST_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9\[\]\-_,]+$").unwrap());
 
 use crate::connection::{Connection, ExecuteOptions};
 use crate::modules::{
@@ -504,8 +512,7 @@ fn is_valid_max_time(s: &str) -> bool {
     }
     // Match Slurm time formats:
     //   D-HH:MM:SS, D-HH:MM, D-HH, HH:MM:SS, MM:SS, MM
-    let re = Regex::new(r"^(\d+(-\d+(:\d+(:\d+)?)?)?|\d+(:\d+(:\d+)?)?)$").unwrap();
-    re.is_match(s)
+    MAX_TIME_RE.is_match(s)
 }
 
 /// Check if a string is valid Slurm hostlist notation.
@@ -517,8 +524,7 @@ fn is_valid_hostlist(s: &str) -> bool {
         return false;
     }
     // Slurm hostlists: alphanumeric, hyphens, brackets, commas, underscores
-    let re = Regex::new(r"^[a-zA-Z0-9\[\]\-_,]+$").unwrap();
-    re.is_match(s)
+    HOSTLIST_RE.is_match(s)
 }
 
 /// Build a map of desired partition properties from params for drift comparison.
