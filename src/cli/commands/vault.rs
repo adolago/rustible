@@ -490,8 +490,10 @@ impl VaultArgs {
                 };
 
                 // Create temporary file
-                let temp_dir = std::env::temp_dir();
-                let temp_file = temp_dir.join(format!(".rustible_vault_{}", std::process::id()));
+                let temp_file = tempfile::Builder::new()
+                    .prefix(".rustible_vault_")
+                    .tempfile()?
+                    .into_temp_path();
 
                 fs::write(&temp_file, &plaintext)?;
 
@@ -502,13 +504,11 @@ impl VaultArgs {
                     .with_context(|| format!("Failed to open editor: {}", args.editor))?;
 
                 if !status.success() {
-                    fs::remove_file(&temp_file).ok();
                     bail!("Editor exited with error");
                 }
 
                 // Read edited content
                 let edited = fs::read(&temp_file)?;
-                fs::remove_file(&temp_file)?;
 
                 // Re-encrypt if it was encrypted
                 if was_encrypted {
@@ -537,8 +537,10 @@ impl VaultArgs {
                 let engine = VaultEngine::new(password);
 
                 // Create temporary file
-                let temp_dir = std::env::temp_dir();
-                let temp_file = temp_dir.join(format!(".rustible_vault_{}", std::process::id()));
+                let temp_file = tempfile::Builder::new()
+                    .prefix(".rustible_vault_")
+                    .tempfile()?
+                    .into_temp_path();
 
                 fs::write(&temp_file, "")?;
 
@@ -549,13 +551,11 @@ impl VaultArgs {
                     .with_context(|| format!("Failed to open editor: {}", args.editor))?;
 
                 if !status.success() {
-                    fs::remove_file(&temp_file).ok();
                     bail!("Editor exited with error");
                 }
 
                 // Read content
                 let content = fs::read(&temp_file)?;
-                fs::remove_file(&temp_file)?;
 
                 if content.is_empty() {
                     ctx.output.warning("No content entered, file not created");
