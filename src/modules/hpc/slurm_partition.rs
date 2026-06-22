@@ -504,7 +504,9 @@ fn is_valid_max_time(s: &str) -> bool {
     }
     // Match Slurm time formats:
     //   D-HH:MM:SS, D-HH:MM, D-HH, HH:MM:SS, MM:SS, MM
-    let re = Regex::new(r"^(\d+(-\d+(:\d+(:\d+)?)?)?|\d+(:\d+(:\d+)?)?)$").unwrap();
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re =
+        RE.get_or_init(|| Regex::new(r"^(\d+(-\d+(:\d+(:\d+)?)?)?|\d+(:\d+(:\d+)?)?)$").unwrap());
     re.is_match(s)
 }
 
@@ -517,7 +519,8 @@ fn is_valid_hostlist(s: &str) -> bool {
         return false;
     }
     // Slurm hostlists: alphanumeric, hyphens, brackets, commas, underscores
-    let re = Regex::new(r"^[a-zA-Z0-9\[\]\-_,]+$").unwrap();
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"^[a-zA-Z0-9\[\]\-_,]+$").unwrap());
     re.is_match(s)
 }
 

@@ -702,7 +702,9 @@ fn validate_policies(params: &ModuleParams) -> ModuleResult<PreflightResult> {
         if val != "-1" {
             // Slurm time formats: minutes, minutes:seconds, hours:minutes:seconds,
             // days-hours, days-hours:minutes, days-hours:minutes:seconds
-            let wall_re = Regex::new(r"^\d+(-\d+:\d+(:\d+)?)?$").expect("invalid regex");
+            static WALL_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+            let wall_re = WALL_RE
+                .get_or_init(|| Regex::new(r"^\d+(-\d+:\d+(:\d+)?)?$").expect("invalid regex"));
             if !wall_re.is_match(val) {
                 errors.push(format!(
                     "max_wall must match time format (e.g. '60', '7-00:00:00') or '-1' for unlimited, got '{}'",
