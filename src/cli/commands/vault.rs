@@ -634,7 +634,7 @@ impl VaultArgs {
                     s.as_bytes().to_vec()
                 } else if std::io::stdin().is_terminal() {
                     let input = dialoguer::Password::with_theme(&ColorfulTheme::default())
-                        .with_prompt("📝 Enter text to encrypt (hidden)")
+                        .with_prompt("🔐 Enter text to encrypt (hidden)")
                         .with_confirmation("🔐 Confirm text to encrypt", "Inputs do not match")
                         .interact()?;
                     input.as_bytes().to_vec()
@@ -672,7 +672,7 @@ impl VaultArgs {
                 } else if std::io::stdin().is_terminal() {
                     println!(
                         "{}",
-                        "📝 Enter encrypted string (press Enter twice to finish):".bold()
+                        "🔐 Enter encrypted string (press Enter twice to finish):".bold()
                     );
                     let mut lines = Vec::new();
                     let stdin = io::stdin();
