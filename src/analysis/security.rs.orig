@@ -10,7 +10,6 @@ use super::{
 use crate::playbook::{Play, Playbook, Task};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
 
 /// Type of security vulnerability
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -400,14 +399,10 @@ impl SecurityAnalyzer {
 
         if let Some(cmd) = cmd {
             // Check for unquoted variable expansion
-            static VAR_PATTERN: OnceLock<Regex> = OnceLock::new();
-            let var_pattern =
-                VAR_PATTERN.get_or_init(|| Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap());
+            let var_pattern = Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap();
             if var_pattern.is_match(cmd) {
                 // Check if the variable is properly quoted
-                static QUOTED_VAR: OnceLock<Regex> = OnceLock::new();
-                let quoted_var = QUOTED_VAR
-                    .get_or_init(|| Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap());
+                let quoted_var = Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap();
                 if !quoted_var.is_match(cmd) {
                     findings.push(
                         AnalysisFinding::new(
