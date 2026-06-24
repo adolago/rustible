@@ -8,6 +8,7 @@ use super::{
     SourceLocation,
 };
 use crate::playbook::{Play, Playbook, Task};
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -399,11 +400,16 @@ impl SecurityAnalyzer {
 
         if let Some(cmd) = cmd {
             // Check for unquoted variable expansion
-            let var_pattern = Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap();
-            if var_pattern.is_match(cmd) {
+            // ⚡ Bolt Optimization: Cache regex to avoid recompilation on every function call.
+            // Expected Impact: Reduces per-call execution time significantly by compiling the regex exactly once.
+            static VAR_PATTERN: Lazy<Regex> =
+                Lazy::new(|| Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap());
+            if VAR_PATTERN.is_match(cmd) {
                 // Check if the variable is properly quoted
-                let quoted_var = Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap();
-                if !quoted_var.is_match(cmd) {
+                // ⚡ Bolt Optimization: Cache regex to avoid recompilation.
+                static QUOTED_VAR: Lazy<Regex> =
+                    Lazy::new(|| Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap());
+                if !QUOTED_VAR.is_match(cmd) {
                     findings.push(
                         AnalysisFinding::new(
                             "SEC006",
