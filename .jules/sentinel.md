@@ -103,3 +103,8 @@
 **Vulnerability:** A refactoring error in `validate_command_args` introduced a logic flaw where input containing any unsafe character would bypass the dangerous pattern check and incorrectly be considered valid, enabling potential command injection.
 **Learning:** Security validation functions must be thoroughly tested, especially when refactoring for performance optimizations (like adding fast-paths). Boolean logic errors in early returns can completely neutralize subsequent security checks.
 **Prevention:** Always maintain comprehensive unit tests covering both positive (safe) and negative (malicious) inputs for security validation routines. Ensure fast-path logic correctly falls through to more exhaustive checks when necessary.
+
+## 2025-06-25 - Predictable temporary file vulnerability in Vault command
+**Vulnerability:** The vault edit and create commands used `std::env::temp_dir()` combined with `std::process::id()` to create a predictable temporary file path. This could allow a local attacker to guess the file name and intercept or modify sensitive unencrypted data.
+**Learning:** Using predictable paths for temporary files that hold sensitive data is a security risk, especially on shared systems where `/tmp` is accessible to multiple users.
+**Prevention:** Always use secure temporary file creation utilities like `tempfile::Builder::new().tempfile()` which ensure unique names and atomic creation with secure default permissions.
