@@ -489,26 +489,23 @@ impl VaultArgs {
                     content.into_bytes()
                 };
 
-                // Create temporary file
-                let temp_dir = std::env::temp_dir();
-                let temp_file = temp_dir.join(format!(".rustible_vault_{}", std::process::id()));
+                // Create temporary file securely
+                let temp_file = tempfile::Builder::new().tempfile()?.into_temp_path();
 
                 fs::write(&temp_file, &plaintext)?;
 
                 // Open editor
                 let status = std::process::Command::new(&args.editor)
-                    .arg(&temp_file)
+                    .arg(&*temp_file)
                     .status()
                     .with_context(|| format!("Failed to open editor: {}", args.editor))?;
 
                 if !status.success() {
-                    fs::remove_file(&temp_file).ok();
                     bail!("Editor exited with error");
                 }
 
                 // Read edited content
                 let edited = fs::read(&temp_file)?;
-                fs::remove_file(&temp_file)?;
 
                 // Re-encrypt if it was encrypted
                 if was_encrypted {
@@ -536,26 +533,23 @@ impl VaultArgs {
                 let password = get_password_with_confirm(args.vault_password_file.as_ref(), ctx)?;
                 let engine = VaultEngine::new(password);
 
-                // Create temporary file
-                let temp_dir = std::env::temp_dir();
-                let temp_file = temp_dir.join(format!(".rustible_vault_{}", std::process::id()));
+                // Create temporary file securely
+                let temp_file = tempfile::Builder::new().tempfile()?.into_temp_path();
 
                 fs::write(&temp_file, "")?;
 
                 // Open editor
                 let status = std::process::Command::new(&args.editor)
-                    .arg(&temp_file)
+                    .arg(&*temp_file)
                     .status()
                     .with_context(|| format!("Failed to open editor: {}", args.editor))?;
 
                 if !status.success() {
-                    fs::remove_file(&temp_file).ok();
                     bail!("Editor exited with error");
                 }
 
                 // Read content
                 let content = fs::read(&temp_file)?;
-                fs::remove_file(&temp_file)?;
 
                 if content.is_empty() {
                     ctx.output.warning("No content entered, file not created");
