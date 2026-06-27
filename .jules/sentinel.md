@@ -103,3 +103,8 @@
 **Vulnerability:** A refactoring error in `validate_command_args` introduced a logic flaw where input containing any unsafe character would bypass the dangerous pattern check and incorrectly be considered valid, enabling potential command injection.
 **Learning:** Security validation functions must be thoroughly tested, especially when refactoring for performance optimizations (like adding fast-paths). Boolean logic errors in early returns can completely neutralize subsequent security checks.
 **Prevention:** Always maintain comprehensive unit tests covering both positive (safe) and negative (malicious) inputs for security validation routines. Ensure fast-path logic correctly falls through to more exhaustive checks when necessary.
+
+## 2026-06-27 - Insecure File Creation (TOCTOU) for Temporary Private Key
+**Vulnerability:** In `src/api/kernel.rs`, a temporary private key file was created using `std::fs::write` followed by `std::fs::set_permissions`. This allowed for a Time-of-Check to Time-of-Use (TOCTOU) vulnerability where the file was temporarily written to disk with default (potentially world-readable) permissions before being restricted.
+**Learning:** Convenience functions like `fs::write` combined with subsequent permission changes are not atomic and introduce a race condition.
+**Prevention:** Use `crate::utils::fs::secure_write_file` (or `std::fs::OpenOptionsExt::mode`) to set permissions *at creation time* atomically.
