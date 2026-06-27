@@ -65,7 +65,7 @@ impl InteractiveSession {
         println!();
         let _ = self.term.write_line(&format!(
             "  {}",
-            "Tip: Use arrow keys to navigate menus, Space to select multiple items, Enter to confirm"
+            "Tip: Use arrow keys to navigate menus, Enter to confirm"
                 .cyan()
                 .dimmed()
         ));
@@ -87,7 +87,7 @@ impl InteractiveSession {
         ];
 
         let selection = Select::with_theme(&self.theme)
-            .with_prompt("What would you like to do?")
+            .with_prompt("🎯 What would you like to do?")
             .items(&items)
             .default(0)
             .interact_on(&self.term)?;
