@@ -119,52 +119,66 @@ pub struct SecurityAnalyzer {
 impl SecurityAnalyzer {
     /// Create a new security analyzer
     pub fn new() -> Self {
+        static URL_PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+
         Self {
             secret_patterns: Self::default_secret_patterns(),
-            url_pattern: Regex::new(r#"https?://[^\s"']+"#).unwrap(),
+            url_pattern: URL_PATTERN
+                .get_or_init(|| Regex::new(r#"https?://[^\s"']+"#).unwrap())
+                .clone(),
             sensitive_var_patterns: Self::default_sensitive_var_patterns(),
         }
     }
 
     /// Default patterns for detecting secrets
     fn default_secret_patterns() -> Vec<Regex> {
-        vec![
-            // AWS keys
-            Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(),
-            // AWS secret (usually 40 chars base64)
-            Regex::new(r#"(?i)aws.{0,20}['"][0-9a-zA-Z/+]{40}['"]"#).unwrap(),
-            // Private keys
-            Regex::new(r"-----BEGIN (?:RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----").unwrap(),
-            // Generic API key patterns
-            Regex::new(r#"(?i)api[_-]?key\s*[:=]\s*['"][a-zA-Z0-9]{16,}['"]"#).unwrap(),
-            // Bearer tokens
-            Regex::new(r"(?i)bearer\s+[a-zA-Z0-9\-_=]{20,}").unwrap(),
-            // Password in common formats
-            Regex::new(r#"(?i)password\s*[:=]\s*['"][^'"]{8,}['"]"#).unwrap(),
-            // GitHub tokens
-            Regex::new(r"ghp_[a-zA-Z0-9]{36}").unwrap(),
-            Regex::new(r"gho_[a-zA-Z0-9]{36}").unwrap(),
-            // Generic secret patterns
-            Regex::new(r#"(?i)secret\s*[:=]\s*['"][^'"]{8,}['"]"#).unwrap(),
-        ]
+        static PATTERNS: std::sync::OnceLock<Vec<Regex>> = std::sync::OnceLock::new();
+        PATTERNS
+            .get_or_init(|| {
+                vec![
+                    // AWS keys
+                    Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(),
+                    // AWS secret (usually 40 chars base64)
+                    Regex::new(r#"(?i)aws.{0,20}['"][0-9a-zA-Z/+]{40}['"]"#).unwrap(),
+                    // Private keys
+                    Regex::new(r"-----BEGIN (?:RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----").unwrap(),
+                    // Generic API key patterns
+                    Regex::new(r#"(?i)api[_-]?key\s*[:=]\s*['"][a-zA-Z0-9]{16,}['"]"#).unwrap(),
+                    // Bearer tokens
+                    Regex::new(r"(?i)bearer\s+[a-zA-Z0-9\-_=]{20,}").unwrap(),
+                    // Password in common formats
+                    Regex::new(r#"(?i)password\s*[:=]\s*['"][^'"]{8,}['"]"#).unwrap(),
+                    // GitHub tokens
+                    Regex::new(r"ghp_[a-zA-Z0-9]{36}").unwrap(),
+                    Regex::new(r"gho_[a-zA-Z0-9]{36}").unwrap(),
+                    // Generic secret patterns
+                    Regex::new(r#"(?i)secret\s*[:=]\s*['"][^'"]{8,}['"]"#).unwrap(),
+                ]
+            })
+            .clone()
     }
 
     /// Default patterns for sensitive variable names
     fn default_sensitive_var_patterns() -> Vec<Regex> {
-        vec![
-            Regex::new(r"(?i)^password$").unwrap(),
-            Regex::new(r"(?i)^passwd$").unwrap(),
-            Regex::new(r"(?i)^secret$").unwrap(),
-            Regex::new(r"(?i)^api[_-]?key$").unwrap(),
-            Regex::new(r"(?i)^token$").unwrap(),
-            Regex::new(r"(?i)^private[_-]?key$").unwrap(),
-            Regex::new(r"(?i)^access[_-]?key$").unwrap(),
-            Regex::new(r"(?i)^auth[_-]?token$").unwrap(),
-            Regex::new(r"(?i).*_password$").unwrap(),
-            Regex::new(r"(?i).*_secret$").unwrap(),
-            Regex::new(r"(?i).*_token$").unwrap(),
-            Regex::new(r"(?i).*_key$").unwrap(),
-        ]
+        static PATTERNS: std::sync::OnceLock<Vec<Regex>> = std::sync::OnceLock::new();
+        PATTERNS
+            .get_or_init(|| {
+                vec![
+                    Regex::new(r"(?i)^password$").unwrap(),
+                    Regex::new(r"(?i)^passwd$").unwrap(),
+                    Regex::new(r"(?i)^secret$").unwrap(),
+                    Regex::new(r"(?i)^api[_-]?key$").unwrap(),
+                    Regex::new(r"(?i)^token$").unwrap(),
+                    Regex::new(r"(?i)^private[_-]?key$").unwrap(),
+                    Regex::new(r"(?i)^access[_-]?key$").unwrap(),
+                    Regex::new(r"(?i)^auth[_-]?token$").unwrap(),
+                    Regex::new(r"(?i).*_password$").unwrap(),
+                    Regex::new(r"(?i).*_secret$").unwrap(),
+                    Regex::new(r"(?i).*_token$").unwrap(),
+                    Regex::new(r"(?i).*_key$").unwrap(),
+                ]
+            })
+            .clone()
     }
 
     /// Analyze a playbook for security issues
@@ -399,10 +413,16 @@ impl SecurityAnalyzer {
 
         if let Some(cmd) = cmd {
             // Check for unquoted variable expansion
-            let var_pattern = Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap();
+            static VAR_PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+            let var_pattern =
+                VAR_PATTERN.get_or_init(|| Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap());
+
             if var_pattern.is_match(cmd) {
                 // Check if the variable is properly quoted
-                let quoted_var = Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap();
+                static QUOTED_VAR: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+                let quoted_var = QUOTED_VAR
+                    .get_or_init(|| Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap());
+
                 if !quoted_var.is_match(cmd) {
                     findings.push(
                         AnalysisFinding::new(
