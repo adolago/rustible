@@ -358,7 +358,7 @@ fn get_password(password_file: Option<&PathBuf>, ctx: &CommandContext) -> Result
     ctx.output.flush();
 
     let password = dialoguer::Password::with_theme(&ColorfulTheme::default())
-        .with_prompt("🔐 Vault password")
+        .with_prompt("🔒 Vault password")
         .interact()?;
 
     Ok(SecretString::new(password))
@@ -376,8 +376,8 @@ fn get_password_with_confirm(
     ctx.output.flush();
 
     let password = dialoguer::Password::with_theme(&ColorfulTheme::default())
-        .with_prompt("🔐 New Vault password")
-        .with_confirmation("🔐 Confirm Vault password", "Passwords do not match")
+        .with_prompt("🔒 New Vault password")
+        .with_confirmation("🔒 Confirm Vault password", "Passwords do not match")
         .interact()?;
 
     Ok(SecretString::new(password))
@@ -634,8 +634,8 @@ impl VaultArgs {
                     s.as_bytes().to_vec()
                 } else if std::io::stdin().is_terminal() {
                     let input = dialoguer::Password::with_theme(&ColorfulTheme::default())
-                        .with_prompt("📝 Enter text to encrypt (hidden)")
-                        .with_confirmation("🔐 Confirm text to encrypt", "Inputs do not match")
+                        .with_prompt("🔒 Enter text to encrypt (hidden)")
+                        .with_confirmation("🔒 Confirm text to encrypt", "Inputs do not match")
                         .interact()?;
                     input.as_bytes().to_vec()
                 } else {
@@ -672,7 +672,7 @@ impl VaultArgs {
                 } else if std::io::stdin().is_terminal() {
                     println!(
                         "{}",
-                        "📝 Enter encrypted string (press Enter twice to finish):".bold()
+                        "🔒 Enter encrypted string (press Enter twice to finish):".bold()
                     );
                     let mut lines = Vec::new();
                     let stdin = io::stdin();

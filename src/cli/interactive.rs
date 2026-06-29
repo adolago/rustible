@@ -79,7 +79,7 @@ impl InteractiveSession {
             "🔍 Check playbook (dry-run)",
             "📋 List hosts",
             "📝 List tasks",
-            "🔐 Vault operations",
+            "🔒 Vault operations",
             "✨ Initialize project",
             "✅ Validate playbook",
             "⚙️ Settings",
@@ -376,13 +376,13 @@ impl InteractiveSession {
             "👁️ View encrypted file",
             "✏️ Edit encrypted file",
             "✨ Create new encrypted file",
-            "🔑 Rekey (change password)",
+            "🔒 Rekey (change password)",
             "🔏 Encrypt a string",
             "🔙 Back to main menu",
         ];
 
         let selection = Select::with_theme(&self.theme)
-            .with_prompt("🔐 Vault operation")
+            .with_prompt("🔒 Vault operation")
             .items(&items)
             .default(0)
             .interact_on(&self.term)?;
