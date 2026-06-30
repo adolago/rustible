@@ -10,6 +10,7 @@ use super::{
 use crate::playbook::{Play, Playbook, Task};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 /// Type of security vulnerability
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -106,28 +107,12 @@ impl SecurityFinding {
     }
 }
 
-/// Security analyzer
-pub struct SecurityAnalyzer {
-    /// Patterns for detecting secrets
-    secret_patterns: Vec<Regex>,
-    /// Patterns for detecting URLs
-    url_pattern: Regex,
-    /// Sensitive variable name patterns
-    sensitive_var_patterns: Vec<Regex>,
-}
+static DEFAULT_SECRET_PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+static DEFAULT_SENSITIVE_VAR_PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+static URL_PATTERN: OnceLock<Regex> = OnceLock::new();
 
-impl SecurityAnalyzer {
-    /// Create a new security analyzer
-    pub fn new() -> Self {
-        Self {
-            secret_patterns: Self::default_secret_patterns(),
-            url_pattern: Regex::new(r#"https?://[^\s"']+"#).unwrap(),
-            sensitive_var_patterns: Self::default_sensitive_var_patterns(),
-        }
-    }
-
-    /// Default patterns for detecting secrets
-    fn default_secret_patterns() -> Vec<Regex> {
+fn get_default_secret_patterns() -> &'static Vec<Regex> {
+    DEFAULT_SECRET_PATTERNS.get_or_init(|| {
         vec![
             // AWS keys
             Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(),
@@ -147,10 +132,11 @@ impl SecurityAnalyzer {
             // Generic secret patterns
             Regex::new(r#"(?i)secret\s*[:=]\s*['"][^'"]{8,}['"]"#).unwrap(),
         ]
-    }
+    })
+}
 
-    /// Default patterns for sensitive variable names
-    fn default_sensitive_var_patterns() -> Vec<Regex> {
+fn get_default_sensitive_var_patterns() -> &'static Vec<Regex> {
+    DEFAULT_SENSITIVE_VAR_PATTERNS.get_or_init(|| {
         vec![
             Regex::new(r"(?i)^password$").unwrap(),
             Regex::new(r"(?i)^passwd$").unwrap(),
@@ -165,6 +151,29 @@ impl SecurityAnalyzer {
             Regex::new(r"(?i).*_token$").unwrap(),
             Regex::new(r"(?i).*_key$").unwrap(),
         ]
+    })
+}
+
+/// Security analyzer
+pub struct SecurityAnalyzer {
+    /// Patterns for detecting secrets
+    secret_patterns: Vec<Regex>,
+    /// Patterns for detecting URLs
+    url_pattern: Regex,
+    /// Sensitive variable name patterns
+    sensitive_var_patterns: Vec<Regex>,
+}
+
+impl SecurityAnalyzer {
+    /// Create a new security analyzer
+    pub fn new() -> Self {
+        Self {
+            secret_patterns: get_default_secret_patterns().clone(),
+            url_pattern: URL_PATTERN
+                .get_or_init(|| Regex::new(r#"https?://[^\s"']+"#).unwrap())
+                .clone(),
+            sensitive_var_patterns: get_default_sensitive_var_patterns().clone(),
+        }
     }
 
     /// Analyze a playbook for security issues
