@@ -1078,23 +1078,14 @@ async fn build_connection_for_host(
             ))
         })?;
         let key_path = key_dir.path().join("id_key");
-        std::fs::write(&key_path, private_key).map_err(|err| {
-            crate::connection::ConnectionError::InvalidConfig(format!(
-                "failed to write temporary private key: {}",
-                err
-            ))
-        })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&key_path, perms).map_err(|err| {
+        crate::utils::secure_write_file(&key_path, private_key, true, Some(0o600)).map_err(
+            |err| {
                 crate::connection::ConnectionError::InvalidConfig(format!(
-                    "failed to secure temporary private key: {}",
+                    "failed to securely write temporary private key: {}",
                     err
                 ))
-            })?;
-        }
+            },
+        )?;
         builder = builder.private_key(key_path.to_string_lossy().to_string());
         _key_dir = Some(key_dir);
     } else {
