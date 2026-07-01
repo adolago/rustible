@@ -119,23 +119,10 @@ pub struct SecurityAnalyzer {
 impl SecurityAnalyzer {
     /// Create a new security analyzer
     pub fn new() -> Self {
-        // Optimize: Use OnceLock to statically cache compiled Regex instances.
-        // Regex compilation is expensive, and caching prevents redundant compilations
-        // on every instantiation of SecurityAnalyzer.
-        static URL_PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-        static SECRET_PATTERNS: std::sync::OnceLock<Vec<Regex>> = std::sync::OnceLock::new();
-        static SENSITIVE_VAR_PATTERNS: std::sync::OnceLock<Vec<Regex>> = std::sync::OnceLock::new();
-
         Self {
-            secret_patterns: SECRET_PATTERNS
-                .get_or_init(Self::default_secret_patterns)
-                .clone(),
-            url_pattern: URL_PATTERN
-                .get_or_init(|| Regex::new(r#"https?://[^\s"']+"#).unwrap())
-                .clone(),
-            sensitive_var_patterns: SENSITIVE_VAR_PATTERNS
-                .get_or_init(Self::default_sensitive_var_patterns)
-                .clone(),
+            secret_patterns: Self::default_secret_patterns(),
+            url_pattern: Regex::new(r#"https?://[^\s"']+"#).unwrap(),
+            sensitive_var_patterns: Self::default_sensitive_var_patterns(),
         }
     }
 
@@ -412,17 +399,10 @@ impl SecurityAnalyzer {
 
         if let Some(cmd) = cmd {
             // Check for unquoted variable expansion
-            // Optimize: Use OnceLock to cache static regexes inside the function
-            // to avoid recompilation on every check_shell_injection call.
-            static VAR_PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-            let var_pattern =
-                VAR_PATTERN.get_or_init(|| Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap());
+            let var_pattern = Regex::new(r"\$\{\{|\{\{[^}]*\}\}").unwrap();
             if var_pattern.is_match(cmd) {
                 // Check if the variable is properly quoted
-                // Optimize: Cache inner static regex to prevent redundant compilation.
-                static QUOTED_VAR: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-                let quoted_var = QUOTED_VAR
-                    .get_or_init(|| Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap());
+                let quoted_var = Regex::new(r#"["'][^"']*\{\{[^}]*\}\}[^"']*["']"#).unwrap();
                 if !quoted_var.is_match(cmd) {
                     findings.push(
                         AnalysisFinding::new(
