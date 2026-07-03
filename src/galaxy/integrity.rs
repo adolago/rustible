@@ -80,8 +80,49 @@ impl IntegrityVerifier {
         path: &Path,
         algorithm: ChecksumAlgorithm,
     ) -> GalaxyResult<String> {
-        let data = tokio::fs::read(path).await?;
-        Ok(Self::compute_checksum(&data, algorithm))
+        // Sentinel: Prevent OOM by streaming file contents instead of reading the whole file into memory
+        let mut file = tokio::fs::File::open(path).await?;
+        use tokio::io::AsyncReadExt;
+
+        match algorithm {
+            ChecksumAlgorithm::Sha256 => {
+                let mut hasher = Sha256::new();
+                let mut buffer = [0; 8192];
+                loop {
+                    let n = file.read(&mut buffer).await?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&buffer[..n]);
+                }
+                Ok(format!("{:x}", hasher.finalize()))
+            }
+            ChecksumAlgorithm::Sha512 => {
+                use sha2::Sha512;
+                let mut hasher = Sha512::new();
+                let mut buffer = [0; 8192];
+                loop {
+                    let n = file.read(&mut buffer).await?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&buffer[..n]);
+                }
+                Ok(format!("{:x}", hasher.finalize()))
+            }
+            ChecksumAlgorithm::Md5 => {
+                let mut context = md5::Context::new();
+                let mut buffer = [0; 8192];
+                loop {
+                    let n = file.read(&mut buffer).await?;
+                    if n == 0 {
+                        break;
+                    }
+                    context.consume(&buffer[..n]);
+                }
+                Ok(format!("{:x}", context.compute()))
+            }
+        }
     }
 
     /// Verify checksum matches expected value
