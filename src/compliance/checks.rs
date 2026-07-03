@@ -4,7 +4,6 @@
 //! that can be used across different compliance frameworks.
 
 use super::{CheckStatus, ComplianceContext, ComplianceError, ComplianceResult, Severity};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -364,7 +363,8 @@ impl ComplianceCheck for FileCheck {
                 .map_err(|e| ComplianceError::CheckFailed(e.to_string()))?;
 
             if content_result.success {
-                let re = Regex::new(pattern).map_err(|e| {
+                // Optimize: Use cached get_regex instead of recompiling Regex::new for potentially repeated checks.
+                let re = crate::utils::regex_cache::get_regex(pattern).map_err(|e| {
                     ComplianceError::InvalidConfig(format!("Invalid regex pattern: {}", e))
                 })?;
                 if !re.is_match(&content_result.stdout) {
@@ -863,7 +863,8 @@ impl ComplianceCheck for CommandCheck {
 
         // Check expected pattern
         if let Some(ref pattern) = self.expected_pattern {
-            let re = Regex::new(pattern)
+            // Optimize: Use cached get_regex instead of recompiling Regex::new for potentially repeated checks.
+            let re = crate::utils::regex_cache::get_regex(pattern)
                 .map_err(|e| ComplianceError::InvalidConfig(format!("Invalid regex: {}", e)))?;
             if !re.is_match(&output) {
                 issues.push(format!("output does not match pattern: {}", pattern));
@@ -872,7 +873,8 @@ impl ComplianceCheck for CommandCheck {
 
         // Check not-expected pattern
         if let Some(ref pattern) = self.not_expected_pattern {
-            let re = Regex::new(pattern)
+            // Optimize: Use cached get_regex instead of recompiling Regex::new for potentially repeated checks.
+            let re = crate::utils::regex_cache::get_regex(pattern)
                 .map_err(|e| ComplianceError::InvalidConfig(format!("Invalid regex: {}", e)))?;
             if re.is_match(&output) {
                 issues.push(format!("output matches forbidden pattern: {}", pattern));

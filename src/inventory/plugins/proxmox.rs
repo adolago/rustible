@@ -824,7 +824,8 @@ fn value_matches_operator(operator: FilterOperator, value: &str, filter_value: &
         FilterOperator::Contains => value.contains(filter_value),
         FilterOperator::StartsWith => value.starts_with(filter_value),
         FilterOperator::EndsWith => value.ends_with(filter_value),
-        FilterOperator::Regex => regex::Regex::new(filter_value)
+        // Optimize: Use cached get_regex implementation instead of compiling on every filter check.
+        FilterOperator::Regex => crate::utils::regex_cache::get_regex(filter_value)
             .map(|re| re.is_match(value))
             .unwrap_or(false),
     }
