@@ -141,7 +141,6 @@ pub use plugins::{
 };
 
 use indexmap::IndexMap;
-use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
@@ -1070,7 +1069,8 @@ impl Inventory {
 
         // Handle regex pattern
         if let Some(regex_str) = pattern.strip_prefix('~') {
-            let regex = Regex::new(regex_str)
+            // Optimize: Use cached get_regex instead of recompiling
+            let regex = crate::utils::get_regex(regex_str)
                 .map_err(|_| InventoryError::InvalidPattern(pattern.to_string()))?;
 
             return Ok(self
@@ -1083,7 +1083,8 @@ impl Inventory {
         // Handle glob/wildcard pattern
         if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
             let regex_pattern = glob_to_regex(pattern);
-            let regex = Regex::new(&regex_pattern)
+            // Optimize: Use cached get_regex instead of recompiling
+            let regex = crate::utils::get_regex(&regex_pattern)
                 .map_err(|_| InventoryError::InvalidPattern(pattern.to_string()))?;
 
             return Ok(self
