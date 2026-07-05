@@ -5,6 +5,7 @@
 //! and copying files to/from containers. The API mirrors the Docker
 //! connection module since Podman provides a Docker-compatible CLI.
 
+use crate::utils::shell_escape;
 use async_trait::async_trait;
 use std::path::Path;
 use std::process::Stdio;
@@ -185,7 +186,7 @@ impl Connection for PodmanConnection {
 
         if options.create_dirs {
             if let Some(parent) = remote_path.parent() {
-                let mkdir_cmd = format!("mkdir -p {}", parent.display());
+                let mkdir_cmd = format!("mkdir -p {}", shell_escape(&parent.display().to_string()));
                 self.execute(&mkdir_cmd, None).await?;
             }
         }
@@ -210,7 +211,11 @@ impl Connection for PodmanConnection {
         }
 
         if let Some(mode) = options.mode {
-            let chmod_cmd = format!("chmod {:o} {}", mode, remote_path.display());
+            let chmod_cmd = format!(
+                "chmod {:o} {}",
+                mode,
+                shell_escape(&remote_path.display().to_string())
+            );
             self.execute(&chmod_cmd, None).await?;
         }
 
@@ -221,7 +226,11 @@ impl Connection for PodmanConnection {
                 (None, Some(g)) => format!(":{}", g),
                 (None, None) => return Ok(()),
             };
-            let chown_cmd = format!("chown {} {}", ownership, remote_path.display());
+            let chown_cmd = format!(
+                "chown {} {}",
+                shell_escape(&ownership),
+                shell_escape(&remote_path.display().to_string())
+            );
             self.execute(&chown_cmd, None).await?;
         }
 
@@ -295,7 +304,7 @@ impl Connection for PodmanConnection {
             "Downloading content from Podman container"
         );
 
-        let command = format!("cat {}", remote_path.display());
+        let command = format!("cat {}", shell_escape(&remote_path.display().to_string()));
         let result = self.execute(&command, None).await?;
 
         if !result.success {
@@ -309,19 +318,28 @@ impl Connection for PodmanConnection {
     }
 
     async fn path_exists(&self, path: &Path) -> ConnectionResult<bool> {
-        let command = format!("test -e {} && echo yes || echo no", path.display());
+        let command = format!(
+            "test -e {} && echo yes || echo no",
+            shell_escape(&path.display().to_string())
+        );
         let result = self.execute(&command, None).await?;
         Ok(result.stdout.trim() == "yes")
     }
 
     async fn is_directory(&self, path: &Path) -> ConnectionResult<bool> {
-        let command = format!("test -d {} && echo yes || echo no", path.display());
+        let command = format!(
+            "test -d {} && echo yes || echo no",
+            shell_escape(&path.display().to_string())
+        );
         let result = self.execute(&command, None).await?;
         Ok(result.stdout.trim() == "yes")
     }
 
     async fn stat(&self, path: &Path) -> ConnectionResult<FileStat> {
-        let command = format!("stat -c '%s|%a|%u|%g|%X|%Y|%F' {}", path.display());
+        let command = format!(
+            "stat -c '%s|%a|%u|%g|%X|%Y|%F' {}",
+            shell_escape(&path.display().to_string())
+        );
         let result = self.execute(&command, None).await?;
 
         if !result.success {

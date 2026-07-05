@@ -103,3 +103,8 @@
 **Vulnerability:** A refactoring error in `validate_command_args` introduced a logic flaw where input containing any unsafe character would bypass the dangerous pattern check and incorrectly be considered valid, enabling potential command injection.
 **Learning:** Security validation functions must be thoroughly tested, especially when refactoring for performance optimizations (like adding fast-paths). Boolean logic errors in early returns can completely neutralize subsequent security checks.
 **Prevention:** Always maintain comprehensive unit tests covering both positive (safe) and negative (malicious) inputs for security validation routines. Ensure fast-path logic correctly falls through to more exhaustive checks when necessary.
+
+## 2025-07-05 - Command Injection in Podman Connection Module
+**Vulnerability:** The `PodmanConnection` module constructed shell commands (like `mkdir`, `chmod`, `chown`, `cat`, `test`, and `stat`) by interpolating unescaped file paths and ownership strings directly into the command string. If a malicious path (e.g., containing `;` or `&`) was provided, it could result in arbitrary command execution on the host where `podman exec` is running.
+**Learning:** File paths and user-provided configuration values must always be treated as untrusted input when constructing shell commands, even in contextually "safe" modules like file transfer or connection handlers.
+**Prevention:** Always use `crate::utils::shell_escape` for any variable interpolated into a string that will be executed as a shell command.
