@@ -35,6 +35,7 @@
 use std::collections::{HashMap, HashSet};
 
 use minijinja::{Environment, UndefinedBehavior, Value as JinjaValue};
+use once_cell::sync::Lazy;
 use petgraph::algo::{tarjan_scc, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
 use regex::Regex;
@@ -589,11 +590,15 @@ impl ProvisionerContext {
 
 /// Parse array access pattern: "type.name[index].attr" -> (type, name, index, attr)
 fn parse_array_access(path: &str) -> Option<(String, String, usize, String)> {
-    let array_re =
+    // Optimize: Use Lazy to statically cache the compiled Regex.
+    // Regex compilation is expensive, and caching prevents redundant compilations
+    // on every invocation of parse_array_access.
+    static ARRAY_RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\[(\d+)\](?:\.(.+))?$")
-            .ok()?;
+            .expect("Invalid array regex")
+    });
 
-    let caps = array_re.captures(path)?;
+    let caps = ARRAY_RE.captures(path)?;
     let resource_type = caps.get(1)?.as_str().to_string();
     let name = caps.get(2)?.as_str().to_string();
     let index: usize = caps.get(3)?.as_str().parse().ok()?;
@@ -791,24 +796,27 @@ impl TemplateResolver {
         env.add_filter("join", join_filter);
         env.add_filter("length", length_filter);
 
-        // Match {{ ... }} patterns
-        let template_pattern = Regex::new(r"\{\{\s*([^}]+?)\s*\}\}").expect("Invalid regex");
-
-        // Regex for {{ resources.TYPE.NAME.ATTR }} patterns (with optional filters)
-        let resource_ref_regex = Regex::new(
+        // Optimize: Use Lazy to statically cache compiled Regex instances.
+        // Regex compilation is expensive, and caching prevents redundant compilations
+        // on every instantiation of TemplateResolver.
+        static TEMPLATE_PATTERN: Lazy<Regex> =
+            Lazy::new(|| Regex::new(r"\{\{\s*([^}]+?)\s*\}\}").expect("Invalid regex"));
+        static RESOURCE_REF_REGEX: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(
             r"\{\{\s*resources\.([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\.([a-zA-Z_][a-zA-Z0-9_.]*)\s*(?:\|[^}]*)?\}\}"
-        ).expect("Invalid regex");
-
-        // Regex for {{ resources.TYPE.NAME[INDEX].ATTR }} patterns
-        let array_ref_regex = Regex::new(
+        ).expect("Invalid regex")
+        });
+        static ARRAY_REF_REGEX: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(
             r"\{\{\s*resources\.([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\[(\d+)\]\.([a-zA-Z_][a-zA-Z0-9_.]*)\s*(?:\|[^}]*)?\}\}"
-        ).expect("Invalid regex");
+        ).expect("Invalid regex")
+        });
 
         Self {
             env,
-            template_pattern,
-            resource_ref_regex,
-            array_ref_regex,
+            template_pattern: TEMPLATE_PATTERN.clone(),
+            resource_ref_regex: RESOURCE_REF_REGEX.clone(),
+            array_ref_regex: ARRAY_REF_REGEX.clone(),
             allow_partial: false,
         }
     }
