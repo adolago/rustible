@@ -250,20 +250,38 @@ fn sanitize_command(command: &str) -> String {
 
     // Remove potential passwords and secrets
     // This is a heuristic - we look for common patterns
-    let patterns = [
-        (r"(-p\s*)\S+", "$1[REDACTED]"),
-        (r"(--password[=\s]*)\S+", "$1[REDACTED]"),
-        (r"(PASSWORD[=:])\S+", "$1[REDACTED]"),
-        (r"(SECRET[=:])\S+", "$1[REDACTED]"),
-        (r"(TOKEN[=:])\S+", "$1[REDACTED]"),
-        (r"(API_KEY[=:])\S+", "$1[REDACTED]"),
-    ];
+    // Optimize: Use OnceLock to statically cache the compiled regexes for sanitization patterns to prevent recompiling them for every logged command.
+    static SANITIZATION_PATTERNS: std::sync::OnceLock<Vec<(regex::Regex, &'static str)>> =
+        std::sync::OnceLock::new();
+    let patterns = SANITIZATION_PATTERNS.get_or_init(|| {
+        vec![
+            (regex::Regex::new(r"(-p\s*)\S+").unwrap(), "$1[REDACTED]"),
+            (
+                regex::Regex::new(r"(--password[=\s]*)\S+").unwrap(),
+                "$1[REDACTED]",
+            ),
+            (
+                regex::Regex::new(r"(PASSWORD[=:])\S+").unwrap(),
+                "$1[REDACTED]",
+            ),
+            (
+                regex::Regex::new(r"(SECRET[=:])\S+").unwrap(),
+                "$1[REDACTED]",
+            ),
+            (
+                regex::Regex::new(r"(TOKEN[=:])\S+").unwrap(),
+                "$1[REDACTED]",
+            ),
+            (
+                regex::Regex::new(r"(API_KEY[=:])\S+").unwrap(),
+                "$1[REDACTED]",
+            ),
+        ]
+    });
 
     let mut result = cmd;
-    for (pattern, replacement) in patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            result = re.replace_all(&result, replacement).to_string();
-        }
+    for (re, replacement) in patterns {
+        result = re.replace_all(&result, *replacement).into_owned();
     }
 
     result
