@@ -79,7 +79,7 @@ impl InteractiveSession {
             "🔍 Check playbook (dry-run)",
             "📋 List hosts",
             "📝 List tasks",
-            "🔐 Vault operations",
+            "🔒 Vault operations",
             "✨ Initialize project",
             "✅ Validate playbook",
             "⚙️ Settings",
@@ -382,7 +382,7 @@ impl InteractiveSession {
         ];
 
         let selection = Select::with_theme(&self.theme)
-            .with_prompt("🔐 Vault operation")
+            .with_prompt("🔒 Vault operation")
             .items(&items)
             .default(0)
             .interact_on(&self.term)?;
