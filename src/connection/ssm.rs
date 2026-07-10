@@ -14,6 +14,7 @@ use super::{
     CommandResult, Connection, ConnectionError, ConnectionResult, ExecuteOptions, FileStat,
     TransferOptions,
 };
+use crate::utils::shell_escape;
 
 /// AWS SSM connection for executing commands on EC2 instances
 #[derive(Debug, Clone)]
@@ -121,18 +122,26 @@ impl SsmConnection {
 
         // Add environment variables
         for (key, value) in &options.env {
-            parts.push(format!("export {}={:?}", key, value));
+            parts.push(format!(
+                "export {}={}",
+                shell_escape(key),
+                shell_escape(value)
+            ));
         }
 
         // Change directory if specified
         if let Some(cwd) = &options.cwd {
-            parts.push(format!("cd {:?}", cwd));
+            parts.push(format!("cd {}", shell_escape(cwd)));
         }
 
         // Add privilege escalation
         if options.escalate {
             let user = options.escalate_user.as_deref().unwrap_or("root");
-            parts.push(format!("sudo -u {} -- sh -c {:?}", user, command));
+            parts.push(format!(
+                "sudo -u {} -- sh -c {}",
+                shell_escape(user),
+                shell_escape(command)
+            ));
         } else {
             parts.push(command.to_string());
         }
@@ -525,5 +534,20 @@ mod tests {
         let cmd = conn.build_shell_command("ls", &opts);
         assert!(cmd.contains("cd"));
         assert!(cmd.contains("ls"));
+    }
+
+    #[test]
+    fn test_build_shell_command_injection() {
+        let conn = SsmConnection::new("i-abc");
+        let mut opts = ExecuteOptions::new().with_cwd("/tmp; rm -rf /");
+        opts.env
+            .insert("FOO".to_string(), "bar; echo pwned".to_string());
+        opts.escalate = true;
+        opts.escalate_user = Some("root; id".to_string());
+
+        let cmd = conn.build_shell_command("echo hello; ls", &opts);
+        assert!(cmd.contains("export 'FOO'='bar; echo pwned'"));
+        assert!(cmd.contains("cd '/tmp; rm -rf /'"));
+        assert!(cmd.contains("sudo -u 'root; id' -- sh -c 'echo hello; ls'"));
     }
 }
