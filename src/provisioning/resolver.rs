@@ -589,9 +589,12 @@ impl ProvisionerContext {
 
 /// Parse array access pattern: "type.name[index].attr" -> (type, name, index, attr)
 fn parse_array_access(path: &str) -> Option<(String, String, usize, String)> {
-    let array_re =
+    // Optimize: Use OnceLock to statically cache the compiled Regex.
+    static ARRAY_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let array_re = ARRAY_RE.get_or_init(|| {
         Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\[(\d+)\](?:\.(.+))?$")
-            .ok()?;
+            .expect("Invalid regex pattern")
+    });
 
     let caps = array_re.captures(path)?;
     let resource_type = caps.get(1)?.as_str().to_string();
@@ -791,18 +794,27 @@ impl TemplateResolver {
         env.add_filter("join", join_filter);
         env.add_filter("length", length_filter);
 
+        // Optimize: Use OnceLock to statically cache compiled Regex instances.
+        // Regex compilation is expensive, and caching prevents redundant compilations
+        // on every instantiation of TemplateResolver.
+        static TEMPLATE_PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+        static RESOURCE_REF_REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+        static ARRAY_REF_REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+
         // Match {{ ... }} patterns
-        let template_pattern = Regex::new(r"\{\{\s*([^}]+?)\s*\}\}").expect("Invalid regex");
+        let template_pattern = TEMPLATE_PATTERN
+            .get_or_init(|| Regex::new(r"\{\{\s*([^}]+?)\s*\}\}").expect("Invalid regex"))
+            .clone();
 
         // Regex for {{ resources.TYPE.NAME.ATTR }} patterns (with optional filters)
-        let resource_ref_regex = Regex::new(
-            r"\{\{\s*resources\.([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\.([a-zA-Z_][a-zA-Z0-9_.]*)\s*(?:\|[^}]*)?\}\}"
-        ).expect("Invalid regex");
+        let resource_ref_regex = RESOURCE_REF_REGEX.get_or_init(|| {
+            Regex::new(r"\{\{\s*resources\.([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\.([a-zA-Z_][a-zA-Z0-9_.]*)\s*(?:\|[^}]*)?\}\}").expect("Invalid regex")
+        }).clone();
 
         // Regex for {{ resources.TYPE.NAME[INDEX].ATTR }} patterns
-        let array_ref_regex = Regex::new(
-            r"\{\{\s*resources\.([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\[(\d+)\]\.([a-zA-Z_][a-zA-Z0-9_.]*)\s*(?:\|[^}]*)?\}\}"
-        ).expect("Invalid regex");
+        let array_ref_regex = ARRAY_REF_REGEX.get_or_init(|| {
+            Regex::new(r"\{\{\s*resources\.([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_-]*)\[(\d+)\]\.([a-zA-Z_][a-zA-Z0-9_.]*)\s*(?:\|[^}]*)?\}\}").expect("Invalid regex")
+        }).clone();
 
         Self {
             env,
