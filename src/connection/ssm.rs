@@ -87,7 +87,7 @@ impl SsmConnection {
             .arg("--document-name")
             .arg("AWS-RunShellScript")
             .arg("--parameters")
-            .arg(format!("commands=[{:?}]", full_command))
+            .arg(serde_json::to_string(&serde_json::json!({ "commands": [full_command] })).unwrap())
             .arg("--output")
             .arg("json")
             .stdout(Stdio::piped())

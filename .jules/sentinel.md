@@ -103,3 +103,7 @@
 **Vulnerability:** A refactoring error in `validate_command_args` introduced a logic flaw where input containing any unsafe character would bypass the dangerous pattern check and incorrectly be considered valid, enabling potential command injection.
 **Learning:** Security validation functions must be thoroughly tested, especially when refactoring for performance optimizations (like adding fast-paths). Boolean logic errors in early returns can completely neutralize subsequent security checks.
 **Prevention:** Always maintain comprehensive unit tests covering both positive (safe) and negative (malicious) inputs for security validation routines. Ensure fast-path logic correctly falls through to more exhaustive checks when necessary.
+## 2026-03-05 - Command Injection in AWS SSM Parameters
+**Vulnerability:** The AWS SSM connection module used the `{:?}` Debug formatter to construct a shorthand JSON array for the `--parameters` argument (`commands=[{:?}]`). Debug formatting only adds double quotes and does not perform proper JSON escaping (e.g., for unicode or internal quotes).
+**Learning:** Relying on `{:?}` for any form of structured serialization (like JSON parameters for CLI tools) is brittle and can lead to command injection or parsing errors.
+**Prevention:** Always use a proper serialization library like `serde_json` to encode parameters that require structured formatting (e.g., JSON) before passing them as arguments to external commands.
