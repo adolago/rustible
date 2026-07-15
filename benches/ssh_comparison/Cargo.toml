@@ -30,7 +30,7 @@ hdrhistogram = "7.5"
 tabled = "0.15"
 
 # Random data generation
-rand = "0.9"
+rand = "0.10"
 
 # Temporary files
 tempfile = "3"

@@ -159,7 +159,7 @@ home = "=0.5.9"  # Pin for compatibility with the current dependency set.
 # Encryption for vault functionality
 aes-gcm = "0.10"
 argon2 = "0.5"
-rand = "0.9"
+rand = "0.10"
 base64 = "0.22"
 secrecy = { version = "0.8", features = ["serde"], optional = true }
 zeroize = "1.7"
