@@ -19,9 +19,17 @@ valid observed status values are evaluated directly.
 
 Callers must retain unknown findings as incomplete observations. They are not
 evidence that a host is in sync. User checks, ignore patterns and broader
-permission-check configuration remain incomplete. Command argument quoting is
-also a separate unresolved issue; this patch does not make arbitrary untrusted
-drift inputs safe to execute.
+permission-check configuration remain incomplete.
+
+The library detector now passes each file path, package name and service name as
+one escaped shell argument, with an end-of-options marker before each operand.
+Spaces and apostrophes no longer split the requested name. The literal file path
+`-` is passed as `./-`, so checksum inspection addresses that file instead of
+reading standard input. These changes cover the library's stat/checksum, package
+query and service inspection commands. They do not validate package or service
+naming rules, implement unused drift flags, or certify the separate CLI drift
+workflow. Existing tool-specific query patterns and observation-parser limits
+remain separate concerns.
 
 ## Rollback results
 

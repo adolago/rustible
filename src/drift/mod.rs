@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::connection::{CommandResult, Connection};
+use crate::utils::shell_escape;
 
 pub mod history;
 
@@ -496,11 +497,14 @@ impl DriftDetector {
             .as_ref()
             .ok_or("No connection available for drift detection")?;
 
+        // sha256sum treats a lone '-' as stdin even after '--'.
+        let path_arg = shell_escape(if path == "-" { "./-" } else { path });
+
         let result = conn
             .execute(
                 &format!(
-                    "stat -c '%a %U %G' {} 2>/dev/null && sha256sum {} 2>/dev/null",
-                    path, path
+                    "stat -c '%a %U %G' -- {} 2>/dev/null && sha256sum -- {} 2>/dev/null",
+                    path_arg, path_arg
                 ),
                 None,
             )
@@ -604,11 +608,13 @@ impl DriftDetector {
             .as_ref()
             .ok_or("No connection available for drift detection")?;
 
+        let name_arg = shell_escape(name);
+
         let result = conn
             .execute(
                 &format!(
-                    "dpkg-query -W -f='${{Status}} ${{Version}}' {} 2>/dev/null || rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' {} 2>/dev/null",
-                    name, name
+                    "dpkg-query -W -f='${{Status}} ${{Version}}' -- {} 2>/dev/null || rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' -- {} 2>/dev/null",
+                    name_arg, name_arg
                 ),
                 None,
             )
@@ -689,11 +695,13 @@ impl DriftDetector {
             .as_ref()
             .ok_or("No connection available for drift detection")?;
 
+        let name_arg = shell_escape(name);
+
         let result = conn
             .execute(
                 &format!(
-                    "systemctl is-active {} 2>/dev/null; echo '---'; systemctl is-enabled {} 2>/dev/null",
-                    name, name
+                    "systemctl is-active -- {} 2>/dev/null; echo '---'; systemctl is-enabled -- {} 2>/dev/null",
+                    name_arg, name_arg
                 ),
                 None,
             )
@@ -885,12 +893,14 @@ mod tests {
     /// A mock connection that returns preconfigured responses for testing.
     struct MockConnection {
         responses: Mutex<Vec<CommandResult>>,
+        commands: Mutex<Vec<String>>,
     }
 
     impl MockConnection {
         fn new(responses: Vec<CommandResult>) -> Self {
             Self {
                 responses: Mutex::new(responses),
+                commands: Mutex::new(Vec::new()),
             }
         }
     }
@@ -907,9 +917,10 @@ mod tests {
 
         async fn execute(
             &self,
-            _command: &str,
+            command: &str,
             _options: Option<ExecuteOptions>,
         ) -> ConnectionResult<CommandResult> {
+            self.commands.lock().unwrap().push(command.to_string());
             let mut responses = self.responses.lock().unwrap();
             if responses.is_empty() {
                 Ok(CommandResult::failure(
@@ -965,6 +976,91 @@ mod tests {
         async fn close(&self) -> ConnectionResult<()> {
             Ok(())
         }
+    }
+
+    async fn recorded_inspection_command(category: &str, name: &str, stdout: &str) -> String {
+        let connection = Arc::new(MockConnection::new(vec![CommandResult::success(
+            stdout.to_string(),
+            String::new(),
+        )]));
+        let detector = DriftDetector::with_connection(DriftConfig::default(), connection.clone());
+        let desired = serde_json::json!({(category): {(name): {}}});
+        let report = detector.detect_drift("fixture", &desired).await.unwrap();
+        assert!(!report.has_drift(), "fixture response must be recognizable");
+        let commands = connection.commands.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        commands[0].clone()
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_file_command_arguments() {
+        let mut mismatches = Vec::new();
+        for (name, argument) in [
+            ("/etc/hosts", "/etc/hosts"),
+            (
+                "/var/lib/app settings/config",
+                "'/var/lib/app settings/config'",
+            ),
+            ("/var/lib/team's/config", r"'/var/lib/team'\''s/config'"),
+            ("-notes.txt", "-notes.txt"),
+            ("-", "./-"),
+        ] {
+            let actual = recorded_inspection_command(
+                "files",
+                name,
+                "644 fixture fixture\n0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef fixture\n",
+            )
+            .await;
+            let expected = format!(
+                "stat -c '%a %U %G' -- {argument} 2>/dev/null && sha256sum -- {argument} 2>/dev/null"
+            );
+            if actual != expected {
+                mismatches.push((name, actual, expected));
+            }
+        }
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_package_command_arguments() {
+        let mut mismatches = Vec::new();
+        for (name, argument) in [
+            ("nginx", "nginx"),
+            ("example package", "'example package'"),
+            ("team's-package", r"'team'\''s-package'"),
+            ("-example", "-example"),
+        ] {
+            let actual =
+                recorded_inspection_command("packages", name, "install ok installed 1.0\n").await;
+            let expected = format!(
+                "dpkg-query -W -f='${{Status}} ${{Version}}' -- {argument} 2>/dev/null || rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' -- {argument} 2>/dev/null"
+            );
+            if actual != expected {
+                mismatches.push((name, actual, expected));
+            }
+        }
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_service_command_arguments() {
+        let mut mismatches = Vec::new();
+        for (name, argument) in [
+            ("nginx.service", "nginx.service"),
+            ("example service", "'example service'"),
+            ("team's.service", r"'team'\''s.service'"),
+            ("-example.service", "-example.service"),
+        ] {
+            let actual =
+                recorded_inspection_command("services", name, "active\n---\nenabled\n").await;
+            let expected = format!(
+                "systemctl is-active -- {argument} 2>/dev/null; echo '---'; systemctl is-enabled -- {argument} 2>/dev/null"
+            );
+            if actual != expected {
+                mismatches.push((name, actual, expected));
+            }
+        }
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
     }
 
     #[test]
