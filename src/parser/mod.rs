@@ -103,6 +103,11 @@ impl Parser {
     /// Enable strict mode
     pub fn strict(mut self, strict: bool) -> Self {
         self.strict = strict;
+        self.template_env.set_undefined_behavior(if strict {
+            minijinja::UndefinedBehavior::Strict
+        } else {
+            minijinja::UndefinedBehavior::Lenient
+        });
         self
     }
 
@@ -277,7 +282,7 @@ impl Parser {
             if matches!(value.kind(), ValueKind::Seq) {
                 if let Ok(iter) = value.try_iter() {
                     let mut items: Vec<Value> = iter.collect();
-                    items.sort_by_key(|a| a.to_string());
+                    items.sort();
                     items
                 } else {
                     Vec::new()
@@ -938,8 +943,7 @@ impl Parser {
         env.add_filter("min", |value: Value| -> Value {
             if matches!(value.kind(), ValueKind::Seq) {
                 if let Ok(iter) = value.try_iter() {
-                    iter.min_by(|a, b| a.to_string().cmp(&b.to_string()))
-                        .unwrap_or(Value::UNDEFINED)
+                    iter.min().unwrap_or(Value::UNDEFINED)
                 } else {
                     Value::UNDEFINED
                 }
@@ -951,8 +955,7 @@ impl Parser {
         env.add_filter("max", |value: Value| -> Value {
             if matches!(value.kind(), ValueKind::Seq) {
                 if let Ok(iter) = value.try_iter() {
-                    iter.max_by(|a, b| a.to_string().cmp(&b.to_string()))
-                        .unwrap_or(Value::UNDEFINED)
+                    iter.max().unwrap_or(Value::UNDEFINED)
                 } else {
                     Value::UNDEFINED
                 }
@@ -1557,5 +1560,111 @@ mod input_semantics_regressions {
                 .unwrap();
             assert!((0..7).contains(&value));
         }
+    }
+}
+
+#[cfg(test)]
+mod diligence_contracts {
+    use super::*;
+
+    #[test]
+    fn strict_rendering_rejects_undefined_values_and_can_be_disabled() {
+        let vars = IndexMap::new();
+        assert_eq!(
+            Parser::new()
+                .render_template("{{ missing }}", &vars)
+                .unwrap(),
+            ""
+        );
+        assert!(Parser::new()
+            .strict(true)
+            .render_template("{{ missing }}", &vars)
+            .is_err());
+        assert_eq!(
+            Parser::new()
+                .strict(true)
+                .strict(false)
+                .render_template("{{ missing }}", &vars)
+                .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn strict_rendering_preserves_explicit_defaults_and_defined_checks() {
+        let parser = Parser::new().strict(true);
+        let vars = IndexMap::new();
+        assert_eq!(
+            parser
+                .render_template("{{ missing | default('fallback') }}", &vars)
+                .unwrap(),
+            "fallback"
+        );
+        assert_eq!(
+            parser
+                .render_template("{{ missing is defined }}", &vars)
+                .unwrap(),
+            "false"
+        );
+        let nested = serde_yaml::from_str("outer:\n  - '{{ missing }}'\n").unwrap();
+        assert!(parser.render_value(&nested, &vars).is_err());
+    }
+
+    #[test]
+    fn numeric_sort_min_max_use_value_ordering() {
+        let parser = Parser::new();
+        let vars = IndexMap::new();
+        for (template, expected) in [
+            ("{{ [10, 2, -3, 1.5] | sort | join(',') }}", "-3,1.5,2,10"),
+            ("{{ [2, 10] | min }}", "2"),
+            ("{{ [2, 10] | max }}", "10"),
+            ("{{ [-2, -10] | min }}", "-10"),
+            (
+                "{{ [9007199254740993, 9007199254740992] | sort | join(',') }}",
+                "9007199254740992,9007199254740993",
+            ),
+        ] {
+            assert_eq!(
+                parser.render_template(template, &vars).unwrap(),
+                expected,
+                "{template}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordering_retains_lexical_strings_and_defines_mixed_type_order() {
+        let parser = Parser::new();
+        let vars = IndexMap::new();
+        assert_eq!(
+            parser
+                .render_template("{{ ['2', '10', 'A', 'a'] | sort | join(',') }}", &vars)
+                .unwrap(),
+            "10,2,A,a"
+        );
+        assert_eq!(
+            parser
+                .render_template("{{ ['2', '10'] | min }}", &vars)
+                .unwrap(),
+            "10"
+        );
+        assert_eq!(
+            parser
+                .render_template("{{ ['2', '10'] | max }}", &vars)
+                .unwrap(),
+            "2"
+        );
+        assert_eq!(
+            parser
+                .render_template("{{ [2, '10', 1] | sort | join(',') }}", &vars)
+                .unwrap(),
+            "1,2,10"
+        );
+        assert_eq!(
+            parser
+                .render_template("{{ [] | sort | join(',') }}", &vars)
+                .unwrap(),
+            ""
+        );
     }
 }

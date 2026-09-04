@@ -214,28 +214,36 @@ impl TemplateEngine {
         trace!("Rendering template: {}", template);
 
         if let Some(cache) = &self.template_cache {
-            let mut cache = cache.lock();
-            if let Some(name) = cache.get(template).cloned() {
-                drop(cache);
-                let env = self.env.read();
-                let tmpl = env.get_template(&name)?;
-                return Ok(tmpl.render(vars)?);
-            }
-
-            let name = self.next_template_name();
-            let template_owned = template.to_string();
+            // Always acquire the environment before the template cache. Keep a
+            // read guard until rendering finishes so eviction/clear cannot
+            // invalidate a template after its cache entry has been selected.
             {
-                let mut env = self.env.write();
+                let env = self.env.read();
+                let mut cached = cache.lock();
+                if let Some(name) = cached.get(template).cloned() {
+                    drop(cached);
+                    let tmpl = env.get_template(&name)?;
+                    return Ok(tmpl.render(vars)?);
+                }
+            }
+
+            let mut env = self.env.write();
+            let mut cached = cache.lock();
+            // Another renderer may have populated this entry while the read
+            // guard was released to obtain exclusive access.
+            let name = if let Some(name) = cached.get(template).cloned() {
+                name
+            } else {
+                let name = self.next_template_name();
+                let template_owned = template.to_string();
                 env.add_template_owned(name.clone(), template_owned.clone())?;
-            }
-
-            if let Some(evicted_name) = cache.put(template_owned, name.clone()) {
-                let mut env = self.env.write();
-                env.remove_template(&evicted_name);
-            }
-            drop(cache);
-
-            let env = self.env.read();
+                if let Some((_, evicted_name)) = cached.push(template_owned, name.clone()) {
+                    env.remove_template(&evicted_name);
+                }
+                name
+            };
+            drop(cached);
+            let env = parking_lot::RwLockWriteGuard::downgrade(env);
             let tmpl = env.get_template(&name)?;
             return Ok(tmpl.render(vars)?);
         }
@@ -247,15 +255,16 @@ impl TemplateEngine {
 
     /// Clear cached templates and expressions.
     pub fn clear_cache(&self) {
-        if let Some(cache) = &self.template_cache {
-            cache.lock().clear();
+        {
+            let mut env = self.env.write();
+            if let Some(cache) = &self.template_cache {
+                cache.lock().clear();
+            }
+            env.clear_templates();
         }
         if let Some(cache) = &self.expression_cache {
             cache.lock().clear();
         }
-
-        let mut env = self.env.write();
-        env.clear_templates();
     }
 
     /// Return the number of cached templates and expressions.
@@ -1848,5 +1857,87 @@ mod tests {
         assert_eq!(filter_title("hello   world"), "Hello   World");
         // Verify behavior with mixed characters
         assert_eq!(filter_title("a-b"), "A-b");
+    }
+}
+
+#[cfg(test)]
+mod diligence_contracts {
+    use super::*;
+
+    #[test]
+    fn compiled_templates_follow_capacity_and_recompile_evicted_entries() {
+        let engine = TemplateEngine::with_cache_size(2);
+        for number in [0, 1, 2, 3, 0] {
+            let source = format!("literal-{number}: {{{{ value }}}}");
+            assert_eq!(
+                engine
+                    .render_with_json(&source, &serde_json::json!({"value": 7}))
+                    .unwrap(),
+                format!("literal-{number}: 7")
+            );
+            let entries = engine.env.read().templates().count();
+            assert!(
+                entries <= 2,
+                "compiled environment retained {entries} templates"
+            );
+            assert_eq!(entries, engine.cache_stats().0);
+        }
+    }
+
+    #[test]
+    fn invalid_templates_do_not_displace_valid_cached_entries() {
+        let engine = TemplateEngine::with_cache_size(1);
+        let context = serde_json::json!({"value": 7});
+        assert_eq!(
+            engine.render_with_json("{{ value }}", &context).unwrap(),
+            "7"
+        );
+        assert!(engine.render_with_json("{{", &context).is_err());
+        assert_eq!(engine.cache_stats().0, 1);
+        assert_eq!(engine.env.read().templates().count(), 1);
+        assert_eq!(
+            engine.render_with_json("{{ value }}", &context).unwrap(),
+            "7"
+        );
+        engine.clear_cache();
+        assert_eq!(engine.env.read().templates().count(), 0);
+        assert_eq!(engine.cache_stats(), (0, 0));
+    }
+
+    #[test]
+    fn concurrent_render_eviction_and_clear_preserve_results() {
+        let engine = Arc::new(TemplateEngine::with_cache_size(2));
+        let start = Arc::new(std::sync::Barrier::new(5));
+        std::thread::scope(|scope| {
+            for worker in 0..4 {
+                let engine = Arc::clone(&engine);
+                let start = Arc::clone(&start);
+                scope.spawn(move || {
+                    start.wait();
+                    for step in 0..40 {
+                        let source = format!("worker-{worker}-{}: {{{{ value }}}}", step % 3);
+                        let expected = format!("worker-{worker}-{}: {step}", step % 3);
+                        assert_eq!(
+                            engine
+                                .render_with_json(&source, &serde_json::json!({"value": step}))
+                                .unwrap(),
+                            expected
+                        );
+                    }
+                });
+            }
+            let engine = Arc::clone(&engine);
+            scope.spawn(move || {
+                start.wait();
+                for _ in 0..40 {
+                    engine.clear_cache();
+                }
+            });
+        });
+        let env = engine.env.read();
+        let cache = engine.template_cache.as_ref().unwrap().lock();
+        assert_eq!(cache.len(), env.templates().count());
+        assert!(cache.len() <= 2);
+        assert!(cache.iter().all(|(_, name)| env.get_template(name).is_ok()));
     }
 }
