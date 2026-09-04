@@ -1,20 +1,28 @@
 # Rustible
 
-Safe and fast async configuration management tool.
+Experimental automation engine written in Rust.
 
-**Acknowledgment**: Rustible is inspired by Ansible and Terraform. This project builds upon those proven concepts while improving safety, reliability and speed.
+**Acknowledgment**: Rustible is inspired by Ansible and Terraform. It explores
+Ansible-style playbooks and infrastructure automation in Rust. Compatibility,
+correctness, and performance require workflow-specific verification.
 
-## Why Rustible?
+## What is being built?
 
-- **Type Safety**: Compile-time configuration validation with superior error messages
-- **Full Compatibility**: Identical YAML playbook syntax to Ansible
-- **High Performance**: Compiled binary with connection pooling (Much faster than Ansible)
-- **Parallel Execution**: Concurrent task execution by default
+- A compiled command-line tool with asynchronous execution code.
+- Runtime parsing of Ansible-style YAML; full Ansible compatibility is not established.
+- Native module and connection implementations, with an incomplete execution contract.
+- Reusable tests and fixtures for contributors to verify individual workflows.
 
 ## Alpha Status
 
 Rustible is currently in alpha. Expect breaking changes, incomplete features, and evolving
 performance/security characteristics.
+
+The ongoing diligence has found execution, state, input-handling, and verification
+defects. Focused repairs are being reviewed in draft PRs; they are not yet a
+combined, passing release. Read [Verification status](docs/VERIFICATION_STATUS.md)
+before choosing a workflow. No production-readiness or comparative speed claim
+is made for this alpha.
 
 - Terraform-like provisioning is experimental and limited in scope; Terraform integration
   focuses on state inventory and workflow bridging, not full replacement.
@@ -25,44 +33,45 @@ performance/security characteristics.
 - Alpha readiness risks and active ownership are tracked in `docs/ALPHA_READINESS_ISSUES.md`.
 - Alpha release execution tasks are tracked in `docs/ALPHA_LAUNCH_CHECKLIST.md`.
 - Beta promotion criteria and sign-off requirements are defined in `docs/BETA_ENTRY_CRITERIA.md`.
-- Use in production environments only after validating against your own risk model.
+- Begin with disposable test environments and synthetic data while the known
+  execution and state defects are resolved.
 
 ## Quick Start
 
-Install and run your first playbook:
+Build from source and inspect the CLI (Rust 1.88 or newer):
 
 ```bash
 # Clone and install
-git clone https://github.com/rustible/rustible.git
+git clone https://github.com/adolago/rustible.git
 cd rustible && cargo install --path .
 
-# Execute playbook
-rustible run playbook.yml -i inventory.yml
+# Inspect commands; this does not execute a playbook
+rustible --help
 ```
 
 ### Sample Playbook
 
 ```yaml
-- name: Configure web servers
-  hosts: webservers
-  become: true
+- name: Inspect a local example
+  hosts: localhost
+  connection: local
+  gather_facts: false
 
   tasks:
-    - name: Install nginx
-      package:
-        name: nginx
-        state: present
-
-    - name: Start nginx
-      service:
-        name: nginx
-        state: started
-        enabled: true
+    - name: Display a message
+      debug:
+        msg: "Rustible example"
 ```
+
+Save this as `playbook.yml`. `rustible check playbook.yml` runs this local debug
+example in requested check mode. It calls the executor; it is not parser-only
+syntax validation. Each module is responsible for honoring check mode, and a
+successful check does not establish Ansible compatibility or execution correctness.
 
 ## CLI Usage
 
-Run playbooks with familiar Ansible syntax:
+The CLI exposes these playbook options; accepted syntax is not proof of complete
+Ansible semantics. The verification status lists known limits and draft repairs.
 
 ```bash
 rustible run <PLAYBOOK> [OPTIONS]
@@ -71,16 +80,16 @@ Options:
   -i, --inventory <FILE>   Inventory file
   -l, --limit <PATTERN>    Limit to specific hosts
   -e, --extra-vars <VARS>  Extra variables
-  -c, --check              Dry run
+      --check             Request check mode
   -v, --verbose            Increase verbosity
-  -f, --forks <N>          Parallel processes [default: 10]
+  -f, --forks <N>          Requested parallelism [default: 5]
       --step               Step through tasks interactively
 ```
 
 ### Additional Commands
 
 ```bash
-rustible check <PLAYBOOK>     # Syntax validation
+rustible check <PLAYBOOK>     # Execute in requested check mode
 rustible lock checkpoint NAME # Create a rollback checkpoint
 rustible lock rollback NAME   # Dry-run or execute rollback from a checkpoint
 rustible vault encrypt <FILE> # AES-256-GCM encryption
@@ -93,15 +102,18 @@ rustible init <PATH>          # Initialize new project
 
 | Feature | Status |
 |---------|--------|
-| Playbook syntax | 100% Ansible compatibility |
+| Playbook syntax | Ansible-style subset; full compatibility not established |
 | Inventory formats | YAML, INI, JSON, dynamic scripts |
 | Templating | Jinja2 via minijinja |
 | Vault encryption | AES-256-GCM |
-| Roles | Full support |
-| Handlers | Including `listen` syntax |
-| Python modules | Fallback via AnsiballZ |
+| Roles | Partial; loading, inheritance, and dependency behavior need further verification |
+| Handlers | Partial; scheduling and failure-propagation repairs are in draft |
+| Python modules | Fallback implementation exists; successful CLI fallback is not established |
 
-### Connection Methods
+### Connection Implementations
+
+These implementations exist in the source tree. Their presence does not certify
+CLI routing, transfer correctness, authentication parity, or real-host behavior.
 
 - **SSH** (default): Via russh
 - **Local**: Direct local execution
@@ -109,9 +121,12 @@ rustible init <PATH>          # Initialize new project
 - **Kubernetes**: Pod execution (feature flag)
 - **Podman**: Rootless container execution
 - **AWS SSM**: EC2 Session Manager connection
-- **WinRM**: Windows remote management (Beta, feature flag, no `experimental` gate)
+- **WinRM**: Windows remote management (feature flag, no `experimental` gate; real-target validation pending)
 
-### Built-in Modules
+### Module Catalogue
+
+The following lists describe implementation families, not a verified support
+matrix. Some require feature flags, external programs, or unfinished wiring.
 
 **Core modules**: command, shell, raw, script, debug, set_fact, assert, fail, meta, pause, wait_for, stat
 
@@ -133,7 +148,7 @@ rustible init <PATH>          # Initialize new project
 
 **Network devices** (feature flag): ios_config, eos_config, junos_config, nxos_config
 
-**HPC** (feature flag): Comprehensive HPC cluster management including:
+**HPC** (feature flags): Cluster-related implementations including:
   - *Scheduler*: slurm_config, slurm_ops, slurm_node, slurm_partition, slurm_account, slurm_qos, slurm_job, slurm_queue, slurm_info, slurmrestd, pbs_job, pbs_queue, pbs_server, scheduler_orchestration, partition_policy, lsf_queue, lsf_host, lsf_policy
   - *GPU*: nvidia_gpu, nvidia_driver, cuda
   - *InfiniBand/OFED*: rdma_stack, opensm, ib_partition, ib_diagnostics, ipoib
@@ -145,7 +160,9 @@ rustible init <PATH>          # Initialize new project
 
 **Windows** (feature flag): win_copy, win_feature, win_service, win_package, win_user
 
-Unsupported modules automatically fall back to Ansible's Python execution engine.
+Do not rely on an unknown module automatically executing through Ansible's
+Python engine. The audited CLI fallback is incomplete; draft execution repairs
+reject unsupported modules explicitly.
 
 ## Configuration
 
@@ -176,7 +193,7 @@ cargo build --features docker,kubernetes,aws
 | `docker` | Docker container support |
 | `kubernetes` | Kubernetes pod execution |
 | `aws` | AWS cloud modules |
-| `hpc` | HPC modules (Slurm, GPU, OFED) |
+| `hpc` | Slurm and GPU modules; OFED requires `ofed` separately |
 | `slurm` | Slurm workload manager modules |
 | `gpu` | GPU management modules (NVIDIA) |
 | `ofed` | InfiniBand/RDMA/OFED support |
@@ -188,17 +205,18 @@ cargo build --features docker,kubernetes,aws
 | `distributed` | Distributed execution support |
 | `api` | REST API server |
 | `provisioning` | Infrastructure provisioning (requires AWS) |
-| `full` | All core features enabled |
-| `full-cloud` | All features plus all cloud providers |
-| `full-aws` | All features plus AWS |
-| `full-hpc` | All features plus full HPC (hpc, pbs, ofed, parallel_fs, redfish, vsphere, identity, bare_metal) |
-| `pure-rust` | Minimal pure Rust build (no C deps) |
+| `full` | russh, local, ssh2-backend, docker, kubernetes, hpc; does not mean every feature |
+| `full-cloud` | full, aws, azure, gcp; add experimental for gated providers |
+| `full-aws` | full plus aws |
+| `full-provisioning` | full-aws plus provisioning |
+| `full-hpc` | full plus hpc, pbs, ofed, parallel_fs, redfish, vsphere, identity, bare_metal, lsf |
+| `pure-rust` | russh and local; does not guarantee a binary without native C dependencies |
 | `ssh2-backend` | Legacy SSH via libssh2 (C dependency) |
 | `startup-warmup` | Background warmup of lazy components |
 | `openstack` | OpenStack cloud provider (experimental) |
 | `redfish` | Bare-metal BMC management via Redfish/IPMI |
 | `database` | Database modules (PostgreSQL, MySQL) |
-| `winrm` | Windows Remote Management (Beta, no `experimental` opt-in required) |
+| `winrm` | Windows Remote Management implementation; no `experimental` opt-in required |
 | `azure` | Azure cloud modules (experimental) |
 | `gcp` | GCP cloud modules (experimental) |
 | `reqwest` | HTTP client backend (experimental) |
@@ -206,13 +224,14 @@ cargo build --features docker,kubernetes,aws
 
 ## Performance
 
-Benchmarks demonstrate significant performance improvements:
+The previous 5.3–5.9x comparison figures are withdrawn. The comparison runner
+counts failed Rustible commands as measurements and does not establish equivalent
+successful effects. Existing benchmark files are experimental material, not
+evidence of a product speedup.
 
-| Operation | Ansible | Rustible | Speedup |
-|-----------|---------|----------|---------|
-| 10 hosts, simple playbook | 8.2s | 1.4s | 5.9x |
-| 100 file copies | 45.3s | 8.1s | 5.6x |
-| Template rendering | 12.1s | 2.3s | 5.3x |
+A publishable comparison needs pinned versions, equivalent successful outputs,
+warmups, repeated runs, median and spread, and the execution environment. No such
+end-to-end comparison has been completed in the current diligence.
 
 ## Documentation
 
@@ -222,6 +241,12 @@ Benchmarks demonstrate significant performance improvements:
 - [Architecture](docs/architecture/ARCHITECTURE.md) - Technical design
 
 ## Testing
+
+Run real-host integration tests only against disposable targets. The separate
+execution draft replaces simulated results with real module effects, so a test
+can invoke package managers, services, accounts, and file writes. Keep controller
+and target environments isolated; do not point the examples below at production
+hosts while the recorded execution and state findings remain unresolved.
 
 Run the default CLI smoke path:
 
@@ -262,7 +287,12 @@ cargo test --test homelab_playbook_tests -- --ignored
 
 ## Contributing
 
-All contributions are welcome.
+Rustible is a community project maintained by Artur, with substantial AI
+assistance in its implementation and review. The maintainer remains responsible
+for released code and claims; agent review is not external human review.
+
+Small reproducible examples, independent verification, and ownership of bounded
+test areas are especially useful contributions.
 
 See `CONTRIBUTING.md` for guidelines and `CODE_OF_CONDUCT.md` for community expectations.
 For security issues, see `SECURITY.md`.

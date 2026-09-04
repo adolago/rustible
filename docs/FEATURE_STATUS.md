@@ -18,18 +18,24 @@ disagree, update this file first and then align secondary docs.
 
 ## Status Summary
 
+The 4 September 2026 diligence found that previous "Complete" and "Beta"
+labels overstated the available evidence. Rustible remains `0.1.1-alpha`.
+Implementation presence, focused tests, and verification against real systems
+are separate claims. See [Verification status](VERIFICATION_STATUS.md) for the
+review baseline, draft repairs, and outstanding verification.
+
 | Area | Status | Notes |
 |------|--------|-------|
-| Core playbook execution | Complete | Async execution, inventory, roles, handlers, variables, callbacks, vault, and core module set are shipped. |
-| Lock/checkpoint workflow | Beta / Partial | `rustible lock checkpoint` and `rustible lock rollback` create snapshot-backed checkpoints, support dry-run, and execute real rollback actions for recorded state transitions. |
-| Rollback engine | Beta / Partial | End-to-end in the lock workflow; rollback coverage is strongest for state-backed tasks and still depends on module rollback implementations. |
-| WinRM transport | Beta / Partial | Feature-gated with `winrm`, no `experimental` gate required. Intended for Linux/macOS controllers targeting Windows hosts. |
+| Core playbook execution | Incomplete | Parsing and execution code exist, but the audited baseline includes simulated success and incomplete selection, role, handler, and remote-execution behavior. Draft repairs do not make unchanged main complete. |
+| Lock/checkpoint workflow | Under validation | Snapshot-backed checkpoint and rollback code exists. Recovery guarantees and failure handling require workflow-specific verification. |
+| Rollback engine | Incomplete | Module-dependent restoration paths exist; generic rollback can report success without restoring state. The CLI and generic library paths require separate evidence. |
+| WinRM transport | Under validation | Feature-gated with `winrm`, no `experimental` gate required. Windows-target behavior has not been independently exercised in this diligence. |
 | WinRM auth support | Partial | NTLM, Basic, and certificate auth are implemented. Kerberos and CredSSP fail fast with explicit unsupported errors. Windows Credential Manager remains unsupported. |
-| Windows native modules | Beta / Partial | `win_copy`, `win_feature`, `win_service`, `win_package`, and `win_user` ship with parity/integration coverage. |
-| AWS native modules | Beta | `aws_ec2_instance`, `aws_s3`, `aws_iam_role`, `aws_iam_policy`, `aws_security_group_rule`, and `aws_ebs_volume` are built-in modules. |
-| AWS provisioning resources | Beta / Partial | State-backed provisioning resources exist for core AWS infrastructure, including security group rules and EBS volumes. |
+| Windows native modules | Under validation | Implementations and tests exist; passing real-Windows parity/integration evidence has not been established here. |
+| AWS native modules | Under validation | AWS module implementations exist behind `aws`; live-cloud correctness and parity are not established by source presence or mock tests. |
+| AWS provisioning resources | Experimental / Incomplete | Resource implementations exist; planning, locking, durable state, and failure recovery have open correctness findings. |
 | Azure / GCP modules | Experimental | Still require `experimental` plus provider feature flags. |
-| Terraform-like provisioning | Experimental | Useful for stateful workflows and provider-backed resources, but not a full Terraform replacement. |
+| Terraform-like provisioning | Experimental / Incomplete | Not a Terraform replacement or a verified safe state-migration path. Import and state repairs are draft changes pending broader checks. |
 | Beta readiness docs and checklists | In Progress | Beta gate docs exist; use them with the live tracker, explicit CLI smoke coverage, and the high-risk sign-off workflow rather than the archived gap-analysis issue list. |
 
 ## Beta-Readiness Tracker
@@ -44,8 +50,8 @@ disagree, update this file first and then align secondary docs.
 
 ## Known Limits Worth Calling Out
 
-- `winrm` is beta, not GA: infrastructure-backed Windows test coverage still depends on CI secrets and host availability.
+- The `winrm` feature's lack of an `experimental` gate is a build choice, not evidence of beta readiness. Real-Windows test coverage still depends on host availability.
 - Kerberos and CredSSP authentication are parsed and tested for explicit failure behavior, but are not implemented.
 - Rollback requires snapshot-backed checkpoints for live execution. Older checkpoint files remain readable but must be recreated for live rollback.
-- EBS volumes are managed idempotently by `volume_id` or `Name` tag lookup; ambiguous `Name` matches are rejected.
+- EBS volume code selects resources by `volume_id` or `Name` tag lookup and rejects ambiguous matches. Live-cloud idempotency has not been independently verified in this diligence.
 - Standalone security group rule management supports IPv4 CIDRs, IPv6 CIDRs, referenced security groups, and self-referencing rules, with description changes applied as revoke-plus-authorize when AWS requires replacement semantics.
