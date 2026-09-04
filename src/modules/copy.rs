@@ -126,15 +126,25 @@ impl CopyModule {
 
         // Open destination file with specific options for security
         let mut options = fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
+        options.write(true).create(true);
+
+        let target_mode = mode.unwrap_or(src_file.metadata()?.permissions().mode() & 0o7777);
 
         #[cfg(unix)]
-        if let Some(m) = mode {
+        {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(m);
+            options.mode(target_mode);
         }
 
         let mut dest_file = options.open(dest)?;
+
+        // Apply the final mode before truncation or replacement data. An existing
+        // broad-mode destination must not expose private source bytes mid-copy.
+        let restricted = target_mode & dest_file.metadata()?.permissions().mode() & 0o777;
+        dest_file.set_permissions(fs::Permissions::from_mode(restricted))?;
+        if dest_file.metadata()?.is_file() {
+            dest_file.set_len(0)?;
+        }
 
         std::io::copy(&mut src_file, &mut dest_file)?;
 
@@ -142,14 +152,6 @@ impl CopyModule {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let target_mode = if let Some(m) = mode {
-                m
-            } else {
-                // If mode is not specified, preserve source mode
-                let src_meta = src_file.metadata()?;
-                src_meta.permissions().mode() & 0o7777
-            };
-
             let metadata = dest_file.metadata()?;
             if (metadata.permissions().mode() & 0o7777) != target_mode {
                 let mut perms = metadata.permissions();
@@ -191,21 +193,32 @@ impl CopyModule {
     /// Create parent directories with specified mode
     fn create_parent_dirs(path: &Path, directory_mode: Option<u32>) -> ModuleResult<()> {
         if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)?;
-
-                // Apply directory mode if specified
+            let mut missing = Vec::new();
+            let mut current = parent;
+            while !current.as_os_str().is_empty() && !current.exists() {
+                missing.push(current);
+                let Some(next) = current.parent() else {
+                    break;
+                };
+                current = next;
+            }
+            for directory in missing.into_iter().rev() {
+                let mut builder = fs::DirBuilder::new();
                 if let Some(mode) = directory_mode {
-                    // Walk up and apply mode to each created directory
-                    let mut current = parent.to_path_buf();
-                    while !current.as_os_str().is_empty() {
-                        if current.exists() {
-                            fs::set_permissions(&current, fs::Permissions::from_mode(mode))?;
-                        }
-                        if !current.pop() {
-                            break;
+                    use std::os::unix::fs::DirBuilderExt;
+                    builder.mode(mode);
+                }
+                match builder.create(directory) {
+                    Ok(()) => {
+                        if let Some(mode) = directory_mode {
+                            fs::set_permissions(directory, fs::Permissions::from_mode(mode))?;
                         }
                     }
+                    // A concurrent creator owns its permissions; never chmod it.
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::AlreadyExists
+                            && directory.is_dir() => {}
+                    Err(error) => return Err(error.into()),
                 }
             }
         }

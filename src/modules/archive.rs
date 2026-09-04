@@ -143,11 +143,10 @@ impl ArchiveModule {
         }
 
         let base = source;
-        for entry in walkdir::WalkDir::new(source)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in walkdir::WalkDir::new(source).follow_links(false) {
+            let entry = entry.map_err(|error| {
+                ModuleError::ExecutionFailed(format!("Cannot enumerate archive source: {}", error))
+            })?;
             let path = entry.path();
 
             if Self::is_excluded(path, base, exclude_patterns) {
@@ -160,6 +159,74 @@ impl ArchiveModule {
         Ok(files)
     }
 
+    /// Reject output aliases/descendants before creating or truncating anything.
+    fn validate_destination(source: &Path, dest: &Path) -> ModuleResult<()> {
+        let source_resolved = source.canonicalize()?;
+        let absolute_dest = if dest.is_absolute() {
+            dest.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(dest)
+        };
+        let mut existing = absolute_dest.as_path();
+        let mut missing = Vec::new();
+        let resolved = loop {
+            match existing.canonicalize() {
+                Ok(mut resolved) => {
+                    for component in missing.iter().rev() {
+                        resolved.push(component);
+                    }
+                    break resolved;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let name = existing.file_name().ok_or(error)?;
+                    missing.push(name.to_owned());
+                    existing = existing.parent().ok_or_else(|| {
+                        ModuleError::InvalidParameter("Invalid archive destination".into())
+                    })?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        if resolved.starts_with(&source_resolved) {
+            return Err(ModuleError::InvalidParameter(
+                "Archive destination must be outside its source".into(),
+            ));
+        }
+        #[cfg(unix)]
+        if let Ok(dest_metadata) = fs::metadata(dest) {
+            use std::os::unix::fs::MetadataExt;
+            let source_metadata = fs::metadata(source)?;
+            if source_metadata.dev() == dest_metadata.dev()
+                && source_metadata.ino() == dest_metadata.ino()
+            {
+                return Err(ModuleError::InvalidParameter(
+                    "Archive destination aliases its source".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Publish only a complete archive, without writing through output links.
+    fn publish_archive(
+        staged: tempfile::NamedTempFile,
+        dest: &Path,
+        force: bool,
+    ) -> ModuleResult<()> {
+        match fs::metadata(dest) {
+            Ok(metadata) => staged.as_file().set_permissions(metadata.permissions())?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if force {
+            staged.persist(dest)
+        } else {
+            staged.persist_noclobber(dest)
+        }
+        .map_err(|error| ModuleError::Io(error.error))?;
+        Ok(())
+    }
+
     /// Create a tar archive (optionally gzip-compressed)
     fn create_tar_archive(
         source: &Path,
@@ -168,8 +235,15 @@ impl ArchiveModule {
         compression_level: u32,
         exclude_patterns: &[String],
         remove_source: bool,
+        force: bool,
     ) -> ModuleResult<ArchiveStats> {
+        Self::validate_destination(source, dest)?;
         let files = Self::collect_files(source, exclude_patterns)?;
+        let base = if source.is_file() {
+            source.parent().unwrap_or(Path::new("."))
+        } else {
+            source
+        };
         let file_count = files.len();
         let mut total_size: u64 = 0;
 
@@ -180,8 +254,13 @@ impl ArchiveModule {
             }
         }
 
-        // Create the archive
-        let dest_file = File::create(dest)?;
+        // Keep the old output and any linked source members intact until done.
+        let parent = dest
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let staged = tempfile::NamedTempFile::new_in(parent)?;
+        let dest_file = staged.reopen()?;
 
         if compress {
             let level = match compression_level {
@@ -195,7 +274,7 @@ impl ArchiveModule {
 
             for file_path in &files {
                 let meta = fs::symlink_metadata(file_path)?;
-                let relative_path = file_path.strip_prefix(source).unwrap_or(file_path);
+                let relative_path = file_path.strip_prefix(base).unwrap_or(file_path);
 
                 if meta.file_type().is_symlink() {
                     let target = fs::read_link(file_path)?;
@@ -215,12 +294,14 @@ impl ArchiveModule {
             }
 
             builder.finish()?;
+            // Observe compression-finalization errors before removing any input.
+            builder.into_inner()?.finish()?.sync_all()?;
         } else {
             let mut builder = tar::Builder::new(dest_file);
 
             for file_path in &files {
                 let meta = fs::symlink_metadata(file_path)?;
-                let relative_path = file_path.strip_prefix(source).unwrap_or(file_path);
+                let relative_path = file_path.strip_prefix(base).unwrap_or(file_path);
 
                 if meta.file_type().is_symlink() {
                     let target = fs::read_link(file_path)?;
@@ -240,9 +321,12 @@ impl ArchiveModule {
             }
 
             builder.finish()?;
+            builder.into_inner()?.sync_all()?;
         }
 
-        // Remove source if requested
+        Self::publish_archive(staged, dest, force)?;
+
+        // Remove source only after the complete archive has been published.
         if remove_source {
             if source.is_dir() {
                 fs::remove_dir_all(source)?;
@@ -267,11 +351,18 @@ impl ArchiveModule {
         compression_level: u32,
         exclude_patterns: &[String],
         remove_source: bool,
+        force: bool,
     ) -> ModuleResult<ArchiveStats> {
         use zip::write::SimpleFileOptions;
         use zip::CompressionMethod;
 
+        Self::validate_destination(source, dest)?;
         let files = Self::collect_files(source, exclude_patterns)?;
+        let base = if source.is_file() {
+            source.parent().unwrap_or(Path::new("."))
+        } else {
+            source
+        };
         let file_count = files.len();
         let mut total_size: u64 = 0;
 
@@ -282,7 +373,12 @@ impl ArchiveModule {
             }
         }
 
-        let dest_file = File::create(dest)?;
+        let parent = dest
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let staged = tempfile::NamedTempFile::new_in(parent)?;
+        let dest_file = staged.reopen()?;
         let mut zip = zip::ZipWriter::new(dest_file);
 
         let options = SimpleFileOptions::default()
@@ -290,7 +386,7 @@ impl ArchiveModule {
             .compression_level(Some(compression_level as i64));
 
         for file_path in &files {
-            let relative_path = file_path.strip_prefix(source).unwrap_or(file_path);
+            let relative_path = file_path.strip_prefix(base).unwrap_or(file_path);
             let relative_str = relative_path.to_string_lossy();
             let meta = fs::symlink_metadata(file_path)?;
 
@@ -329,9 +425,12 @@ impl ArchiveModule {
         }
 
         zip.finish()
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to finish zip: {}", e)))?;
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to finish zip: {}", e)))?
+            .sync_all()?;
 
-        // Remove source if requested
+        Self::publish_archive(staged, dest, force)?;
+
+        // Remove source only after the complete archive has been published.
         if remove_source {
             if source.is_dir() {
                 fs::remove_dir_all(source)?;
@@ -525,6 +624,7 @@ impl Module for ArchiveModule {
                 compression_level,
                 &exclude_patterns,
                 remove_source,
+                force,
             )?,
             ArchiveFormat::TarGz => Self::create_tar_archive(
                 source,
@@ -533,6 +633,7 @@ impl Module for ArchiveModule {
                 compression_level,
                 &exclude_patterns,
                 remove_source,
+                force,
             )?,
             ArchiveFormat::Zip => Self::create_zip_archive(
                 source,
@@ -540,6 +641,7 @@ impl Module for ArchiveModule {
                 compression_level,
                 &exclude_patterns,
                 remove_source,
+                force,
             )?,
         };
 
