@@ -135,6 +135,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Declared Unix control-node targets; see docs/PLATFORM_SUPPORT.md.
+          # Native Windows builds are unsupported by unconditional Unix source.
           # Linux x86_64 (glibc)
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -164,18 +166,6 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
-            features: pure-rust
-
-          # Windows x86_64 (MSVC)
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
-            features: pure-rust
-
-          # Windows ARM64
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
             features: pure-rust
 
     steps:
@@ -220,7 +210,6 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} --features ${{ matrix.features }}
 
       - name: Prepare release assets (Unix)
-        if: runner.os != 'Windows'
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           BINARY_NAME="rustible"
@@ -236,25 +225,6 @@ jobs:
           # Generate checksums
           sha256sum "${RELEASE_DIR}.tar.gz" > "${RELEASE_DIR}.tar.gz.sha256"
 
-      - name: Prepare release assets (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $VERSION = "${{ needs.validate.outputs.version }}"
-          $BINARY_NAME = "rustible.exe"
-          $RELEASE_DIR = "rustible-v${VERSION}-${{ matrix.target }}"
-
-          New-Item -ItemType Directory -Force -Path $RELEASE_DIR
-          Copy-Item "target/${{ matrix.target }}/release/$BINARY_NAME" "$RELEASE_DIR/"
-          Copy-Item README.md, LICENSE* "$RELEASE_DIR/" -ErrorAction SilentlyContinue
-
-          # Create archive
-          Compress-Archive -Path "$RELEASE_DIR/*" -DestinationPath "${RELEASE_DIR}.zip"
-
-          # Generate checksums
-          $hash = Get-FileHash "${RELEASE_DIR}.zip" -Algorithm SHA256
-          "$($hash.Hash.ToLower())  ${RELEASE_DIR}.zip" | Out-File -Encoding ASCII "${RELEASE_DIR}.zip.sha256"
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -262,8 +232,6 @@ jobs:
           path: |
             rustible-v*.tar.gz
             rustible-v*.tar.gz.sha256
-            rustible-v*.zip
-            rustible-v*.zip.sha256
           if-no-files-found: error
 
   release:
@@ -377,8 +345,8 @@ jobs:
           echo "| Linux ARM64 | aarch64-unknown-linux-gnu | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS Intel | x86_64-apple-darwin | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS Apple Silicon | aarch64-apple-darwin | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows x64 | x86_64-pc-windows-msvc | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows ARM64 | aarch64-pc-windows-msvc | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Native Windows control-node binaries are unsupported and are not published." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ "$CRATES_STATUS" == "success" ]; then

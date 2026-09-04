@@ -276,7 +276,7 @@ main() {
     echo
     log_info "GitHub Actions will now:"
     log_info "  1. Run tests"
-    log_info "  2. Build release binaries for all platforms"
+    log_info "  2. Build release binaries for the configured Linux/macOS targets"
     log_info "  3. Create GitHub release with artifacts"
     log_info "  4. Publish to crates.io (stable releases only)"
     echo

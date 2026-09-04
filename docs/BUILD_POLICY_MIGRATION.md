@@ -50,8 +50,11 @@ is main. Manual benchmark baseline-saving inputs are now honored.
 
 The root audit still has an explicit unresolved RSA exception and an AWS S3
 transitive lru warning. A passing audit under that policy is not a warning-free
-or vulnerability-free result. Windows release support, real cloud/HPC behavior,
-and broad performance claims require separate remediation or evidence.
+or vulnerability-free result. Native Windows release targets and their ZIP
+publication declarations have been removed because the control-node code has
+unconditional Unix dependencies. See [Platform support](PLATFORM_SUPPORT.md) for
+the declared Linux/macOS targets and verification limits. Real cloud/HPC
+behavior and broad performance claims still require separate evidence.
 
 Focused regression tests cover test-runner control flow, release input/output
 validation, and archive-size boundaries. Full release packaging, optional feature
