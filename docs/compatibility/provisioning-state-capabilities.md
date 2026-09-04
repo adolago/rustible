@@ -66,6 +66,27 @@ Mixed create/update/destroy transitions, provider-aware replacement, taint
 planning and dependency-failure handling need separate repairs. Verification uses
 synthetic graphs, the real state serializer and memory-only resource operations.
 
+### Persisting confirmed apply progress
+
+Apply now waits for the state backend to save each successful create, update,
+replacement or destroy before starting the next resource action. A state-save
+error stops apply immediately; later resource calls do not run. Cancelling a
+later action therefore retains earlier backend-acknowledged progress. State
+serials and backend writes advance per recorded successful action, rather than
+once per whole apply. Actions without a confirmed state change do not trigger
+an end-of-apply save. The initial plan/state check still happens once, before any
+resource action; this apply's own incremental saves do not invalidate its loop.
+
+This is a partial recovery correction. Cancellation during a resource call or
+its state save can still leave an unknown outcome. Replacement still has an
+unrecorded gap between deleting the old resource and creating the new one.
+Unsuccessful resource results, dependent-action failure handling, lock cleanup,
+and automatic recovery require separate repairs. After a save error, reconcile
+the resource and persisted state before another apply; a backend acknowledgement
+is not an authenticated recovery record. Local writes use rename without file
+or directory fsync, so this is not a power-loss durability guarantee. Tests use
+temporary local state files and fake resource operations, not cloud runs.
+
 ---
 
 ## Provisioning CLI Commands
