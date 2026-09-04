@@ -63,8 +63,9 @@ RUN strip /app/target/release/rustible
 # ============================================================================
 FROM debian:13.3-slim AS runtime
 
-# Install minimal runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Apply available stable security updates, including packages inherited from the base.
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3t64 \
     libbz2-1.0 \
