@@ -12,7 +12,7 @@ path = "src/main.rs"
 ssh2 = "0.9"
 
 # New library (pure Rust, async-native)
-async-ssh2-tokio = "0.12"
+async-ssh2-tokio = "0.13"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

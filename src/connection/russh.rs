@@ -628,6 +628,7 @@ impl Handler for ClientHandler {
     async fn server_channel_open_agent_forward(
         &mut self,
         channel: russh::Channel<russh::client::Msg>,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         if !self.forward_agent {
@@ -635,6 +636,7 @@ impl Handler for ClientHandler {
             return Ok(());
         }
 
+        reply.accept().await;
         debug!(host = %self.host, "Server opened agent forwarding channel, starting proxy");
 
         // Spawn a task to proxy agent protocol between the channel and local agent
