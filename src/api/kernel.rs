@@ -789,8 +789,11 @@ async fn plan_boot_entry(
         KernelBootloader::Grub => run_command(
             connection,
             &format!(
-                r#"bash -lc 'awk -F"'"'"'" '/menuentry / && index($0, {release}) {{print $2; exit}}' /boot/grub/grub.cfg /boot/grub2/grub.cfg 2>/dev/null'"#,
-                release = shell_quote(expected_kernel_release)
+                "bash -lc {}",
+                shell_quote(&format!(
+                    r#"RUSTIBLE_KERNEL_RELEASE={release} awk -F "'" '/menuentry / && index($0, ENVIRON["RUSTIBLE_KERNEL_RELEASE"]) {{print $2; exit}}' /boot/grub/grub.cfg /boot/grub2/grub.cfg 2>/dev/null"#,
+                    release = shell_quote(expected_kernel_release)
+                ))
             ),
             Some(exec_options),
         )
@@ -802,8 +805,11 @@ async fn plan_boot_entry(
         KernelBootloader::SystemdBoot => run_command(
             connection,
             &format!(
-                r#"bash -lc 'for base in /boot/loader/entries /boot/efi/loader/entries /efi/loader/entries; do for f in "$base"/*.conf; do [ -f "$f" ] || continue; if grep -qi -- {release} "$f"; then basename "$f" .conf; exit 0; fi; done; done'"#,
-                release = shell_quote(expected_kernel_release)
+                "bash -lc {}",
+                shell_quote(&format!(
+                    r#"for base in /boot/loader/entries /boot/efi/loader/entries /efi/loader/entries; do for f in "$base"/*.conf; do [ -f "$f" ] || continue; if grep -Fqi -- {release} "$f"; then basename "$f" .conf; exit 0; fi; done; done"#,
+                    release = shell_quote(expected_kernel_release)
+                ))
             ),
             Some(exec_options),
         )
@@ -834,8 +840,11 @@ async fn configure_one_shot_boot(
 ) -> Result<(), String> {
     let command = match boot_plan.bootloader {
         KernelBootloader::Grub => format!(
-            "bash -lc 'grub-reboot {entry} || grub2-reboot {entry}'",
-            entry = shell_quote(&boot_plan.entry_id)
+            "bash -lc {}",
+            shell_quote(&format!(
+                "grub-reboot {entry} || grub2-reboot {entry}",
+                entry = shell_quote(&boot_plan.entry_id)
+            ))
         ),
         KernelBootloader::SystemdBoot => {
             format!("bootctl set-oneshot {}", shell_quote(&boot_plan.entry_id))
@@ -855,8 +864,11 @@ async fn commit_boot_entry(
 ) -> Result<(), String> {
     let command = match boot_plan.bootloader {
         KernelBootloader::Grub => format!(
-            "bash -lc 'grub-set-default {entry} || grub2-set-default {entry}'",
-            entry = shell_quote(&boot_plan.entry_id)
+            "bash -lc {}",
+            shell_quote(&format!(
+                "grub-set-default {entry} || grub2-set-default {entry}",
+                entry = shell_quote(&boot_plan.entry_id)
+            ))
         ),
         KernelBootloader::SystemdBoot => {
             format!("bootctl set-default {}", shell_quote(&boot_plan.entry_id))
@@ -1374,6 +1386,10 @@ impl BmcProviderDisplay for KernelDeploymentBmc {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "kernel_command_contract_tests.rs"]
+mod command_contract_tests;
 
 #[cfg(test)]
 mod tests {
