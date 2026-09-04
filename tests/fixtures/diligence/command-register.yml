@@ -1,0 +1,12 @@
+- name: Actual command stdout and registration
+  hosts: selected
+  gather_facts: false
+  tasks:
+    - name: execute-echo
+      command: /bin/echo core-audit-stdout
+      register: echo_result
+    - name: verify-stdout
+      assert:
+        that:
+          - echo_result.rc == 0
+          - echo_result.stdout == 'core-audit-stdout\n'

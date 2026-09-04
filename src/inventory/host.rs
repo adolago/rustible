@@ -326,6 +326,7 @@ impl Host {
                     }
                     "ansible_ssh_pass" => host.connection.ssh.password = Some(value.to_string()),
                     "ansible_connection" => {
+                        host.set_var(key, serde_yaml::Value::String(value.to_lowercase()));
                         host.connection.connection = match value.to_lowercase().as_str() {
                             "ssh" => ConnectionType::Ssh,
                             "local" => ConnectionType::Local,

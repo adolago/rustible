@@ -1,0 +1,6 @@
+all:
+  hosts:
+    selected:
+      ansible_connection: local
+    excluded:
+      ansible_connection: local

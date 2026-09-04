@@ -1,0 +1,6 @@
+- name: Actual command failure
+  hosts: selected
+  gather_facts: false
+  tasks:
+    - name: command-must-fail
+      command: /bin/false

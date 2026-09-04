@@ -1,0 +1,13 @@
+- name: Handler stays on notifying host
+  hosts: selected
+  gather_facts: false
+  tasks:
+    - name: notify-host-handler
+      debug:
+        msg: changed-marker
+      changed_when: true
+      notify: host-handler
+  handlers:
+    - name: host-handler
+      debug:
+        msg: "handler-for-{{ inventory_hostname }}"

@@ -1,0 +1,12 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: selected-loop
+      command: /bin/echo {{ item }}
+      loop: [one, two]
+      when: inventory_hostname == 'selected'
+      notify: loop-handler
+  handlers:
+    - name: loop-handler
+      debug:
+        msg: only-selected

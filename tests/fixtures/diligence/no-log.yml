@@ -1,0 +1,8 @@
+- name: Confidential task output
+  hosts: selected
+  gather_facts: false
+  tasks:
+    - name: private-debug
+      debug:
+        msg: CORE_AUDIT_SYNTHETIC_NOT_A_SECRET_7429
+      no_log: true

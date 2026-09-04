@@ -1,0 +1,12 @@
+- name: Tag filtering
+  hosts: selected
+  gather_facts: false
+  tasks:
+    - name: unwanted-task
+      fail:
+        msg: unselected-task-executed
+      tags: [unwanted]
+    - name: wanted-task
+      debug:
+        msg: selected-task-executed
+      tags: [wanted]
