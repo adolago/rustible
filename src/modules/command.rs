@@ -122,9 +122,9 @@ impl CommandModule {
 
         let mut command = if let Some(argv) = argv {
             // If argv is provided, use the first element as the command
-            if argv.is_empty() {
+            if argv.is_empty() || argv[0].is_empty() {
                 return Err(ModuleError::InvalidParameter(
-                    "argv cannot be empty".to_string(),
+                    "argv must contain a nonempty program".to_string(),
                 ));
             }
             let mut cmd = Command::new(&argv[0]);
@@ -134,13 +134,15 @@ impl CommandModule {
             cmd
         } else if let Some(cmd) = cmd {
             // Parse the command string into arguments
-            let parts: Vec<&str> = cmd.split_whitespace().collect();
-            if parts.is_empty() {
+            let parts = shell_words::split(&cmd).map_err(|error| {
+                ModuleError::InvalidParameter(format!("Invalid command quoting: {}", error))
+            })?;
+            if parts.is_empty() || parts[0].is_empty() {
                 return Err(ModuleError::InvalidParameter(
-                    "cmd cannot be empty".to_string(),
+                    "cmd must contain a nonempty program".to_string(),
                 ));
             }
-            let mut cmd = Command::new(parts[0]);
+            let mut cmd = Command::new(&parts[0]);
             if parts.len() > 1 {
                 cmd.args(&parts[1..]);
             }
@@ -222,12 +224,20 @@ impl CommandModule {
     fn check_creates_removes_local(
         &self,
         params: &ModuleParams,
+        context: &ModuleContext,
     ) -> ModuleResult<Option<ModuleOutput>> {
+        let work_dir = params
+            .get_string("chdir")?
+            .or_else(|| context.work_dir.clone());
+        let guard_path = |path: &str| match &work_dir {
+            Some(directory) => Path::new(directory).join(path),
+            None => Path::new(path).to_path_buf(),
+        };
         // Check 'creates' - skip if file exists
         if let Some(creates) = params.get_string("creates")? {
             // Validate the path for security
             validate_path_param(&creates, "creates")?;
-            if Path::new(&creates).exists() {
+            if guard_path(&creates).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' exists",
                     creates
@@ -239,7 +249,7 @@ impl CommandModule {
         if let Some(removes) = params.get_string("removes")? {
             // Validate the path for security
             validate_path_param(&removes, "removes")?;
-            if !Path::new(&removes).exists() {
+            if !guard_path(&removes).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' does not exist",
                     removes
@@ -298,19 +308,21 @@ impl CommandModule {
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
         // Check creates/removes conditions
-        if let Some(output) = self.check_creates_removes_local(params)? {
+        if let Some(output) = self.check_creates_removes_local(params, context)? {
             return Ok(output);
         }
 
-        // In check mode, return what would happen
-        if context.check_mode {
-            let cmd = self.get_command_string(params, context)?;
-            return Ok(ModuleOutput::changed(format!("Would execute: {}", cmd))
-                .with_command_output(Some(String::new()), Some(String::new()), Some(0)));
-        }
-
+        // Validate local process construction in check mode as well as apply mode.
         let mut command = self.build_command(params, context)?;
         let cmd_display = self.get_command_string(params, context)?;
+
+        // In check mode, return what would happen
+        if context.check_mode {
+            return Ok(
+                ModuleOutput::changed(format!("Would execute: {}", cmd_display))
+                    .with_command_output(Some(String::new()), Some(String::new()), Some(0)),
+            );
+        }
 
         // Execute the command
         let output = command.output().map_err(|e| {
@@ -502,6 +514,10 @@ impl Module for CommandModule {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "command_contract_tests.rs"]
+mod contract_tests;
 
 #[cfg(test)]
 mod tests {
