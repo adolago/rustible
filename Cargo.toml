@@ -273,6 +273,7 @@ proptest = "1.4"
 serial_test = "3.1"
 ed25519-dalek = "2.0"
 tera = "1.19"
+tower = { version = "0.5", features = ["util"] }
 
 [[bench]]
 name = "russh_benchmark"

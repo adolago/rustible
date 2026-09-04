@@ -162,6 +162,21 @@ pub async fn execute_playbook(
     user: AuthenticatedUser,
     Json(req): Json<PlaybookExecuteRequest>,
 ) -> ApiResult<Json<PlaybookExecuteResponse>> {
+    // These selectors do not reach this API's executor path yet. Refuse the
+    // requested restriction before resolving files or creating a background job.
+    for (requested, option) in [
+        (req.limit.is_some(), "limit"),
+        (!req.tags.is_empty(), "tags"),
+        (!req.skip_tags.is_empty(), "skip_tags"),
+        (req.start_at_task.is_some(), "start_at_task"),
+    ] {
+        if requested {
+            return Err(ApiError::ValidationError(format!(
+                "API execution restriction '{option}' is unsupported; no job was created"
+            )));
+        }
+    }
+
     // Validate playbook exists
     let playbook_path = find_playbook(&state.config.playbook_paths, &req.playbook)?;
 
