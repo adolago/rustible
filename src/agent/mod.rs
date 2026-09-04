@@ -22,11 +22,13 @@
 //! 2. **Deploy**: Agent binary is transferred to target hosts
 //! 3. **Start**: Agent starts and listens on Unix socket or TCP port
 //! 4. **Execute**: Controller sends tasks, agent executes and returns results
-//! 5. **Shutdown**: Agent terminates on explicit shutdown or timeout
+//! 5. **Shutdown**: Agent terminates on explicit shutdown; idle timeout is not enforced
 //!
 //! # Communication Protocol
 //!
-//! The agent uses a simple JSON-RPC-like protocol over Unix sockets or TCP:
+//! The agent uses a simple JSON-RPC-like protocol over Unix sockets or plain TCP.
+//! TLS and execution identity switching are unsupported and explicit requests
+//! are rejected. Command timeout and concurrency controls are not enforced yet.
 //!
 //! ```json
 //! // Request
@@ -145,15 +147,15 @@ impl Default for AgentBuildConfig {
 pub struct AgentConfig {
     /// Listen address (Unix socket path or TCP address)
     pub listen: String,
-    /// Enable TLS for TCP connections
+    /// Reserved TLS option; true is rejected before runtime startup.
     pub tls: bool,
-    /// Path to TLS certificate
+    /// Reserved TLS certificate path; any supplied value is rejected at startup.
     pub tls_cert: Option<PathBuf>,
-    /// Path to TLS key
+    /// Reserved TLS key path; any supplied value is rejected at startup.
     pub tls_key: Option<PathBuf>,
-    /// Idle timeout before auto-shutdown (0 = never)
+    /// Requested idle timeout (currently not enforced).
     pub idle_timeout: Duration,
-    /// Maximum concurrent tasks
+    /// Requested maximum concurrent tasks (currently not enforced).
     pub max_concurrent: usize,
     /// Working directory for task execution
     pub work_dir: PathBuf,
@@ -250,11 +252,11 @@ pub struct ExecuteParams {
     pub cwd: Option<String>,
     /// Environment variables
     pub env: HashMap<String, String>,
-    /// Timeout in seconds
+    /// Requested timeout in seconds (currently not enforced by the runtime).
     pub timeout: Option<u64>,
-    /// Run as specific user
+    /// Requested user; any supplied value is unsupported and rejected.
     pub user: Option<String>,
-    /// Run as specific group
+    /// Requested group; any supplied value is unsupported and rejected.
     pub group: Option<String>,
     /// Use shell (vs direct exec)
     pub shell: bool,
@@ -494,6 +496,14 @@ impl AgentRuntime {
     pub async fn start(&self) -> AgentResult<()> {
         use std::sync::atomic::Ordering;
 
+        // Never silently downgrade an explicit TLS request to the plain
+        // transports below. Validate before directory or socket side effects.
+        if self.config.tls || self.config.tls_cert.is_some() || self.config.tls_key.is_some() {
+            return Err(AgentError::ConnectionFailed(
+                "TLS configuration is unsupported by the agent runtime".into(),
+            ));
+        }
+
         // Ensure work directory exists
         std::fs::create_dir_all(&self.config.work_dir)?;
         self.shutdown_requested.store(false, Ordering::SeqCst);
@@ -721,6 +731,14 @@ impl AgentRuntime {
     /// Execute a command
     pub async fn execute(&self, params: ExecuteParams) -> AgentResult<ExecuteResult> {
         use std::sync::atomic::Ordering;
+
+        // Shared by direct, RPC and one-shot execution paths. Reject identity
+        // requests before command construction and task accounting.
+        if params.user.is_some() || params.group.is_some() {
+            return Err(AgentError::ExecutionFailed(
+                "Requested execution identity is unsupported by the agent runtime".into(),
+            ));
+        }
 
         self.tasks_running.fetch_add(1, Ordering::SeqCst);
         let start = Instant::now();
@@ -1223,5 +1241,190 @@ mod tests {
             "runtime returned error: {:?}",
             runtime_result
         );
+    }
+}
+
+#[cfg(test)]
+mod diligence_contracts {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    async fn expect_tls_preflight(mut config: AgentConfig) {
+        let temp = tempfile::tempdir().unwrap();
+        let work_dir = temp.path().join("uncreated-work");
+        // Empty addresses fail parsing on the old path before any listener/socket
+        // can be created. The corrected path must reject TLS even earlier.
+        config.listen = String::new();
+        config.work_dir = work_dir.clone();
+        let runtime = AgentRuntime::new(config);
+        let error = runtime.start().await.unwrap_err().to_string();
+        assert!(
+            error.contains("TLS") && error.contains("unsupported"),
+            "{error}"
+        );
+        assert!(!work_dir.exists());
+        assert_eq!(runtime.tasks_executed.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn tls_enabled_is_rejected_before_startup_side_effects() {
+        expect_tls_preflight(AgentConfig {
+            tls: true,
+            ..Default::default()
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn certificate_setting_is_rejected_even_without_tls_flag() {
+        expect_tls_preflight(AgentConfig {
+            tls_cert: Some(PathBuf::from("unused-synthetic-cert")),
+            ..Default::default()
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn key_setting_is_rejected_even_without_tls_flag() {
+        expect_tls_preflight(AgentConfig {
+            tls_key: Some(PathBuf::from("unused-synthetic-key")),
+            ..Default::default()
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn serialized_tls_configuration_still_fails_closed() {
+        let config = AgentConfig {
+            tls: true,
+            tls_cert: Some(PathBuf::from("unused-synthetic-cert")),
+            tls_key: Some(PathBuf::from("unused-synthetic-key")),
+            ..Default::default()
+        };
+        let encoded = serde_json::to_string(&config).unwrap();
+        let decoded = serde_json::from_str(&encoded).unwrap();
+        expect_tls_preflight(decoded).await;
+    }
+
+    #[tokio::test]
+    async fn tls_error_precedes_invalid_work_directory_and_omits_values() {
+        let temp = tempfile::tempdir().unwrap();
+        let work = temp.path().join("existing-file");
+        std::fs::write(&work, "sentinel").unwrap();
+        let runtime = AgentRuntime::new(AgentConfig {
+            listen: String::new(),
+            tls: true,
+            tls_cert: Some(PathBuf::from("synthetic-private-path-marker")),
+            auth_token: Some("synthetic-private-token-marker".into()),
+            work_dir: work.clone(),
+            ..Default::default()
+        });
+        let error = runtime.start().await.unwrap_err().to_string();
+        assert!(
+            error.contains("TLS") && error.contains("unsupported"),
+            "{error}"
+        );
+        assert!(!error.contains("synthetic-private"));
+        assert_eq!(std::fs::read_to_string(work).unwrap(), "sentinel");
+    }
+
+    #[tokio::test]
+    async fn plain_defaults_reach_address_validation_without_opening_socket() {
+        let temp = tempfile::tempdir().unwrap();
+        let work = temp.path().join("work");
+        let config = AgentConfig {
+            listen: String::new(),
+            work_dir: work.clone(),
+            ..Default::default()
+        };
+        assert!(!config.tls);
+        assert!(config.tls_cert.is_none() && config.tls_key.is_none());
+        let runtime = AgentRuntime::new(config);
+        let error = runtime.start().await.unwrap_err().to_string();
+        assert!(error.contains("address cannot be empty"), "{error}");
+        assert!(work.is_dir());
+    }
+
+    fn synthetic_params(command: String) -> ExecuteParams {
+        ExecuteParams {
+            command,
+            cwd: None,
+            env: HashMap::new(),
+            timeout: None,
+            user: None,
+            group: None,
+            shell: false,
+        }
+    }
+
+    async fn expect_identity_preflight(user: Option<&str>, group: Option<&str>) {
+        let temp = tempfile::tempdir().unwrap();
+        let absent_program = temp.path().join("never-created-program");
+        assert!(!absent_program.exists());
+        let runtime = AgentRuntime::new(AgentConfig::default());
+        let mut params = synthetic_params(absent_program.to_string_lossy().into_owned());
+        params.user = user.map(str::to_owned);
+        params.group = group.map(str::to_owned);
+        let error = runtime.execute(params).await.unwrap_err().to_string();
+        assert!(
+            error.contains("identity") && error.contains("unsupported"),
+            "{error}"
+        );
+        assert!(!error.contains("synthetic-user") && !error.contains("synthetic-group"));
+        assert_eq!(runtime.tasks_running.load(Ordering::SeqCst), 0);
+        assert_eq!(runtime.tasks_executed.load(Ordering::SeqCst), 0);
+        assert!(!absent_program.exists());
+    }
+
+    #[tokio::test]
+    async fn requested_user_is_rejected_before_process_execution() {
+        expect_identity_preflight(Some("synthetic-user"), None).await;
+    }
+
+    #[tokio::test]
+    async fn requested_group_is_rejected_before_process_execution() {
+        expect_identity_preflight(None, Some("synthetic-group")).await;
+    }
+
+    #[tokio::test]
+    async fn empty_identity_fields_remain_explicit_requests() {
+        expect_identity_preflight(Some(""), None).await;
+        expect_identity_preflight(None, Some("")).await;
+    }
+
+    #[tokio::test]
+    async fn request_handler_propagates_unsupported_identity_without_execution() {
+        let runtime = AgentRuntime::new(AgentConfig::default());
+        let mut params = synthetic_params(String::new());
+        params.user = Some("synthetic-user".into());
+        params.group = Some("synthetic-group".into());
+        let response = runtime
+            .handle_request(AgentRequest {
+                id: "synthetic-request".into(),
+                method: AgentMethod::Execute,
+                params: Some(serde_json::to_value(params).unwrap()),
+                auth_token: None,
+            })
+            .await;
+        assert_eq!(response.id, "synthetic-request");
+        assert!(response.result.is_none());
+        let error = response.error.unwrap();
+        assert_eq!(error.code, -32000);
+        assert!(error.message.contains("identity") && error.message.contains("unsupported"));
+        assert_eq!(runtime.tasks_executed.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn absent_identity_retains_existing_empty_command_error() {
+        let runtime = AgentRuntime::new(AgentConfig::default());
+        let error = runtime
+            .execute(synthetic_params(String::new()))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Empty command"), "{error}");
+        assert!(!error.contains("identity"));
+        assert_eq!(runtime.tasks_running.load(Ordering::SeqCst), 0);
+        assert_eq!(runtime.tasks_executed.load(Ordering::SeqCst), 1);
     }
 }
