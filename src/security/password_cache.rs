@@ -25,7 +25,8 @@ pub struct PasswordCacheConfig {
     pub enabled: bool,
     /// Maximum number of cached entries
     pub max_entries: usize,
-    /// Whether to clear password from memory when retrieved
+    /// Whether to remove the stored entry atomically on a successful retrieval.
+    /// The caller still owns the returned password string.
     pub clear_on_retrieve: bool,
 }
 
@@ -265,34 +266,32 @@ impl PasswordCache {
 
         let key = CacheKey::new(host, user);
 
-        // First try with read lock
-        {
-            let entries = self.entries.read();
-            if let Some(entry) = entries.get(&key) {
-                if !entry.is_expired() {
-                    self.stats.write().hits += 1;
-                    if let Some(pwd) = entry.password() {
-                        return Ok(pwd);
-                    }
-                }
-            }
-        }
-
-        // Cache miss or expired
-        self.stats.write().misses += 1;
-
-        // If clear_on_retrieve, we need write lock anyway
-        if self.config.clear_on_retrieve {
+        // Retrieval, use counts and one-time removal share one lock so only one
+        // reader can receive a clear-on-retrieve entry.
+        let password = {
             let mut entries = self.entries.write();
-            if let Some(entry) = entries.remove(&key) {
-                if !entry.is_expired() {
-                    if let Some(pwd) = entry.password() {
-                        // Entry is dropped here, Zeroizing clears password automatically
-                        return Ok(pwd);
-                    }
-                }
+            if entries.get(&key).is_some_and(CachedPassword::is_expired) {
+                entries.remove(&key);
+                self.stats.write().expirations += 1;
             }
+            let password = entries.get_mut(&key).and_then(|entry| {
+                let password = entry.password()?;
+                entry.use_count = entry.use_count.saturating_add(1);
+                Some(password)
+            });
+            if self.config.clear_on_retrieve && password.is_some() {
+                // Dropping the entry zeroes its stored bytes, not the returned copy.
+                entries.remove(&key);
+            }
+            password
+        };
+
+        if let Some(password) = password {
+            self.stats.write().hits += 1;
+            return Ok(password);
         }
+
+        self.stats.write().misses += 1;
 
         Err(SecurityError::PasswordExpired(format!(
             "No valid cached password for {}@{}",

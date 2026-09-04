@@ -23,7 +23,7 @@ pub enum TrustLevel {
 /// Result of verifying an artifact signature.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationResult {
-    /// Whether the cryptographic signature is valid.
+    /// Whether the content hash, signature, and bundle/key metadata checks pass.
     pub valid: bool,
     /// The key identifier used.
     pub key_id: String,
@@ -45,7 +45,8 @@ impl ArtifactVerifier {
 
     /// Verify `data` against a [`SignatureBundle`] using the given key.
     ///
-    /// Checks both the artifact hash and the cryptographic signature.
+    /// Checks the artifact hash, signature, and bundle/key metadata agreement.
+    /// The supplied key's identifier must come from a caller-controlled key store.
     pub fn verify(
         &self,
         data: &[u8],
@@ -68,7 +69,7 @@ impl ArtifactVerifier {
         if actual_hash != bundle.artifact_hash {
             return VerificationResult {
                 valid: false,
-                key_id: bundle.key_id.clone(),
+                key_id: key.id.clone(),
                 trust_level: TrustLevel::Unknown,
                 message: "Artifact hash mismatch - content has been tampered with".into(),
             };
@@ -80,7 +81,7 @@ impl ArtifactVerifier {
             None => {
                 return VerificationResult {
                     valid: false,
-                    key_id: bundle.key_id.clone(),
+                    key_id: key.id.clone(),
                     trust_level: TrustLevel::Unknown,
                     message: "Invalid hex encoding in signature".into(),
                 };
@@ -90,15 +91,25 @@ impl ArtifactVerifier {
         if !key.verify(data, &sig_bytes) {
             return VerificationResult {
                 valid: false,
-                key_id: bundle.key_id.clone(),
+                key_id: key.id.clone(),
                 trust_level: TrustLevel::Unknown,
                 message: "Signature verification failed - wrong key or tampered data".into(),
             };
         }
 
-        // 3. Determine trust level.
+        // Bundle metadata is not signed; it cannot select a different identity.
+        if bundle.key_id != key.id || bundle.algorithm != key.algorithm {
+            return VerificationResult {
+                valid: false,
+                key_id: key.id.clone(),
+                trust_level: TrustLevel::Unknown,
+                message: "Signature metadata does not match the verification key".into(),
+            };
+        }
+
+        // 3. Determine trust from the key that actually verified the signature.
         let trust_level = match policy {
-            Some(p) => p.evaluate(&bundle.key_id),
+            Some(p) => p.evaluate(&key.id),
             None => TrustLevel::Unknown,
         };
 
@@ -110,7 +121,7 @@ impl ArtifactVerifier {
 
         VerificationResult {
             valid: true,
-            key_id: bundle.key_id.clone(),
+            key_id: key.id.clone(),
             trust_level,
             message,
         }

@@ -22,6 +22,9 @@ pub enum ImmutableAuditError {
 
     #[error("chain verification failed")]
     VerificationFailed,
+
+    #[error("audit sequence exhausted")]
+    SequenceExhausted,
 }
 
 /// Result type alias for immutable audit operations.
@@ -84,11 +87,11 @@ impl AuditStorage for FileAuditStorage {
     }
 
     async fn read_all(&self) -> ImmutableAuditResult<Vec<HashChainEntry>> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let content = std::fs::read_to_string(&self.path)?;
+        let content = match std::fs::read_to_string(&self.path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
         let mut entries = Vec::new();
         for line in content.lines() {
             let trimmed = line.trim();
@@ -120,22 +123,38 @@ impl ImmutableAuditStore {
         }
     }
 
-    /// Create a store and replay existing entries to rebuild chain state.
+    /// Verify stored entries before rebuilding chain state.
+    /// Verification checks internal consistency, not an external completeness
+    /// anchor or protection against rewriting an entire unkeyed chain.
     pub async fn open(storage: Box<dyn AuditStorage>) -> ImmutableAuditResult<Self> {
         let entries = storage.read_all().await?;
+        if !HashChainState::verify_chain(&entries) {
+            return Err(ImmutableAuditError::VerificationFailed);
+        }
         let chain = if entries.is_empty() {
             HashChainState::new()
         } else {
             let last = entries.last().unwrap();
-            HashChainState::resume(last.sequence + 1, last.chain_hash.clone())
+            let next = last
+                .sequence
+                .checked_add(1)
+                .ok_or(ImmutableAuditError::SequenceExhausted)?;
+            HashChainState::resume(next, last.chain_hash.clone())
         };
         Ok(Self { chain, storage })
     }
 
     /// Record a new audit event (as raw bytes) into the chain and persist it.
+    /// In-memory state changes only after the backend acknowledges the append.
+    /// A backend may leave partial writes on error; inspect/reopen such storage
+    /// before retrying. This method does not make backend writes transactional.
     pub async fn record(&mut self, event_data: &[u8]) -> ImmutableAuditResult<HashChainEntry> {
-        let entry = self.chain.append(event_data);
+        let mut next_chain = self.chain.clone();
+        let entry = next_chain
+            .try_append(event_data)
+            .ok_or(ImmutableAuditError::SequenceExhausted)?;
         self.storage.append(&entry).await?;
+        self.chain = next_chain;
         Ok(entry)
     }
 

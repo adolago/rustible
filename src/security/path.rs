@@ -121,8 +121,13 @@ pub fn validate_path_no_traversal(path: &str) -> SecurityResult<()> {
 
 /// Validate that a path stays within a base directory.
 ///
-/// This function ensures that the resolved path is a descendant of the
-/// base directory, preventing directory escape attacks.
+/// Resolves existing components, including symlinks, before checking containment.
+/// Missing suffix components are appended to their nearest resolved ancestor.
+/// Unresolvable symlinks and filesystem errors are rejected.
+///
+/// This is a point-in-time check, not a filesystem sandbox. Another process can
+/// replace path components before a later open. Callers needing protection from
+/// concurrent replacement must use directory handles and appropriate open flags.
 ///
 /// # Arguments
 ///
@@ -131,7 +136,7 @@ pub fn validate_path_no_traversal(path: &str) -> SecurityResult<()> {
 ///
 /// # Returns
 ///
-/// * `Ok(PathBuf)` - The canonicalized path if it's within the base
+/// * `Ok(PathBuf)` - An absolute path with existing components canonicalized
 /// * `Err(SecurityError)` - If the path escapes the base directory
 ///
 /// # Examples
@@ -148,22 +153,21 @@ pub fn validate_path_within_base(base: &Path, path: &str) -> SecurityResult<Path
     // First, check for obvious traversal
     validate_path_no_traversal(path)?;
 
-    // Resolve the path relative to base
+    let resolve_error = |error| {
+        SecurityError::PathTraversal(format!("Cannot resolve path for containment: {}", error))
+    };
+    let canonical_base = canonicalize_with_missing(base).map_err(resolve_error)?;
+
+    // Relative paths start at the resolved base, including when the base is relative.
     let resolved = if Path::new(path).is_absolute() {
         PathBuf::from(path)
     } else {
-        base.join(path)
+        canonical_base.join(path)
     };
-
-    // Normalize the path by resolving . and .. components
-    let normalized = normalize_path(&resolved);
-
-    // Get the canonical base path for comparison
-    // Use normalized version if canonicalize fails (e.g., path doesn't exist yet)
-    let canonical_base = base.canonicalize().unwrap_or_else(|_| normalize_path(base));
+    let canonical_target = canonicalize_with_missing(&resolved).map_err(resolve_error)?;
 
     // Check that the resolved path starts with the base
-    if !normalized.starts_with(&canonical_base) {
+    if !canonical_target.starts_with(&canonical_base) {
         return Err(SecurityError::PathTraversal(format!(
             "Path '{}' escapes base directory '{}'",
             path,
@@ -171,7 +175,49 @@ pub fn validate_path_within_base(base: &Path, path: &str) -> SecurityResult<Path
         )));
     }
 
-    Ok(normalized)
+    Ok(canonical_target)
+}
+
+/// Resolve an existing ancestor without treating a dangling symlink as absent.
+fn canonicalize_with_missing(path: &Path) -> std::io::Result<PathBuf> {
+    use std::io::{Error, ErrorKind};
+
+    let mut ancestor = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut missing = Vec::new();
+    loop {
+        match ancestor.symlink_metadata() {
+            Ok(_) => {
+                let mut resolved = ancestor.canonicalize()?;
+                if !missing.is_empty() && !resolved.metadata()?.is_dir() {
+                    return Err(Error::new(
+                        ErrorKind::NotADirectory,
+                        "Ancestor is not a directory",
+                    ));
+                }
+                for component in missing.into_iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                let name = ancestor.file_name().ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::InvalidInput,
+                        "Cannot resolve missing path component",
+                    )
+                })?;
+                missing.push(name.to_os_string());
+                if !ancestor.pop() {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// Normalize a path by resolving . and .. components without filesystem access.

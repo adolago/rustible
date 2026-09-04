@@ -1,8 +1,8 @@
 //! Hash chain for immutable audit log integrity
 //!
-//! This module implements a cryptographic hash chain using BLAKE3 to ensure
-//! that audit log entries cannot be tampered with. Each entry includes a hash
-//! of the previous entry, forming an immutable chain.
+//! This module uses BLAKE3 to check internal consistency between linked entries.
+//! An unkeyed chain does not prevent rewriting the whole log or prove its
+//! completeness without an external trusted anchor.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct HashChainEntry {
     /// Monotonically increasing sequence number
     pub sequence: u64,
-    /// ISO 8601 timestamp of when the entry was created
+    /// ISO 8601 timestamp; metadata not covered by the chain hash.
     pub timestamp: String,
     /// BLAKE3 hash of the event data
     pub event_hash: String,
@@ -50,7 +50,16 @@ impl HashChainState {
     /// Append new event data and return the resulting chain entry.
     ///
     /// The chain hash is computed as `BLAKE3(sequence || event_hash || previous_hash)`.
+    /// Panics without changing state if the sequence is exhausted; use
+    /// [`Self::try_append`] when exhaustion must be handled as an error.
     pub fn append(&mut self, event_data: &[u8]) -> HashChainEntry {
+        self.try_append(event_data)
+            .expect("audit sequence exhausted")
+    }
+
+    /// Append an entry, or return `None` without changing state on exhaustion.
+    pub fn try_append(&mut self, event_data: &[u8]) -> Option<HashChainEntry> {
+        let next_sequence = self.next_sequence.checked_add(1)?;
         let event_hash = blake3::hash(event_data).to_hex().to_string();
         let previous_hash = self.last_hash.clone();
 
@@ -70,10 +79,10 @@ impl HashChainState {
             chain_hash: chain_hash.clone(),
         };
 
-        self.next_sequence += 1;
+        self.next_sequence = next_sequence;
         self.last_hash = chain_hash;
 
-        entry
+        Some(entry)
     }
 
     /// Verify that a slice of entries forms a valid chain.
@@ -89,7 +98,7 @@ impl HashChainState {
 
         for (i, entry) in entries.iter().enumerate() {
             // Verify sequence continuity
-            if entry.sequence != entries[0].sequence + i as u64 {
+            if i > 0 && entries[i - 1].sequence.checked_add(1) != Some(entry.sequence) {
                 return false;
             }
 
@@ -139,6 +148,18 @@ impl Default for HashChainState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_try_append_leaves_exhausted_state_unchanged() {
+        let mut chain = HashChainState::resume(u64::MAX - 1, "fixture predecessor".into());
+        let last = chain
+            .try_append(b"last representable next sequence")
+            .unwrap();
+        assert_eq!(last.sequence, u64::MAX - 1);
+        assert!(chain.try_append(b"exhausted").is_none());
+        assert_eq!(chain.next_sequence(), u64::MAX);
+        assert_eq!(chain.last_hash(), last.chain_hash);
+    }
 
     #[test]
     fn test_append_and_verify() {
