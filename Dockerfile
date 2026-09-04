@@ -9,6 +9,9 @@
 # ============================================================================
 FROM rust:1.92-slim-bookworm AS chef
 
+ARG CARGO_BUILD_JOBS=2
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
+
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
@@ -49,7 +52,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY benches ./benches
 
-# Build the release binary with pure-rust features (no C dependencies)
+# The pure-rust bundle selects the Rust SSH backend; archive codecs still use C.
 RUN cargo build --release --features "pure-rust" --bin rustible
 
 # Strip the binary to reduce size
@@ -63,7 +66,8 @@ FROM debian:13.3-slim AS runtime
 # Install minimal runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libssl3 \
+    libssl3t64 \
+    libbz2-1.0 \
     openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -s /bin/bash rustible
@@ -88,6 +92,6 @@ CMD ["--help"]
 # Labels for container metadata
 LABEL org.opencontainers.image.title="Rustible"
 LABEL org.opencontainers.image.description="Fast, safe configuration management tool - Ansible alternative in Rust"
-LABEL org.opencontainers.image.source="https://github.com/rustible/rustible"
+LABEL org.opencontainers.image.source="https://github.com/adolago/rustible"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL org.opencontainers.image.vendor="Rustible Contributors"

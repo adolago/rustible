@@ -43,53 +43,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine version
+      - name: Validate release version and package contract
         id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          fi
-
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          # Check if prerelease
-          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-          else
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-          fi
-
-          echo "Release version: $VERSION"
-          echo "Is prerelease: ${{ steps.version.outputs.is_prerelease }}"
-
-      - name: Validate semver
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-
-          # Validate semantic versioning format
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$ ]]; then
-            echo "::error::Invalid semantic version format: $VERSION"
-            exit 1
-          fi
-
-          echo "Version $VERSION is valid semver"
-
-      - name: Check Cargo.toml version match
-        run: |
-          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\([^"]*\)".*/\1/')
-          RELEASE_VERSION="${{ steps.version.outputs.version }}"
-
-          echo "Cargo.toml version: $CARGO_VERSION"
-          echo "Release version: $RELEASE_VERSION"
-
-          # Extract base version (without prerelease suffix) for comparison
-          BASE_RELEASE_VERSION=$(echo "$RELEASE_VERSION" | sed 's/-.*//')
-
-          if [ "$CARGO_VERSION" != "$BASE_RELEASE_VERSION" ] && [ "$CARGO_VERSION" != "$RELEASE_VERSION" ]; then
-            echo "::warning::Cargo.toml version ($CARGO_VERSION) differs from release version ($RELEASE_VERSION)"
-          fi
+        env:
+          RELEASE_VERSION_INPUT: ${{ inputs.version }}
+        run: python3 scripts/validate_release.py
 
   test:
     name: Test Suite
@@ -379,10 +337,12 @@ jobs:
           key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Verify package
-        run: cargo package --allow-dirty
+        run: |
+          cargo package --locked
+          python3 scripts/validate_package.py
 
       - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

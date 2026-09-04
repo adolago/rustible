@@ -1,0 +1,47 @@
+# Reviewed historical false positives only (2026-09-04).
+# Each exemption binds an exact commit, path, rule and line; new commits are scanned.
+# 65 occurrences / 39 fingerprints were reviewed, including every HTML column
+# collision: malformed PEM dummies/format docs, public SSH keys, libcrux package
+# names, and synthetic local encryption/sanitization fixtures. No live validation.
+# Do not replace these with whole-file, directory, rule, or token-value exclusions.
+
+cc615cf9d8101d559a542264f2b2ac8c4de7630b:Cargo.lock:generic-api-key:3408
+88a280f906896dba9d88b126593e02c9f766bfab:tests/ssh_auth_parity_tests.rs:private-key:344
+88a280f906896dba9d88b126593e02c9f766bfab:tests/ssh_auth_parity_tests.rs:private-key:358
+88a280f906896dba9d88b126593e02c9f766bfab:tests/ssh_auth_parity_tests.rs:private-key:568
+88a280f906896dba9d88b126593e02c9f766bfab:tests/ssh_auth_parity_tests.rs:private-key:580
+88a280f906896dba9d88b126593e02c9f766bfab:tests/ssh_auth_parity_tests.rs:private-key:592
+37ec7c42f3dec8bcd02737739e3711ecfe815c9d:Cargo.lock:generic-api-key:3343
+2281bdc2c997cd72dc726814481fb8cbb84ece86:tests/modules/known_hosts_tests.rs:generic-api-key:150
+2281bdc2c997cd72dc726814481fb8cbb84ece86:tests/modules/known_hosts_tests.rs:generic-api-key:510
+2281bdc2c997cd72dc726814481fb8cbb84ece86:tests/modules/known_hosts_tests.rs:generic-api-key:533
+2281bdc2c997cd72dc726814481fb8cbb84ece86:tests/modules/authorized_key_tests.rs:generic-api-key:42
+2281bdc2c997cd72dc726814481fb8cbb84ece86:tests/modules/authorized_key_tests.rs:generic-api-key:51
+2281bdc2c997cd72dc726814481fb8cbb84ece86:tests/modules/authorized_key_tests.rs:generic-api-key:59
+2281bdc2c997cd72dc726814481fb8cbb84ece86:tests/modules/authorized_key_tests.rs:generic-api-key:67
+2281bdc2c997cd72dc726814481fb8cbb84ece86:tests/modules/authorized_key_tests.rs:generic-api-key:178
+13471667a622439e5ceb56c977dcbaed4df487ed:tests/security_tests.rs:private-key:1707
+e8174205fac6e12f354f895bd9f50b6ac414518d:Cargo.lock:generic-api-key:2464
+e8174205fac6e12f354f895bd9f50b6ac414518d:benches/ssh_comparison/Cargo.lock:generic-api-key:1137
+13471667a622439e5ceb56c977dcbaed4df487ed:docs/coverage/tarpaulin-report.html:private-key:152
+e8174205fac6e12f354f895bd9f50b6ac414518d:src/connection/russh_auth.rs:private-key:13
+e8174205fac6e12f354f895bd9f50b6ac414518d:src/connection/russh_auth.rs:private-key:15
+e8174205fac6e12f354f895bd9f50b6ac414518d:src/connection/russh_auth.rs:private-key:1260
+e8174205fac6e12f354f895bd9f50b6ac414518d:src/connection/russh_auth.rs:private-key:1371
+e8174205fac6e12f354f895bd9f50b6ac414518d:src/connection/russh_auth.rs:private-key:1383
+e8174205fac6e12f354f895bd9f50b6ac414518d:src/connection/russh_auth.rs:private-key:1396
+e8174205fac6e12f354f895bd9f50b6ac414518d:src/connection/russh_auth.rs:private-key:1408
+e8174205fac6e12f354f895bd9f50b6ac414518d:tests/fixtures/integration/vars/secrets.yml:generic-api-key:4
+e8174205fac6e12f354f895bd9f50b6ac414518d:tests/fixtures/integration/vars/secrets.yml:private-key:17
+e8174205fac6e12f354f895bd9f50b6ac414518d:tests/fixtures/vault/secret.txt:generic-api-key:2
+e8174205fac6e12f354f895bd9f50b6ac414518d:tests/sensitive_tests.rs:generic-api-key:173
+e8174205fac6e12f354f895bd9f50b6ac414518d:tests/sensitive_tests.rs:generic-api-key:426
+e8174205fac6e12f354f895bd9f50b6ac414518d:tests/sensitive_tests.rs:private-key:294
+e8174205fac6e12f354f895bd9f50b6ac414518d:tests/vault_tests.rs:generic-api-key:1134
+e8174205fac6e12f354f895bd9f50b6ac414518d:tests/vault_tests.rs:generic-api-key:1164
+e8174205fac6e12f354f895bd9f50b6ac414518d:tests/vault_tests.rs:generic-api-key:1184
+978ec475f9a884afb60f0addb161e53870fb17ba:docs/coverage/tarpaulin-report.html:generic-api-key:152
+978ec475f9a884afb60f0addb161e53870fb17ba:docs/coverage/tarpaulin-report.html:generic-api-key:153
+978ec475f9a884afb60f0addb161e53870fb17ba:docs/coverage/tarpaulin-report.html:private-key:152
+978ec475f9a884afb60f0addb161e53870fb17ba:docs/coverage/tarpaulin-report.html:private-key:153
+

@@ -28,6 +28,8 @@ claude-flow
 hive-mind-prompt-*.txt
 
 # Local dev artifacts
+__pycache__/
+*.pyc
 *.diff
 test_output.txt
 bench_security

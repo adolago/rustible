@@ -40,6 +40,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Test release policies
+        run: python3 -m unittest discover -s scripts -p 'test_validate_*.py' -v
+
       - name: Run clippy
         run: |
           # Default features only; --all-features includes experimental cloud modules.
