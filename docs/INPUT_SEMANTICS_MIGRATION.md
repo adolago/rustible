@@ -26,6 +26,22 @@ out-of-range, and wrongly typed values are rejected instead of wrapping or falli
 back to port 22. This parser validation does not change the Rust `Host::set_port`
 API or certify every inventory plugin/external variables-file path.
 
+Inventory files/directories and `Inventory::add_group` now reject cyclic child
+group relationships with the existing `CircularDependency` error. A rejected
+addition/replacement leaves the previous inventory unchanged. Replacements also
+recompute parent edges, removing old inherited relationships. Remove self-links
+or back-edges from invalid inventories before loading them. Forward references
+to absent groups remain accepted. Cycles introduced through `get_group_mut`
+are rejected on the next host-pattern query. Group-host traversal uses a visited
+set and an explicit stack; valid diamonds still de-duplicate hosts without
+recursion through a deep group chain.
+
+`RuntimeContext` can also receive groups directly, bypassing `Inventory`.
+Its existing `get_group_hosts` API now visits each reachable group once,
+returning a de-duplicated host list even if that direct graph is cyclic. Its
+`Option` return type and depth-first child order are unchanged. This does not
+validate every external inventory plugin or repair unrelated pattern matching.
+
 Rust consumers exhaustively matching `HostParseError` must handle the new
 `InvalidSyntax` variant. Valid existing inventory retains its API and file format.
 
@@ -57,3 +73,14 @@ alternate parser. These use temporary files and pure template/variable
 operations. They do not run commands, connect to hosts, or access cloud
 infrastructure. The parser repair does not prove that any main CLI password
 lookup entry point uses this alternate component.
+
+## Generated privileged starters
+
+New `init --template webserver` and `init --template docker` playbooks write
+`become: true`, replacing the invalid YAML key `r#become: true` that silently
+left escalation disabled. Existing files are not overwritten: manually replace
+that key in previously generated starters. The corrected files now actually
+request privilege escalation when run; confirm the intended user and commands
+before execution. Generation tests only create and parse files in temporary
+directories, never run the package, service, or user tasks. This typo repair
+does not certify those templates or their modules for production use.

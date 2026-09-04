@@ -245,6 +245,7 @@ impl Inventory {
         }
 
         // Finalize parent-child relationships
+        inventory.validate_group_graph()?;
         inventory.compute_group_parents();
 
         Ok(inventory)
@@ -881,7 +882,40 @@ impl Inventory {
         Ok(())
     }
 
-    /// Compute parent group relationships from children
+    /// Reject cycles without recursing, including deeply nested group graphs.
+    fn validate_group_graph(&self) -> InventoryResult<()> {
+        let mut complete = HashSet::new();
+        let mut active = HashSet::new();
+
+        for root in self.groups.keys() {
+            let mut pending = vec![(root.as_str(), false)];
+            while let Some((name, exiting)) = pending.pop() {
+                if exiting {
+                    active.remove(name);
+                    complete.insert(name);
+                    continue;
+                }
+                if complete.contains(name) {
+                    continue;
+                }
+                if !active.insert(name) {
+                    return Err(InventoryError::CircularDependency(name.to_string()));
+                }
+                pending.push((name, true));
+                if let Some(group) = self.groups.get(name) {
+                    for child in &group.children {
+                        // Forward references remain permitted until the child is added.
+                        if self.groups.contains_key(child) {
+                            pending.push((child.as_str(), false));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Recompute parent group relationships from children.
     fn compute_group_parents(&mut self) {
         let children_map: HashMap<String, Vec<String>> = self
             .groups
@@ -889,6 +923,10 @@ impl Inventory {
             .map(|(name, group)| (name.clone(), group.children.iter().cloned().collect()))
             .collect();
 
+        // Group replacement can remove edges; do not retain stale parents.
+        for group in self.groups.values_mut() {
+            group.parents.clear();
+        }
         for (parent_name, children) in children_map {
             for child_name in children {
                 if let Some(child) = self.groups.get_mut(&child_name) {
@@ -918,10 +956,18 @@ impl Inventory {
         Ok(())
     }
 
-    /// Add a group to the inventory
+    /// Add or replace a group, rejecting cycles without changing the inventory.
     pub fn add_group(&mut self, group: Group) -> InventoryResult<()> {
         let name = group.name.clone();
-        self.groups.insert(name, group);
+        let previous = self.groups.insert(name.clone(), group);
+        if let Err(error) = self.validate_group_graph() {
+            if let Some(previous) = previous {
+                self.groups.insert(name, previous);
+            } else {
+                self.groups.remove(&name);
+            }
+            return Err(error);
+        }
         self.compute_group_parents();
         Ok(())
     }
@@ -983,6 +1029,8 @@ impl Inventory {
     /// - `~regex` - regex match on hostname
     /// - `*` - wildcard match
     pub fn get_hosts_for_pattern(&self, pattern: &str) -> InventoryResult<Vec<&Host>> {
+        // Public mutable group access can bypass load/add_group validation.
+        self.validate_group_graph()?;
         self.get_hosts_for_pattern_inner(pattern, 0)
     }
 
@@ -1045,8 +1093,8 @@ impl Inventory {
         }
 
         // Try as group name first
-        if let Some(group) = self.groups.get(pattern) {
-            return Ok(self.get_hosts_in_group_recursive(group));
+        if self.groups.contains_key(pattern) {
+            return Ok(self.get_hosts_in_group(pattern));
         }
 
         // Try as host name
@@ -1111,21 +1159,20 @@ impl Inventory {
     }
 
     /// Get all hosts in a group, including hosts from child groups
-    fn get_hosts_in_group_recursive(&self, group: &Group) -> Vec<&Host> {
+    fn get_hosts_in_group(&self, group_name: &str) -> Vec<&Host> {
         let mut hosts: HashSet<&str> = HashSet::new();
-
-        // Add direct hosts
-        for host_name in &group.hosts {
-            hosts.insert(host_name);
-        }
-
-        // Add hosts from child groups
-        for child_name in &group.children {
-            if let Some(child) = self.groups.get(child_name) {
-                for host in self.get_hosts_in_group_recursive(child) {
-                    hosts.insert(&host.name);
-                }
+        let mut visited = HashSet::new();
+        let mut pending = vec![group_name];
+        while let Some(name) = pending.pop() {
+            // Map keys define edges; public Group.name can be changed independently.
+            if !visited.insert(name) {
+                continue;
             }
+            let Some(group) = self.groups.get(name) else {
+                continue;
+            };
+            hosts.extend(group.hosts.iter().map(String::as_str));
+            pending.extend(group.children.iter().map(String::as_str));
         }
 
         hosts
