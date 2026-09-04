@@ -229,6 +229,11 @@ impl ProvisioningExecutor {
         config: InfrastructureConfig,
         executor_config: ExecutorConfig,
     ) -> ProvisioningResult<Self> {
+        if executor_config.parallelism == 0 {
+            return Err(ProvisioningError::ValidationError(
+                "parallelism must be greater than zero".to_string(),
+            ));
+        }
         // Resolve backend and load state
         let state_backend: Arc<dyn StateBackend> =
             if let Some(ref backend_config) = executor_config.state_backend {
@@ -315,14 +320,41 @@ impl ProvisioningExecutor {
     }
 
     async fn save_state(&self) -> ProvisioningResult<()> {
-        let mut state = self.state.write();
-        state.prepare_for_save();
-        self.state_backend.save(&state).await
+        let snapshot = {
+            let mut state = self.state.write();
+            state.prepare_for_save();
+            state.clone()
+        };
+        self.state_backend.save(&snapshot).await
+    }
+
+    fn validated_targets(&self, destroying: bool) -> ProvisioningResult<Vec<ResourceId>> {
+        let state = self.state.read();
+        let configured = self.config.resource_addresses();
+        self.executor_config
+            .targets
+            .iter()
+            .map(|target| {
+                let id = ResourceId::from_address(target).ok_or_else(|| {
+                    ProvisioningError::ValidationError(format!(
+                        "Invalid target '{target}': expected a nonempty resource_type.name",
+                    ))
+                })?;
+                if state.get_resource(&id).is_none() && (destroying || !configured.contains(&id)) {
+                    return Err(ProvisioningError::ValidationError(format!(
+                        "Unknown target '{target}'; refusing to broaden the operation",
+                    )));
+                }
+                Ok(id)
+            })
+            .collect()
     }
 
     /// Generate an execution plan
     pub async fn plan(&self) -> ProvisioningResult<ExecutionPlan> {
         info!("Generating execution plan...");
+        // Validate the entire target list before refresh can mutate saved state.
+        let targets = self.validated_targets(false)?;
 
         // Optionally refresh state first
         if self.executor_config.refresh_before_plan {
@@ -354,16 +386,7 @@ impl ProvisioningExecutor {
             }
         }
 
-        // Add targets if specified
-        if !self.executor_config.targets.is_empty() {
-            let targets: Vec<ResourceId> = self
-                .executor_config
-                .targets
-                .iter()
-                .filter_map(|t| ResourceId::from_address(t))
-                .collect();
-            builder = builder.with_targets(targets);
-        }
+        builder = builder.with_targets(targets);
 
         let mut plan = builder.build()?;
 
@@ -455,20 +478,12 @@ impl ProvisioningExecutor {
     /// Generate a destroy plan
     pub async fn plan_destroy(&self) -> ProvisioningResult<ExecutionPlan> {
         info!("Generating destroy plan...");
+        let targets = self.validated_targets(true)?;
 
         let state = self.state.read().clone();
         let mut builder = PlanBuilder::new(state).destroy();
 
-        // Add targets if specified
-        if !self.executor_config.targets.is_empty() {
-            let targets: Vec<ResourceId> = self
-                .executor_config
-                .targets
-                .iter()
-                .filter_map(|t| ResourceId::from_address(t))
-                .collect();
-            builder = builder.with_targets(targets);
-        }
+        builder = builder.with_targets(targets);
 
         let plan = builder.build()?;
 
@@ -827,9 +842,11 @@ impl ProvisioningExecutor {
             }
 
             // Update state with refreshed resources
-            let mut state = self.state.write();
-            for resource in updated_resources {
-                state.add_resource(resource);
+            {
+                let mut state = self.state.write();
+                for resource in updated_resources {
+                    state.add_resource(resource);
+                }
             }
 
             self.save_state().await?;
@@ -942,6 +959,135 @@ impl std::fmt::Debug for ProvisioningExecutor {
 mod tests {
     use super::super::config::InfrastructureConfig;
     use super::*;
+
+    #[tokio::test]
+    async fn test_diligence_zero_parallelism_is_rejected_before_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let result = ProvisioningExecutor::with_config(
+            InfrastructureConfig::new(),
+            ExecutorConfig {
+                state_path: directory.path().join("state.json"),
+                parallelism: 0,
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(ProvisioningError::ValidationError(message))
+            if message.contains("parallelism"))
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn test_diligence_empty_refresh_completes() {
+        const CHILD: &str = "RUSTIBLE_DILIGENCE_REFRESH_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let dir = tempfile::tempdir().unwrap();
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let state_path = dir.path().join("state.json");
+                let executor = ProvisioningExecutor::with_config(
+                    InfrastructureConfig::new(),
+                    ExecutorConfig {
+                        state_path: state_path.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+                executor.refresh().await.unwrap();
+                assert!(state_path.exists());
+                assert!(!state_path.with_extension("state.lock").exists());
+            });
+            return;
+        }
+        // A synchronous RwLock deadlock also blocks Tokio's timeout future.
+        // Use a separate process so this regression cannot hang the test runner.
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "provisioning::executor::tests::test_diligence_empty_refresh_completes",
+            ])
+            .env(CHILD, "1")
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "refresh subprocess failed: {status}");
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("empty refresh deadlocked");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_invalid_destroy_targets_fail_closed() {
+        for targets in [
+            vec!["typo"],
+            vec!["aws_vpc.main", "typo"],
+            vec!["aws_vpc.missing"],
+            vec![".main"],
+            vec!["aws_vpc."],
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let executor = ProvisioningExecutor::with_config(
+                InfrastructureConfig::new(),
+                ExecutorConfig {
+                    state_path: dir.path().join("state.json"),
+                    refresh_before_plan: false,
+                    targets: targets.iter().map(|s| s.to_string()).collect(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            executor.state.write().add_resource(ResourceState::new(
+                ResourceId::new("aws_vpc", "main"),
+                "synthetic-vpc",
+                "aws",
+                serde_json::json!({}),
+                serde_json::json!({}),
+            ));
+            assert!(
+                executor.plan_destroy().await.is_err(),
+                "targets: {targets:?}"
+            );
+            assert!(executor.plan().await.is_err(), "targets: {targets:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_valid_destroy_target_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let executor = ProvisioningExecutor::with_config(
+            InfrastructureConfig::new(),
+            ExecutorConfig {
+                state_path: dir.path().join("state.json"),
+                targets: vec!["aws_vpc.main".to_string()],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        for name in ["main", "other"] {
+            executor.state.write().add_resource(ResourceState::new(
+                ResourceId::new("aws_vpc", name),
+                format!("synthetic-{name}"),
+                "aws",
+                serde_json::json!({}),
+                serde_json::json!({}),
+            ));
+        }
+        let plan = executor.plan_destroy().await.unwrap();
+        assert_eq!(plan.to_destroy.len(), 1);
+        assert_eq!(plan.to_destroy[0].address(), "aws_vpc.main");
+    }
 
     #[test]
     fn test_apply_result() {

@@ -50,8 +50,8 @@ pub struct Cli {
     #[arg(long = "diff", global = true)]
     pub diff_mode: bool,
 
-    /// Output format
-    #[arg(long, global = true, default_value = "human")]
+    /// Output format (place before the subcommand; local --output options name files)
+    #[arg(long, default_value = "human")]
     pub output: OutputFormat,
 
     /// Limit execution to specific hosts (pattern)
@@ -375,6 +375,46 @@ pub mod env {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_diligence_output_flags_keep_separate_scopes() {
+        let cli = Cli::try_parse_from([
+            "rustible",
+            "--output",
+            "json",
+            "state",
+            "import-terraform",
+            "--tfstate",
+            "synthetic.tfstate",
+            "--output",
+            "imported.json",
+        ])
+        .unwrap();
+        assert!(matches!(cli.output, OutputFormat::Json));
+        let Commands::State(arguments) = cli.command else {
+            panic!("expected state command");
+        };
+        let commands::state::StateCommand::ImportTerraform { output, .. } = arguments.command
+        else {
+            panic!("expected import command");
+        };
+        assert_eq!(output, PathBuf::from("imported.json"));
+    }
+
+    #[test]
+    fn test_diligence_output_format_after_subcommand_rejects_cleanly() {
+        for arguments in [
+            vec!["rustible", "state", "list", "--output", "json"],
+            vec!["rustible", "run", "playbook.yml", "--output", "json"],
+        ] {
+            let result = std::panic::catch_unwind(|| Cli::try_parse_from(arguments));
+            assert!(result.is_ok(), "misplaced format option must not panic");
+            assert!(
+                result.unwrap().is_err(),
+                "output format belongs before the subcommand"
+            );
+        }
+    }
 
     #[test]
     fn test_cli_parsing() {

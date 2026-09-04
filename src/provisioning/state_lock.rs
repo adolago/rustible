@@ -9,7 +9,7 @@
 //! - File-based locking for local state files
 //! - DynamoDB locking for distributed scenarios
 //! - Automatic lock expiration handling
-//! - RAII-style lock guards for safe lock management
+//! - Explicit asynchronous release through the lock manager
 //! - Force unlock capability for stuck locks
 //!
 //! ## Example Usage
@@ -30,7 +30,8 @@
 //!
 //! // Perform state modifications...
 //!
-//! // Lock is automatically released when guard is dropped
+//! // Release explicitly: dropping this guard only logs a warning.
+//! manager.unlock(guard).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -47,6 +48,7 @@ use tokio::time::Duration;
 use uuid::Uuid;
 
 use super::error::{ProvisioningError, ProvisioningResult};
+use crate::state::locking::{lock_file_metadata, write_lock_metadata};
 
 // ============================================================================
 // Lock Information
@@ -263,7 +265,16 @@ impl FileLock {
     }
 
     /// Try to create the lock file atomically
-    async fn try_create_lock_file(&self, info: &LockInfo) -> ProvisioningResult<bool> {
+    async fn try_create_lock_file(
+        &self,
+        info: &LockInfo,
+        timeout: Duration,
+    ) -> ProvisioningResult<bool> {
+        let _guard = match lock_file_metadata(self.lock_path.clone(), timeout).await {
+            Ok(guard) => guard,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
         // Ensure parent directory exists
         if let Some(parent) = self.lock_path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
@@ -274,50 +285,17 @@ impl FileLock {
             })?;
         }
 
-        // Check for existing lock
-        if self.lock_path.exists() {
-            // Read existing lock to check if expired
-            if let Ok(content) = tokio::fs::read_to_string(&self.lock_path).await {
-                if let Ok(existing_lock) = serde_json::from_str::<LockInfo>(&content) {
-                    if !existing_lock.is_expired() {
-                        // Lock is held and not expired
-                        return Ok(false);
-                    }
-                    // Lock is expired, we can take it
-                    tracing::info!("Removing expired lock: {}", existing_lock);
-                }
+        // Both stale takeover and publication are serialized by the same OS
+        // guard. Invalid metadata is not proof of an expired owner.
+        if let Some(existing) = self.get_lock().await? {
+            if !existing.is_expired() {
+                return Ok(false);
             }
-            // Lock file is corrupt or expired, remove it
-            let _ = tokio::fs::remove_file(&self.lock_path).await;
+            tracing::info!("Replacing expired lock: {}", existing);
         }
-
-        // Try to create lock file atomically using O_EXCL equivalent
         let content = serde_json::to_string_pretty(info)?;
-        let temp_path = self.lock_path.with_extension("lock.tmp");
-
-        // Write to temp file first
-        tokio::fs::write(&temp_path, &content).await.map_err(|e| {
-            ProvisioningError::StatePersistenceError(format!("Failed to write lock file: {}", e))
-        })?;
-
-        // Try atomic rename - this should fail if lock exists due to race
-        match tokio::fs::rename(&temp_path, &self.lock_path).await {
-            Ok(_) => Ok(true),
-            Err(e) => {
-                // Clean up temp file
-                let _ = tokio::fs::remove_file(&temp_path).await;
-
-                // Check if it's because lock file now exists
-                if self.lock_path.exists() {
-                    Ok(false)
-                } else {
-                    Err(ProvisioningError::StatePersistenceError(format!(
-                        "Failed to create lock file: {}",
-                        e
-                    )))
-                }
-            }
-        }
+        write_lock_metadata(&self.lock_path, content.as_bytes())?;
+        Ok(true)
     }
 }
 
@@ -328,7 +306,10 @@ impl LockBackend for FileLock {
         let retry_interval = Duration::from_millis(100);
 
         loop {
-            if self.try_create_lock_file(info).await? {
+            if self
+                .try_create_lock_file(info, timeout.saturating_sub(start.elapsed()))
+                .await?
+            {
                 tracing::debug!("Acquired file lock: {}", self.lock_path.display());
                 return Ok(true);
             }
@@ -349,6 +330,7 @@ impl LockBackend for FileLock {
     }
 
     async fn release(&self, lock_id: &str) -> ProvisioningResult<bool> {
+        let _guard = lock_file_metadata(self.lock_path.clone(), Duration::from_secs(30)).await?;
         // Read current lock to verify we own it
         if let Some(current) = self.get_lock().await? {
             if current.id != lock_id {
@@ -391,14 +373,15 @@ impl LockBackend for FileLock {
 
         match serde_json::from_str(&content) {
             Ok(info) => Ok(Some(info)),
-            Err(e) => {
-                tracing::warn!("Lock file is corrupt: {}", e);
-                Ok(None)
-            }
+            Err(e) => Err(ProvisioningError::StateCorruption(format!(
+                "Lock metadata is invalid; refusing to reclaim it: {}",
+                e,
+            ))),
         }
     }
 
     async fn force_unlock(&self, lock_id: &str) -> ProvisioningResult<()> {
+        let _guard = lock_file_metadata(self.lock_path.clone(), Duration::from_secs(30)).await?;
         // Verify the lock exists and matches the ID (for safety)
         if let Some(current) = self.get_lock().await? {
             if current.id != lock_id {
@@ -746,7 +729,7 @@ impl LockBackend for InMemoryLock {
 /// Manager for state locking operations
 ///
 /// Provides a high-level interface for acquiring and releasing locks
-/// with support for timeouts, retries, and RAII-style lock guards.
+/// with support for timeouts, retries, and explicitly released lock guards.
 pub struct StateLockManager {
     /// The lock backend
     backend: Box<dyn LockBackend>,
@@ -844,7 +827,7 @@ impl StateLockManager {
     /// Release a lock explicitly
     pub async fn unlock(&self, guard: LockGuard) -> ProvisioningResult<()> {
         self.backend.release(&guard.lock_id).await?;
-        guard.disarm(); // Prevent double-release on drop
+        guard.disarm(); // Mark explicit release so drop does not warn.
         Ok(())
     }
 
@@ -900,14 +883,14 @@ impl<'a> BackendRef<'a> {
 }
 
 // ============================================================================
-// Lock Guard (RAII)
+// Lock Guard (explicit release required)
 // ============================================================================
 
-/// RAII guard that releases the lock when dropped
+/// Lock handle requiring explicit asynchronous release.
 ///
-/// The lock is automatically released when the guard goes out of scope.
-/// If you need to release the lock early, use the `release()` method or
-/// call `StateLockManager::unlock()`.
+/// Dropping this handle only logs a warning; it does not release the backend
+/// lock. Call [`StateLockManager::unlock`] on every completed or failed operation.
+/// Cancellation cleanup and automatic lease renewal are not implemented.
 pub struct LockGuard {
     lock_id: String,
     released: std::sync::atomic::AtomicBool,
@@ -935,7 +918,7 @@ impl LockGuard {
         self.released.load(std::sync::atomic::Ordering::Acquire)
     }
 
-    /// Disarm the guard (prevent release on drop)
+    /// Mark explicit release so dropping the handle does not warn.
     fn disarm(&self) {
         self.released
             .store(true, std::sync::atomic::Ordering::Release);
@@ -958,10 +941,14 @@ impl Drop for LockGuard {
 }
 
 // ============================================================================
-// Async Lock Guard (Alternative with proper async release)
+// Async Lock Guard (best-effort file cleanup)
 // ============================================================================
 
-/// Async-aware lock guard that properly releases on drop via a background task
+/// File lock handle with best-effort background cleanup on drop.
+///
+/// The cleanup thread is not awaited and does not use the metadata guard that
+/// serializes [`FileLock`] operations. This is not a guaranteed release or safe
+/// replacement for the manager's explicit unlock protocol.
 pub struct AsyncLockGuard {
     lock_id: String,
     lock_path: PathBuf,
@@ -1039,6 +1026,94 @@ impl Drop for AsyncLockGuard {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_diligence_file_lock_does_not_reclaim_partial_metadata() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("partial.lock");
+        tokio::fs::write(&path, b"{").await.unwrap();
+        let lock = FileLock::new(&path);
+        let result = lock
+            .acquire(&LockInfo::new("contender"), Duration::ZERO)
+            .await;
+        assert!(
+            !matches!(result, Ok(true)),
+            "partial metadata is not evidence of a stale owner"
+        );
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"{");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_diligence_file_lock_has_one_concurrent_winner() {
+        for _ in 0..8 {
+            let dir = TempDir::new().unwrap();
+            let barrier = Arc::new(tokio::sync::Barrier::new(16));
+            let mut tasks = Vec::new();
+            for _ in 0..16 {
+                let path = dir.path().join("shared.lock");
+                let barrier = barrier.clone();
+                tasks.push(tokio::spawn(async move {
+                    let lock = FileLock::new(path);
+                    barrier.wait().await;
+                    lock.acquire(&LockInfo::new("contender"), Duration::ZERO)
+                        .await
+                }));
+            }
+            let mut winners = 0;
+            for task in tasks {
+                if matches!(task.await.unwrap(), Ok(true)) {
+                    winners += 1;
+                }
+            }
+            assert_eq!(winners, 1, "concurrent lock ownership is not exclusive");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_diligence_file_lock_excludes_another_process() {
+        const CHILD: &str = "RUSTIBLE_DILIGENCE_LOCK_CHILD_PATH";
+        if let Some(path) = std::env::var_os(CHILD) {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let acquired = FileLock::new(PathBuf::from(path))
+                    .acquire(&LockInfo::new("child"), Duration::ZERO)
+                    .await
+                    .unwrap();
+                assert!(!acquired, "child acquired its parent's held lock");
+            });
+            return;
+        }
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cross-process.lock");
+        let lock = FileLock::new(&path);
+        let info = LockInfo::new("parent");
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        assert!(runtime
+            .block_on(lock.acquire(&info, Duration::ZERO))
+            .unwrap());
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "provisioning::state_lock::tests::test_diligence_file_lock_excludes_another_process"])
+            .env(CHILD, &path).status().unwrap();
+        assert!(status.success());
+        assert!(runtime.block_on(lock.release(&info.id)).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_diligence_file_lock_honors_zero_timeout_during_metadata_update() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("guarded.lock");
+        let _guard = lock_file_metadata(path.clone(), Duration::ZERO)
+            .await
+            .unwrap();
+        let lock = FileLock::new(path);
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            lock.acquire(&LockInfo::new("contender"), Duration::ZERO),
+        )
+        .await;
+        assert!(matches!(result, Ok(Ok(false))));
+    }
 
     /// Helper to create a test file lock
     fn create_test_file_lock(dir: &TempDir) -> FileLock {

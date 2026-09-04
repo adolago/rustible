@@ -1,9 +1,9 @@
 # Provisioning and State Capabilities Matrix
 
 > **Phase**: 1A - HPC Initiative
-> **Last Updated**: 2026-02-05
+> **Last Updated**: 2026-09-04
 > **Rustible Version**: 0.1.x
-> **Status**: Reference Document
+> **Status**: Experimental capability inventory; not production certification
 
 This document maps Rustible's provisioning and state-management capabilities relevant to HPC deployments.
 
@@ -13,36 +13,41 @@ This document maps Rustible's provisioning and state-management capabilities rel
 
 Rustible provides Terraform-like infrastructure provisioning alongside Ansible-compatible configuration management. Provisioning capabilities are feature-gated behind `--features provisioning` or `--features full-provisioning`.
 
+The original matrix used "Stable" to label source locations without end-to-end verification. That is not a supported maturity claim. All rows in this document are **experimental and require workflow verification**, including inventory/variable integrations not covered by the provisioning safety tests. File counts and source links are not proof of compatibility, production safety or tested HPC operation.
+
+Known blockers include incomplete AWS provider/resource registration, stale state loaded before mutation locking, provider-aware replacement/taint planning, dependency-failure handling, durable recovery, cloud deletion/drift handling and lease renewal. Direct Terraform replacement and parallel provisioning are not supported launch claims. See [Terraform integration limits and migration notes](./terraform.md).
+
 ---
 
 ## Provisioning CLI Commands
 
 | Command | Status | Description | Evidence |
 |---------|--------|-------------|----------|
-| `provision plan` | **Stable** | Generate execution plan with diff preview | [`src/cli/commands/provision.rs:376-435`](../../src/cli/commands/provision.rs) |
-| `provision apply` | **Stable** | Apply infrastructure changes with state locking | [`src/cli/commands/provision.rs:445-528`](../../src/cli/commands/provision.rs) |
-| `provision destroy` | **Stable** | Destroy infrastructure resources | [`src/cli/commands/provision.rs:530-610`](../../src/cli/commands/provision.rs) |
-| `provision import` | **Stable** | Import existing cloud resources into state | [`src/cli/commands/provision.rs:612-673`](../../src/cli/commands/provision.rs) |
-| `provision show` | **Stable** | Display current state (JSON/human-readable) | [`src/cli/commands/provision.rs:675-734`](../../src/cli/commands/provision.rs) |
-| `provision refresh` | **Stable** | Refresh state from cloud providers | [`src/cli/commands/provision.rs:736-781`](../../src/cli/commands/provision.rs) |
-| `provision init` | **Stable** | Initialize project with backend configuration | [`src/cli/commands/provision.rs:892-1136`](../../src/cli/commands/provision.rs) |
-| `provision migrate` | **Stable** | Migrate state to current schema version | [`src/cli/commands/provision.rs:783-827`](../../src/cli/commands/provision.rs) |
-| `provision import-terraform` | **Stable** | Import Terraform state into Rustible format | [`src/cli/commands/provision.rs:829-890`](../../src/cli/commands/provision.rs) |
+| `provision plan` | **Experimental** | Preview; provider-aware replacement and saved-plan enforcement incomplete | [`src/cli/commands/provision.rs`](../../src/cli/commands/provision.rs) |
+| `provision apply` | **Experimental** | State/recovery limitations; unsupported safety controls reject before work | [`src/cli/commands/provision.rs`](../../src/cli/commands/provision.rs) |
+| `provision destroy` | **Experimental** | Target validation is enforced; ordering/recovery limitations remain | [`src/cli/commands/provision.rs`](../../src/cli/commands/provision.rs) |
+| `provision import` | **Unverified** | Import existing cloud resources into state | [`src/cli/commands/provision.rs:612-673`](../../src/cli/commands/provision.rs) |
+| `provision show` | **Unverified** | Display current state (JSON/human-readable) | [`src/cli/commands/provision.rs:675-734`](../../src/cli/commands/provision.rs) |
+| `provision refresh` | **Incomplete** | Cloud deletion/drift and targeted refresh behavior need further work | [`src/cli/commands/provision.rs`](../../src/cli/commands/provision.rs) |
+| `provision init` | **Unverified** | Initialize project with backend configuration | [`src/cli/commands/provision.rs:892-1136`](../../src/cli/commands/provision.rs) |
+| `provision migrate` | **Unverified** | Migrate state to current schema version | [`src/cli/commands/provision.rs:783-827`](../../src/cli/commands/provision.rs) |
+| `provision import-terraform` | **Restricted** | Root managed single unindexed instances; unsupported shapes reject | [`src/cli/commands/provision.rs`](../../src/cli/commands/provision.rs) |
 
 ### CLI Options
 
 | Option | Commands | Status | Notes |
 |--------|----------|--------|-------|
-| `--config-file` | All | **Stable** | Infrastructure YAML path (default: `infrastructure.rustible.yml`) |
-| `--state` | All | **Stable** | Override state file path |
-| `--backend-config` | All | **Stable** | External backend configuration file (JSON/YAML) |
-| `-t, --target` | plan/apply/destroy/refresh | **Stable** | Target specific resources |
-| `--auto-approve` | apply/destroy | **Stable** | Skip interactive confirmation |
-| `--parallelism` | apply | **Stable** | Max parallel operations (default: 10) |
-| `--no-lock` | apply | **Stable** | Skip state locking |
-| `--no-backup` | apply | **Stable** | Skip state backup before changes |
-| `--destroy` | plan | **Stable** | Generate destroy plan |
-| `--json` | show | **Stable** | Output as JSON |
+| `--config-file` | All | **Unverified** | Infrastructure YAML path (default: `infrastructure.rustible.yml`) |
+| `--state` | All | **Unverified** | Override state file path |
+| `--backend-config` | All | **Unverified** | External backend configuration file (JSON/YAML) |
+| `-t, --target` | plan/apply/destroy | **Experimental** | Invalid/unknown targets reject; dependency expansion policy remains limited |
+| `-t, --target` | refresh | **Incomplete** | Target filtering is not established; do not rely on restricted scope |
+| `--auto-approve` | apply/destroy | **Unverified** | Skip interactive confirmation |
+| `--parallelism` | apply | **Incomplete** | Zero rejects; executor currently awaits resource operations sequentially |
+| `--no-lock` | apply | **Unverified** | Skip state locking |
+| `--no-backup` | apply | **Unverified** | Skip state backup before changes |
+| `--destroy` | plan | **Unverified** | Generate destroy plan |
+| `--json` | show | **Unverified** | Output as JSON |
 
 ---
 
@@ -52,28 +57,28 @@ Rustible provides Terraform-like infrastructure provisioning alongside Ansible-c
 
 | Command | Status | Description | Evidence |
 |---------|--------|-------------|----------|
-| `state init` | **Stable** | Initialize state with backend configuration | [`src/cli/commands/state.rs:236-379`](../../src/cli/commands/state.rs) |
-| `state migrate` | **Stable** | Migrate state between backends | [`src/cli/commands/state.rs:381-444`](../../src/cli/commands/state.rs) |
-| `state import-terraform` | **Stable** | Import Terraform state | [`src/cli/commands/state.rs:446-546`](../../src/cli/commands/state.rs) |
-| `state list` | **Stable** | List available states | [`src/cli/commands/state.rs:548-603`](../../src/cli/commands/state.rs) |
-| `state show` | **Stable** | Show state details | [`src/cli/commands/state.rs:605-623`](../../src/cli/commands/state.rs) |
-| `state pull` | **Stable** | Pull remote state to local | [`src/cli/commands/state.rs:625-663`](../../src/cli/commands/state.rs) |
-| `state push` | **Stable** | Push local state to remote | [`src/cli/commands/state.rs:665-701`](../../src/cli/commands/state.rs) |
-| `state rm` | **Stable** | Remove state entry | [`src/cli/commands/state.rs:703-727`](../../src/cli/commands/state.rs) |
-| `state lock list` | **Stable** | List active locks | [`src/cli/commands/state.rs:730-761`](../../src/cli/commands/state.rs) |
-| `state lock release` | **Stable** | Force-release a lock | [`src/cli/commands/state.rs:763-776`](../../src/cli/commands/state.rs) |
+| `state init` | **Unverified** | Initialize state with backend configuration | [`src/cli/commands/state.rs:236-379`](../../src/cli/commands/state.rs) |
+| `state migrate` | **Unverified** | Migrate state between backends | [`src/cli/commands/state.rs:381-444`](../../src/cli/commands/state.rs) |
+| `state import-terraform` | **Unverified** | Import Terraform state | [`src/cli/commands/state.rs:446-546`](../../src/cli/commands/state.rs) |
+| `state list` | **Unverified** | List available states | [`src/cli/commands/state.rs:548-603`](../../src/cli/commands/state.rs) |
+| `state show` | **Unverified** | Show state details | [`src/cli/commands/state.rs:605-623`](../../src/cli/commands/state.rs) |
+| `state pull` | **Unverified** | Pull remote state to local | [`src/cli/commands/state.rs:625-663`](../../src/cli/commands/state.rs) |
+| `state push` | **Unverified** | Push local state to remote | [`src/cli/commands/state.rs:665-701`](../../src/cli/commands/state.rs) |
+| `state rm` | **Unverified** | Remove state entry | [`src/cli/commands/state.rs:703-727`](../../src/cli/commands/state.rs) |
+| `state lock list` | **Unverified** | List active locks | [`src/cli/commands/state.rs:730-761`](../../src/cli/commands/state.rs) |
+| `state lock release` | **Unverified** | Force-release a lock | [`src/cli/commands/state.rs:763-776`](../../src/cli/commands/state.rs) |
 
 ### State Lifecycle
 
 | Capability | Status | Description | Evidence |
 |------------|--------|-------------|----------|
-| State versioning | **Stable** | Schema versioning with serial increments | [`src/provisioning/state.rs:1-100`](../../src/provisioning/state.rs) |
-| State diff | **Stable** | Compare states (added/removed/modified) | [`src/provisioning/state.rs:194-332`](../../src/provisioning/state.rs) |
-| State migration | **Stable** | Upgrade state from older versions | [`src/provisioning/mod.rs:153-155`](../../src/provisioning/mod.rs) |
-| Change history | **Stable** | Track historical changes with timestamps | [`src/provisioning/state.rs:368-400`](../../src/provisioning/state.rs) |
-| Terraform import | **Stable** | Convert Terraform state to Rustible format | [`src/cli/commands/state.rs:786-906`](../../src/cli/commands/state.rs) |
-| Resource tainting | **Stable** | Mark resources for replacement | [`src/provisioning/state.rs:150-159`](../../src/provisioning/state.rs) |
-| Atomic writes | **Stable** | Temp file + rename for safety | [`src/provisioning/state_backends.rs:161-174`](../../src/provisioning/state_backends.rs) |
+| State versioning | **Unverified** | Schema versioning with serial increments | [`src/provisioning/state.rs:1-100`](../../src/provisioning/state.rs) |
+| State diff | **Unverified** | Compare states (added/removed/modified) | [`src/provisioning/state.rs:194-332`](../../src/provisioning/state.rs) |
+| State migration | **Unverified** | Upgrade state from older versions | [`src/provisioning/mod.rs:153-155`](../../src/provisioning/mod.rs) |
+| Change history | **Unverified** | Track historical changes with timestamps | [`src/provisioning/state.rs:368-400`](../../src/provisioning/state.rs) |
+| Terraform import | **Unverified** | Convert Terraform state to Rustible format | [`src/cli/commands/state.rs:786-906`](../../src/cli/commands/state.rs) |
+| Resource tainting | **Incomplete** | State marker exists but planner does not reliably enforce replacement | [`src/provisioning/state.rs`](../../src/provisioning/state.rs) |
+| Atomic writes | **Unverified** | Temp file + rename for safety | [`src/provisioning/state_backends.rs:161-174`](../../src/provisioning/state_backends.rs) |
 
 ---
 
@@ -81,12 +86,12 @@ Rustible provides Terraform-like infrastructure provisioning alongside Ansible-c
 
 | Backend | Status | Locking | Feature Flag | Evidence |
 |---------|--------|---------|--------------|----------|
-| **Local** | **Stable** | File-based | None (default) | [`src/provisioning/state_backends.rs:89-200`](../../src/provisioning/state_backends.rs) |
-| **S3** | **Stable** | DynamoDB | `aws` | [`src/provisioning/state_backends.rs:207-400`](../../src/provisioning/state_backends.rs) |
-| **GCS** | **Stable** | None | `gcs` | [`src/cli/commands/state.rs:299-314`](../../src/cli/commands/state.rs) |
-| **Azure Blob** | **Stable** | Lease-based | `azure` | [`src/cli/commands/state.rs:315-335`](../../src/cli/commands/state.rs) |
-| **Consul** | **Stable** | Session-based | None | [`src/cli/commands/state.rs:336-351`](../../src/cli/commands/state.rs) |
-| **HTTP** | **Stable** | HTTP Lock/Unlock | None | [`src/cli/commands/state.rs:352-366`](../../src/cli/commands/state.rs) |
+| **Local** | **Experimental** | File-based, Unix only | `provisioning` | [`src/provisioning/state_backends.rs`](../../src/provisioning/state_backends.rs) |
+| **S3** | **Unverified live** | DynamoDB | `provisioning` / `aws` | [`src/provisioning/state_backends.rs`](../../src/provisioning/state_backends.rs) |
+| **GCS** | **Unverified live** | None | `provisioning,gcp` | [`src/provisioning/state_backends.rs`](../../src/provisioning/state_backends.rs) |
+| **Azure Blob** | **Experimental** | Lease renewal incomplete | `provisioning,azure` | [`src/provisioning/state_backends.rs`](../../src/provisioning/state_backends.rs) |
+| **Consul** | **Experimental** | Session renewal/fencing incomplete | `provisioning` | [`src/provisioning/state_backends.rs`](../../src/provisioning/state_backends.rs) |
+| **HTTP** | **Unverified live** | HTTP Lock/Unlock | `provisioning` | [`src/provisioning/state_backends.rs`](../../src/provisioning/state_backends.rs) |
 
 ### Backend Configuration
 
@@ -113,9 +118,9 @@ backend: consul
 address: http://127.0.0.1:8500
 path: rustible/state
 
-# HTTP backend (Terraform Cloud compatible)
+# Generic HTTP backend (Terraform Cloud interoperability is not verified)
 backend: http
-address: https://app.terraform.io/api/v2/...
+address: https://state.example.invalid/state
 ```
 
 ---
@@ -124,13 +129,13 @@ address: https://app.terraform.io/api/v2/...
 
 | Lock Type | Backend | Status | Evidence |
 |-----------|---------|--------|----------|
-| File lock | Local | **Stable** | [`src/provisioning/state_lock.rs:241-428`](../../src/provisioning/state_lock.rs) |
-| DynamoDB lock | S3 | **Stable** | [`src/provisioning/state_lock.rs:437-656`](../../src/provisioning/state_lock.rs) |
-| In-memory lock | Testing | **Stable** | [`src/provisioning/state_lock.rs:662-741`](../../src/provisioning/state_lock.rs) |
-| Lock timeout | All | **Stable** | Default 30s, configurable | [`src/provisioning/state_lock.rs:776-780`](../../src/provisioning/state_lock.rs) |
-| Lock expiration | All | **Stable** | Default 1 hour, configurable | [`src/provisioning/state_lock.rs:783-793`](../../src/provisioning/state_lock.rs) |
-| Force unlock | All | **Stable** | Manual lock release | [`src/provisioning/state_lock.rs:851-866`](../../src/provisioning/state_lock.rs) |
-| RAII guards | All | **Stable** | Auto-release on drop | [`src/provisioning/state_lock.rs:906-958`](../../src/provisioning/state_lock.rs) |
+| File lock | Local | **Experimental**; cooperating Unix processes, not mixed old/new writers | [`src/provisioning/state_lock.rs`](../../src/provisioning/state_lock.rs) |
+| DynamoDB lock | S3 | **Unverified** | [`src/provisioning/state_lock.rs:437-656`](../../src/provisioning/state_lock.rs) |
+| In-memory lock | Testing | **Unverified** | [`src/provisioning/state_lock.rs:662-741`](../../src/provisioning/state_lock.rs) |
+| Lock timeout | All | **Unverified** | Default 30s, configurable | [`src/provisioning/state_lock.rs:776-780`](../../src/provisioning/state_lock.rs) |
+| Lock expiration | Backend-dependent | **Incomplete safety** | Automatic lease renewal and ownership-loss handling are incomplete |
+| Force unlock | All | **Unverified** | Manual lock release | [`src/provisioning/state_lock.rs:851-866`](../../src/provisioning/state_lock.rs) |
+| RAII guards | All | **Not implemented** | Drop does not release the logical lock; explicit release is required |
 
 ---
 
@@ -138,27 +143,27 @@ address: https://app.terraform.io/api/v2/...
 
 | Source | Status | Description | Evidence |
 |--------|--------|-------------|----------|
-| **YAML** | **Stable** | Ansible-compatible YAML inventory | [`src/inventory/mod.rs:38-49`](../../src/inventory/mod.rs) |
-| **INI** | **Stable** | Ansible-compatible INI inventory | [`src/inventory/mod.rs:24-36`](../../src/inventory/mod.rs) |
-| **JSON** | **Stable** | Dynamic inventory JSON format | [`src/inventory/mod.rs:51-63`](../../src/inventory/mod.rs) |
-| **Script** | **Stable** | Executable dynamic inventory | [`src/inventory/plugin.rs`](../../src/inventory/plugin.rs) |
-| **AWS EC2** | **Stable** | EC2 instance discovery | [`src/inventory/plugins/aws_ec2.rs`](../../src/inventory/plugins/aws_ec2.rs) |
-| **Azure** | **Stable** | Azure VM discovery | [`src/inventory/plugins/azure.rs`](../../src/inventory/plugins/azure.rs) |
-| **GCP** | **Stable** | GCP instance discovery | [`src/inventory/plugins/gcp.rs`](../../src/inventory/plugins/gcp.rs) |
-| **Terraform** | **Stable** | Dynamic inventory from Terraform state | [`src/inventory/plugins/terraform.rs`](../../src/inventory/plugins/terraform.rs) |
-| **Proxmox** | **Stable** | Proxmox VE discovery | [`src/inventory/plugins/proxmox.rs`](../../src/inventory/plugins/proxmox.rs) |
-| **Constructed** | **Stable** | Compose hosts/groups from other sources | [`src/inventory/constructed.rs`](../../src/inventory/constructed.rs) |
+| **YAML** | **Unverified** | Ansible-compatible YAML inventory | [`src/inventory/mod.rs:38-49`](../../src/inventory/mod.rs) |
+| **INI** | **Unverified** | Ansible-compatible INI inventory | [`src/inventory/mod.rs:24-36`](../../src/inventory/mod.rs) |
+| **JSON** | **Unverified** | Dynamic inventory JSON format | [`src/inventory/mod.rs:51-63`](../../src/inventory/mod.rs) |
+| **Script** | **Unverified** | Executable dynamic inventory | [`src/inventory/plugin.rs`](../../src/inventory/plugin.rs) |
+| **AWS EC2** | **Unverified** | EC2 instance discovery | [`src/inventory/plugins/aws_ec2.rs`](../../src/inventory/plugins/aws_ec2.rs) |
+| **Azure** | **Unverified** | Azure VM discovery | [`src/inventory/plugins/azure.rs`](../../src/inventory/plugins/azure.rs) |
+| **GCP** | **Unverified** | GCP instance discovery | [`src/inventory/plugins/gcp.rs`](../../src/inventory/plugins/gcp.rs) |
+| **Terraform** | **Unverified** | Dynamic inventory from Terraform state | [`src/inventory/plugins/terraform.rs`](../../src/inventory/plugins/terraform.rs) |
+| **Proxmox** | **Unverified** | Proxmox VE discovery | [`src/inventory/plugins/proxmox.rs`](../../src/inventory/plugins/proxmox.rs) |
+| **Constructed** | **Unverified** | Compose hosts/groups from other sources | [`src/inventory/constructed.rs`](../../src/inventory/constructed.rs) |
 
 ### Terraform Inventory Plugin Features
 
 | Feature | Status | Description | Evidence |
 |---------|--------|-------------|----------|
-| Local state | **Stable** | Read from local `.tfstate` file | [`src/inventory/plugins/terraform.rs:70-87`](../../src/inventory/plugins/terraform.rs) |
-| S3 backend | **Stable** | Read state from S3 bucket | [`src/inventory/plugins/terraform.rs:72-78`](../../src/inventory/plugins/terraform.rs) |
-| HTTP backend | **Stable** | Read state from HTTP endpoint | [`src/inventory/plugins/terraform.rs:79`](../../src/inventory/plugins/terraform.rs) |
-| Resource mappings | **Stable** | Map TF resources to inventory hosts | [`src/inventory/plugins/terraform.rs:207-229`](../../src/inventory/plugins/terraform.rs) |
-| Output export | **Stable** | Export TF outputs as group vars | [`src/inventory/plugins/terraform.rs:176-177`](../../src/inventory/plugins/terraform.rs) |
-| State caching | **Stable** | TTL-based caching (default 300s) | [`src/inventory/plugins/terraform.rs:242-256`](../../src/inventory/plugins/terraform.rs) |
+| Local state | **Unverified** | Read from local `.tfstate` file | [`src/inventory/plugins/terraform.rs:70-87`](../../src/inventory/plugins/terraform.rs) |
+| S3 backend | **Unverified** | Read state from S3 bucket | [`src/inventory/plugins/terraform.rs:72-78`](../../src/inventory/plugins/terraform.rs) |
+| HTTP backend | **Unverified** | Read state from HTTP endpoint | [`src/inventory/plugins/terraform.rs:79`](../../src/inventory/plugins/terraform.rs) |
+| Resource mappings | **Unverified** | Map TF resources to inventory hosts | [`src/inventory/plugins/terraform.rs:207-229`](../../src/inventory/plugins/terraform.rs) |
+| Output export | **Unverified** | Export TF outputs as group vars | [`src/inventory/plugins/terraform.rs:176-177`](../../src/inventory/plugins/terraform.rs) |
+| State caching | **Unverified** | TTL-based caching (default 300s) | [`src/inventory/plugins/terraform.rs:242-256`](../../src/inventory/plugins/terraform.rs) |
 
 ---
 
@@ -166,12 +171,12 @@ address: https://app.terraform.io/api/v2/...
 
 | Capability | Status | Description | Evidence |
 |------------|--------|-------------|----------|
-| Local state vars | **Stable** | Import from local `.tfstate` | [`src/vars/terraform.rs:54-80`](../../src/vars/terraform.rs) |
-| S3 state vars | **Stable** | Import from S3 bucket | [`src/vars/terraform.rs:134-152`](../../src/vars/terraform.rs) |
-| HTTP state vars | **Stable** | Import from HTTP endpoint | [`src/vars/terraform.rs:153-158`](../../src/vars/terraform.rs) |
-| Output filtering | **Stable** | Select specific outputs | [`src/vars/terraform.rs:67-72`](../../src/vars/terraform.rs) |
-| Sensitive handling | **Stable** | Opt-in sensitive value import | [`src/vars/terraform.rs:73-76`](../../src/vars/terraform.rs) |
-| Namespace prefix | **Stable** | Variables prefixed with `terraform_` | [`src/vars/terraform.rs:76`](../../src/vars/terraform.rs) |
+| Local state vars | **Unverified** | Import from local `.tfstate` | [`src/vars/terraform.rs:54-80`](../../src/vars/terraform.rs) |
+| S3 state vars | **Unverified** | Import from S3 bucket | [`src/vars/terraform.rs:134-152`](../../src/vars/terraform.rs) |
+| HTTP state vars | **Unverified** | Import from HTTP endpoint | [`src/vars/terraform.rs:153-158`](../../src/vars/terraform.rs) |
+| Output filtering | **Unverified** | Select specific outputs | [`src/vars/terraform.rs:67-72`](../../src/vars/terraform.rs) |
+| Sensitive handling | **Unverified** | Opt-in sensitive value import | [`src/vars/terraform.rs:73-76`](../../src/vars/terraform.rs) |
+| Namespace prefix | **Unverified** | Variables prefixed with `terraform_` | [`src/vars/terraform.rs:76`](../../src/vars/terraform.rs) |
 
 ```yaml
 # vars_files example with Terraform outputs
@@ -192,26 +197,26 @@ vars_files:
 
 | Resource Type | Status | Notes | Evidence |
 |---------------|--------|-------|----------|
-| `aws_vpc` | **Stable** | Virtual Private Cloud | [`src/provisioning/resources/aws/vpc.rs`](../../src/provisioning/resources/aws/vpc.rs) |
-| `aws_subnet` | **Stable** | VPC Subnets | [`src/provisioning/resources/aws/subnet.rs`](../../src/provisioning/resources/aws/subnet.rs) |
-| `aws_security_group` | **Stable** | Security Groups with inline rules | [`src/provisioning/resources/aws/security_group.rs`](../../src/provisioning/resources/aws/security_group.rs) |
-| `aws_security_group_rule` | **Stable** | Standalone SG rules | [`src/provisioning/resources/aws/security_group_rule.rs`](../../src/provisioning/resources/aws/security_group_rule.rs) |
-| `aws_instance` | **Stable** | EC2 Instances | [`src/provisioning/resources/aws/instance.rs`](../../src/provisioning/resources/aws/instance.rs) |
-| `aws_internet_gateway` | **Stable** | Internet Gateways | [`src/provisioning/resources/aws/internet_gateway.rs`](../../src/provisioning/resources/aws/internet_gateway.rs) |
-| `aws_nat_gateway` | **Stable** | NAT Gateways | [`src/provisioning/resources/aws/nat_gateway.rs`](../../src/provisioning/resources/aws/nat_gateway.rs) |
-| `aws_route_table` | **Stable** | Route Tables | [`src/provisioning/resources/aws/route_table.rs`](../../src/provisioning/resources/aws/route_table.rs) |
-| `aws_eip` | **Stable** | Elastic IPs | [`src/provisioning/resources/aws/elastic_ip.rs`](../../src/provisioning/resources/aws/elastic_ip.rs) |
-| `aws_ebs_volume` | **Stable** | EBS Volumes with encryption | [`src/provisioning/resources/aws/ebs_volume.rs`](../../src/provisioning/resources/aws/ebs_volume.rs) |
-| `aws_s3_bucket` | **Stable** | S3 Buckets | [`src/provisioning/resources/aws/s3_bucket.rs`](../../src/provisioning/resources/aws/s3_bucket.rs) |
-| `aws_iam_role` | **Stable** | IAM Roles | [`src/provisioning/resources/aws/iam_role.rs`](../../src/provisioning/resources/aws/iam_role.rs) |
-| `aws_iam_policy` | **Stable** | IAM Policies | [`src/provisioning/resources/aws/iam_policy.rs`](../../src/provisioning/resources/aws/iam_policy.rs) |
-| `aws_rds_instance` | **Stable** | RDS Instances | [`src/provisioning/resources/aws/rds_instance.rs`](../../src/provisioning/resources/aws/rds_instance.rs) |
-| `aws_db_subnet_group` | **Stable** | RDS Subnet Groups | [`src/provisioning/resources/aws/db_subnet_group.rs`](../../src/provisioning/resources/aws/db_subnet_group.rs) |
-| `aws_lb` | **Stable** | Load Balancers (ALB/NLB) | [`src/provisioning/resources/aws/load_balancer.rs`](../../src/provisioning/resources/aws/load_balancer.rs) |
-| `aws_launch_template` | **Stable** | EC2 Launch Templates | [`src/provisioning/resources/aws/launch_template.rs`](../../src/provisioning/resources/aws/launch_template.rs) |
-| `aws_autoscaling_group` | **Stable** | Auto Scaling Groups | [`src/provisioning/resources/aws/autoscaling_group.rs`](../../src/provisioning/resources/aws/autoscaling_group.rs) |
+| `aws_vpc` | **Unverified** | Virtual Private Cloud | [`src/provisioning/resources/aws/vpc.rs`](../../src/provisioning/resources/aws/vpc.rs) |
+| `aws_subnet` | **Unverified** | VPC Subnets | [`src/provisioning/resources/aws/subnet.rs`](../../src/provisioning/resources/aws/subnet.rs) |
+| `aws_security_group` | **Unverified** | Security Groups with inline rules | [`src/provisioning/resources/aws/security_group.rs`](../../src/provisioning/resources/aws/security_group.rs) |
+| `aws_security_group_rule` | **Unverified** | Standalone SG rules | [`src/provisioning/resources/aws/security_group_rule.rs`](../../src/provisioning/resources/aws/security_group_rule.rs) |
+| `aws_instance` | **Unverified** | EC2 Instances | [`src/provisioning/resources/aws/instance.rs`](../../src/provisioning/resources/aws/instance.rs) |
+| `aws_internet_gateway` | **Unverified** | Internet Gateways | [`src/provisioning/resources/aws/internet_gateway.rs`](../../src/provisioning/resources/aws/internet_gateway.rs) |
+| `aws_nat_gateway` | **Unverified** | NAT Gateways | [`src/provisioning/resources/aws/nat_gateway.rs`](../../src/provisioning/resources/aws/nat_gateway.rs) |
+| `aws_route_table` | **Unverified** | Route Tables | [`src/provisioning/resources/aws/route_table.rs`](../../src/provisioning/resources/aws/route_table.rs) |
+| `aws_eip` | **Unverified** | Elastic IPs | [`src/provisioning/resources/aws/elastic_ip.rs`](../../src/provisioning/resources/aws/elastic_ip.rs) |
+| `aws_ebs_volume` | **Unverified** | EBS Volumes with encryption | [`src/provisioning/resources/aws/ebs_volume.rs`](../../src/provisioning/resources/aws/ebs_volume.rs) |
+| `aws_s3_bucket` | **Unverified** | S3 Buckets | [`src/provisioning/resources/aws/s3_bucket.rs`](../../src/provisioning/resources/aws/s3_bucket.rs) |
+| `aws_iam_role` | **Unverified** | IAM Roles | [`src/provisioning/resources/aws/iam_role.rs`](../../src/provisioning/resources/aws/iam_role.rs) |
+| `aws_iam_policy` | **Unverified** | IAM Policies | [`src/provisioning/resources/aws/iam_policy.rs`](../../src/provisioning/resources/aws/iam_policy.rs) |
+| `aws_rds_instance` | **Unverified** | RDS Instances | [`src/provisioning/resources/aws/rds_instance.rs`](../../src/provisioning/resources/aws/rds_instance.rs) |
+| `aws_db_subnet_group` | **Unverified** | RDS Subnet Groups | [`src/provisioning/resources/aws/db_subnet_group.rs`](../../src/provisioning/resources/aws/db_subnet_group.rs) |
+| `aws_lb` | **Unverified** | Load Balancers (ALB/NLB) | [`src/provisioning/resources/aws/load_balancer.rs`](../../src/provisioning/resources/aws/load_balancer.rs) |
+| `aws_launch_template` | **Unverified** | EC2 Launch Templates | [`src/provisioning/resources/aws/launch_template.rs`](../../src/provisioning/resources/aws/launch_template.rs) |
+| `aws_autoscaling_group` | **Unverified** | Auto Scaling Groups | [`src/provisioning/resources/aws/autoscaling_group.rs`](../../src/provisioning/resources/aws/autoscaling_group.rs) |
 
-**Total**: 18 AWS resources implemented
+**Total**: 18 AWS resource source implementations, not 18 end-to-end validated resources. Built-in registration is incomplete.
 
 ---
 
@@ -219,11 +224,11 @@ vars_files:
 
 | Feature Flag | Description | Resources Enabled |
 |--------------|-------------|-------------------|
-| `provisioning` | Core provisioning capabilities | State management, plan/apply, local backend |
+| `provisioning` | Core provisioning capabilities; also enables `aws` | State management, plan/apply, local backend, AWS SDK dependency graph |
 | `aws` | AWS provider and resources | S3 backend, DynamoDB locking, 18 AWS resources |
-| `gcs` | Google Cloud Storage backend | GCS state backend |
+| `gcp` | Google Cloud Storage backend | GCS state backend when combined with `provisioning` |
 | `azure` | Azure Blob backend | Azure Blob state backend |
-| `full-provisioning` | All provisioning features | Combines provisioning + aws |
+| `full-provisioning` | Full bundle plus AWS provisioning | Does not automatically enable `gcp` or `azure` |
 
 ```bash
 # Build with provisioning support
@@ -233,7 +238,7 @@ cargo build --release --features provisioning
 cargo build --release --features full-provisioning
 
 # Build with specific backends
-cargo build --release --features "provisioning,aws,gcs"
+cargo build --release --features "provisioning,gcp"
 ```
 
 ---
@@ -244,11 +249,11 @@ cargo build --release --features "provisioning,aws,gcs"
 
 | Limitation | Impact | Workaround | Priority |
 |------------|--------|------------|----------|
-| No lockfiles | Cannot pin provider versions | Manual version control | **v1.0 Planned** |
-| No checkpoints | Cannot rollback partial applies | State backups before apply | **v1.0 Planned** |
+| No enforced provider locks in apply | Pinning helpers do not enforce frozen execution | Keep reviewed provider/tool versions externally | **Integration pending** |
+| No integrated apply checkpoints | Cannot rely on resume/rollback after partial apply | Backups do not restore cloud side effects | **Integration pending** |
 | Azure/GCP provisioning | Cannot provision Azure/GCP resources | Use Terraform for provisioning | **v0.3 Planned** |
 | No Terraform module compatibility | Cannot reuse TF modules | Re-implement in Rustible YAML | N/A |
-| No workspace support | Single state per project | Multiple config files | **Planned** |
+| Workspace helper present | End-to-end workspace safety unverified | Validate isolated state paths before use | **Experimental** |
 
 ### General Limitations
 
@@ -258,9 +263,9 @@ cargo build --release --features "provisioning,aws,gcs"
 
 3. **State Encryption**: Local state files are not encrypted at rest. Use S3 with SSE or Azure Blob encryption.
 
-4. **Large State Files**: No state splitting or workspace partitioning. For very large clusters, consider state file segmentation.
+4. **Large State Files**: Workspace/sharding helpers do not establish verified large-cluster partitioning or recovery. Large-state operation remains unverified.
 
-5. **Concurrent Operations**: State locking prevents concurrent applies but doesn't queue operations.
+5. **Concurrent Operations**: Local lock acquisition is serialized, but stale state, expiration, cancellation and remote fencing limitations remain. Lock presence alone does not make concurrent applies safe.
 
 ---
 
@@ -268,16 +273,16 @@ cargo build --release --features "provisioning,aws,gcs"
 
 | Capability | Status | HPC Relevance |
 |------------|--------|---------------|
-| Parallel provisioning | **Stable** | Faster cluster deployment |
-| State locking | **Stable** | Safe multi-user workflows |
-| Terraform state import | **Stable** | Migrate existing HPC infra |
-| AWS ASG support | **Stable** | Elastic compute scaling |
-| Launch templates | **Stable** | Consistent node configuration |
-| EBS volumes | **Stable** | Persistent storage for compute |
-| S3 remote state | **Stable** | Team collaboration |
-| DynamoDB locking | **Stable** | Distributed lock safety |
-| Dynamic inventory | **Stable** | Auto-discover cluster nodes |
-| Terraform vars import | **Stable** | Bridge TF and CM workflows |
+| Parallel provisioning | **Not implemented in executor loop** | No cluster speedup claim |
+| State locking | **Partial** | Multi-user safety not established |
+| Terraform state import | **Restricted** | Not a general HPC infrastructure migration path |
+| AWS ASG support | **Unverified** | Elastic compute scaling |
+| Launch templates | **Unverified** | Consistent node configuration |
+| EBS volumes | **Unverified** | Persistent storage for compute |
+| S3 remote state | **Unverified** | Team collaboration |
+| DynamoDB locking | **Unverified** | Distributed lock safety |
+| Dynamic inventory | **Unverified** | Auto-discover cluster nodes |
+| Terraform vars import | **Unverified** | Bridge TF and CM workflows |
 
 ---
 

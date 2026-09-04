@@ -13,6 +13,88 @@ use thiserror::Error;
 use tokio::fs;
 use tokio::sync::RwLock;
 
+/// Serializes read/modify/write of lock metadata across processes. The sidecar
+/// must never be removed: unlinking an advisory-locked inode creates two locks.
+pub(crate) struct FileMetadataGuard {
+    #[cfg(unix)]
+    _file: nix::fcntl::Flock<std::fs::File>,
+}
+
+pub(crate) async fn lock_file_metadata(
+    path: PathBuf,
+    timeout: std::time::Duration,
+) -> std::io::Result<FileMetadataGuard> {
+    #[cfg(unix)]
+    {
+        let started = std::time::Instant::now();
+        loop {
+            let path = path.clone();
+            let result =
+                tokio::task::spawn_blocking(move || -> std::io::Result<FileMetadataGuard> {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    let mut sidecar = path.into_os_string();
+                    sidecar.push(".guard");
+                    let file = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create(true)
+                        .truncate(false)
+                        .mode(0o600)
+                        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                        .open(sidecar)?;
+                    let file =
+                        nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusiveNonblock)
+                            .map_err(|(_, error)| {
+                                std::io::Error::from_raw_os_error(error as i32)
+                            })?;
+                    Ok(FileMetadataGuard { _file: file })
+                })
+                .await
+                .map_err(std::io::Error::other)?;
+            match result {
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && started.elapsed() < timeout =>
+                {
+                    // Do not occupy blocking-pool threads while another owner
+                    // needs the same pool to finish its metadata IO.
+                    tokio::time::sleep(
+                        std::time::Duration::from_millis(5)
+                            .min(timeout.saturating_sub(started.elapsed())),
+                    )
+                    .await;
+                }
+                result => return result,
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, timeout);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Safe local state locking is not supported on this platform",
+        ))
+    }
+}
+
+/// Publish complete, private metadata atomically while the sidecar guard is held.
+pub(crate) fn write_lock_metadata(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(content)?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|error| error.error)?;
+    Ok(())
+}
+
 /// Errors that can occur in state locking operations.
 #[derive(Debug, Error)]
 pub enum LockError {
@@ -321,7 +403,7 @@ impl FileLockBackend {
         let json = serde_json::to_string_pretty(metadata)
             .map_err(|e| LockError::Serialization(e.to_string()))?;
 
-        fs::write(&path, json).await?;
+        write_lock_metadata(&path, json.as_bytes())?;
         Ok(())
     }
 
@@ -350,6 +432,7 @@ impl LockBackend for FileLockBackend {
         ttl: Duration,
         description: Option<String>,
     ) -> LockResult<LockMetadata> {
+        let _guard = lock_file_metadata(self.lock_path(lock_id), std::time::Duration::ZERO).await?;
         if let Some(existing) = self.read_lock(lock_id).await? {
             if !existing.is_expired() {
                 return Err(LockError::AlreadyHeld {
@@ -373,6 +456,7 @@ impl LockBackend for FileLockBackend {
 
     async fn release(&self, lock_id: &str) -> LockResult<()> {
         let path = self.lock_path(lock_id);
+        let _guard = lock_file_metadata(path.clone(), std::time::Duration::from_secs(30)).await?;
 
         if !path.exists() {
             return Err(LockError::NotFound(lock_id.to_string()));
@@ -413,6 +497,8 @@ impl LockBackend for FileLockBackend {
     }
 
     async fn extend(&self, lock_id: &str, ttl: Duration) -> LockResult<()> {
+        let _guard =
+            lock_file_metadata(self.lock_path(lock_id), std::time::Duration::from_secs(30)).await?;
         let mut metadata = self
             .read_lock(lock_id)
             .await?
@@ -477,6 +563,8 @@ impl LockBackend for FileLockBackend {
             }
 
             if let Some(lock_id) = path.file_stem().and_then(|s| s.to_str()) {
+                let _guard =
+                    lock_file_metadata(path.clone(), std::time::Duration::from_secs(30)).await?;
                 if let Some(metadata) = self.read_lock(lock_id).await? {
                     if metadata.is_expired() {
                         fs::remove_file(&path).await?;
@@ -615,6 +703,38 @@ impl StateLock<FileLockBackend> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_diligence_state_file_lock_has_one_concurrent_winner() {
+        let dir = tempfile::tempdir().unwrap();
+        let barrier = Arc::new(tokio::sync::Barrier::new(16));
+        let mut tasks = Vec::new();
+        for index in 0..16 {
+            let backend = FileLockBackend::new(dir.path());
+            let barrier = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                backend
+                    .acquire(
+                        "shared",
+                        &format!("holder{index}"),
+                        Duration::minutes(5),
+                        None,
+                    )
+                    .await
+            }));
+        }
+        let mut winners = 0;
+        for task in tasks {
+            if task.await.unwrap().is_ok() {
+                winners += 1;
+            }
+        }
+        assert_eq!(
+            winners, 1,
+            "concurrent state lock ownership is not exclusive"
+        );
+    }
 
     #[tokio::test]
     async fn test_in_memory_lock_acquire_release() {
