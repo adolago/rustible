@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use chrono::{DateTime, Utc};
@@ -673,19 +672,21 @@ pub async fn get_job_output_internal(
     Ok(job.full_output())
 }
 
-/// Cancel a job.
+/// Report unsupported cancellation without claiming execution has stopped.
 pub async fn cancel_job(
     State(state): State<Arc<AppState>>,
     _user: AuthenticatedUser,
     AxumPath(job_id): AxumPath<Uuid>,
-) -> ApiResult<impl IntoResponse> {
-    if state.cancel_job(job_id) {
-        Ok((
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "message": "Job cancelled",
-                "job_id": job_id
-            })),
+) -> ApiResult<Json<serde_json::Value>> {
+    let job = state
+        .get_job(job_id)
+        .ok_or_else(|| ApiError::NotFound(format!("Job not found: {}", job_id)))?;
+    if matches!(
+        job.status,
+        JobStatus::Pending | JobStatus::Running | JobStatus::ActionRequired
+    ) {
+        Err(ApiError::ValidationError(
+            "Job cancellation is unsupported; execution was not stopped".to_string(),
         ))
     } else {
         Err(ApiError::Conflict("Job cannot be cancelled".to_string()))
