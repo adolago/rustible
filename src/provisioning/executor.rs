@@ -643,6 +643,21 @@ impl ProvisioningExecutor {
                             _ => {}
                         }
 
+                        // A later pending or failed operation must not hide
+                        // already confirmed progress from the state backend.
+                        // Stop before the next resource call if saving fails.
+                        if resource_result.success
+                            && matches!(
+                                action.change_type,
+                                ChangeType::Create
+                                    | ChangeType::Update
+                                    | ChangeType::Replace
+                                    | ChangeType::Destroy
+                            )
+                        {
+                            self.save_state().await?;
+                        }
+
                         // Collect outputs
                         for (key, value) in resource_result.outputs {
                             result.outputs.insert(key, value);
@@ -665,9 +680,6 @@ impl ProvisioningExecutor {
                     }
                 }
             }
-
-            // Save state
-            self.save_state().await?;
 
             Ok(result)
         })

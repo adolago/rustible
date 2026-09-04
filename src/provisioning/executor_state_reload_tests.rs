@@ -124,7 +124,7 @@ impl Resource for FixtureResource {
 
 #[derive(Debug)]
 struct FixtureProvider {
-    resource: Arc<FixtureResource>,
+    resource: Arc<dyn Resource>,
 }
 
 #[async_trait]
@@ -172,14 +172,22 @@ impl Provider for FixtureProvider {
 // Inject only memory fixtures; the production apply, save, resolver and lock
 // manager implementations run unchanged. No built-in provider is constructed.
 async fn executor(backend: Arc<MemoryBackend>, resources: Value) -> ProvisioningExecutor {
+    let resource = Arc::new(FixtureResource {
+        events: backend.events.clone(),
+    });
+    executor_with(backend, resources, resource).await
+}
+
+async fn executor_with(
+    backend: Arc<dyn StateBackend>,
+    resources: Value,
+    resource: Arc<dyn Resource>,
+) -> ProvisioningExecutor {
     let mut config = InfrastructureConfig::new();
     config.resources = serde_json::from_value(json!({"fixture_item": resources})).unwrap();
     let loaded = backend.load().await.unwrap();
     let state_exists = loaded.is_some();
     let cached = loaded.unwrap_or_default();
-    let resource = Arc::new(FixtureResource {
-        events: backend.events.clone(),
-    });
     let mut providers = ProviderRegistry::new();
     providers.register_factory("fixture", move || {
         Box::new(FixtureProvider {
@@ -209,12 +217,17 @@ async fn executor(backend: Arc<MemoryBackend>, resources: Value) -> Provisioning
         state_exists: AtomicBool::new(state_exists),
         plan_binding: RwLock::new(None),
         state_backend: backend.clone(),
-        lock_manager: Some(Arc::new(StateLockManager::from_arc(backend.lock.clone()))),
+        lock_manager: backend
+            .lock_backend()
+            .map(|lock| Arc::new(StateLockManager::from_arc(lock))),
         semaphore: Arc::new(Semaphore::new(1)),
         resolver: TemplateResolver::new(),
         resolver_context: RwLock::new(context),
     }
 }
+
+#[path = "executor_progress_tests.rs"]
+mod progress_tests;
 
 fn state_with(name: &str, cloud_id: &str) -> ProvisioningState {
     let mut state = ProvisioningState::new();
