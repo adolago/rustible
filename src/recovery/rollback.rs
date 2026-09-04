@@ -41,7 +41,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::modules::ModuleRegistry;
 
@@ -651,7 +651,34 @@ impl RollbackManager {
         Ok(plan)
     }
 
-    /// Execute a rollback action
+    fn execute_module_rollback(
+        &self,
+        name: &str,
+        params: crate::modules::ModuleParams,
+    ) -> Result<(), RollbackError> {
+        let registry = self.module_registry.as_ref().ok_or_else(|| {
+            RollbackError::CannotRollback(format!("{name} rollback requires a module registry"))
+        })?;
+        let output = registry
+            .execute(name, &params, &crate::modules::ModuleContext::default())
+            .map_err(|error| {
+                RollbackError::RollbackFailed(format!("{name} rollback failed: {error}"))
+            })?;
+        if !matches!(
+            output.status,
+            crate::modules::ModuleStatus::Ok | crate::modules::ModuleStatus::Changed
+        ) || output.rc.is_some_and(|code| code != 0)
+        {
+            return Err(RollbackError::RollbackFailed(format!(
+                "{name} rollback did not complete successfully: {}",
+                output.msg
+            )));
+        }
+        Ok(())
+    }
+
+    /// Execute a rollback action, failing when the requested restoration cannot
+    /// be performed or a module does not confirm successful completion.
     pub async fn execute_rollback_action(
         &self,
         action: &RollbackAction,
@@ -666,15 +693,7 @@ impl RollbackManager {
             }
 
             UndoOperation::RestoreFile { path, backup_path } => {
-                if backup_path.exists() {
-                    std::fs::copy(backup_path, path)?;
-                } else {
-                    warn!(
-                        "Backup file not found: {}, cannot restore {}",
-                        backup_path.display(),
-                        path.display()
-                    );
-                }
+                std::fs::copy(backup_path, path)?;
             }
 
             UndoOperation::DeleteDirectory { path, recursive } => {
@@ -691,152 +710,73 @@ impl RollbackManager {
                 service,
                 target_state,
             } => {
-                if let Some(ref registry) = self.module_registry {
-                    let params: crate::modules::ModuleParams = [
-                        (
-                            "name".to_string(),
-                            serde_json::Value::String(service.clone()),
-                        ),
-                        (
-                            "state".to_string(),
-                            serde_json::Value::String(target_state.clone()),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect();
-                    let ctx = crate::modules::ModuleContext::default();
-                    if let Err(e) = registry.execute("service", &params, &ctx) {
-                        return Err(RollbackError::RollbackFailed(format!(
-                            "Failed to change service {} to {}: {}",
-                            service, target_state, e
-                        )));
-                    }
-                } else {
-                    warn!(
-                        "Service state change not implemented (no module registry): {} -> {}",
-                        service, target_state
-                    );
-                }
+                let params = [
+                    (
+                        "name".to_string(),
+                        serde_json::Value::String(service.clone()),
+                    ),
+                    (
+                        "state".to_string(),
+                        serde_json::Value::String(target_state.clone()),
+                    ),
+                ]
+                .into_iter()
+                .collect();
+                self.execute_module_rollback("service", params)?;
             }
 
             UndoOperation::RemovePackage { name } => {
-                if let Some(ref registry) = self.module_registry {
-                    let params: crate::modules::ModuleParams = [
-                        ("name".to_string(), serde_json::Value::String(name.clone())),
-                        (
-                            "state".to_string(),
-                            serde_json::Value::String("absent".to_string()),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect();
-                    let ctx = crate::modules::ModuleContext::default();
-                    if let Err(e) = registry.execute("package", &params, &ctx) {
-                        return Err(RollbackError::RollbackFailed(format!(
-                            "Failed to remove package {}: {}",
-                            name, e
-                        )));
-                    }
-                } else {
-                    warn!(
-                        "Package removal not implemented (no module registry): {}",
-                        name
-                    );
-                }
+                let params = [
+                    ("name".to_string(), serde_json::Value::String(name.clone())),
+                    (
+                        "state".to_string(),
+                        serde_json::Value::String("absent".to_string()),
+                    ),
+                ]
+                .into_iter()
+                .collect();
+                self.execute_module_rollback("package", params)?;
             }
 
             UndoOperation::InstallPackage { name, version } => {
-                if let Some(ref registry) = self.module_registry {
-                    let mut params: crate::modules::ModuleParams = [
-                        ("name".to_string(), serde_json::Value::String(name.clone())),
-                        (
-                            "state".to_string(),
-                            serde_json::Value::String("present".to_string()),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect();
-                    if let Some(ver) = version {
-                        params.insert(
-                            "version".to_string(),
-                            serde_json::Value::String(ver.clone()),
-                        );
-                    }
-                    let ctx = crate::modules::ModuleContext::default();
-                    if let Err(e) = registry.execute("package", &params, &ctx) {
-                        return Err(RollbackError::RollbackFailed(format!(
-                            "Failed to install package {}: {}",
-                            name, e
-                        )));
-                    }
-                } else {
-                    warn!(
-                        "Package installation not implemented (no module registry): {}{}",
-                        name,
-                        version
-                            .as_ref()
-                            .map(|v| format!("={}", v))
-                            .unwrap_or_default()
+                let mut params: crate::modules::ModuleParams = [
+                    ("name".to_string(), serde_json::Value::String(name.clone())),
+                    (
+                        "state".to_string(),
+                        serde_json::Value::String("present".to_string()),
+                    ),
+                ]
+                .into_iter()
+                .collect();
+                if let Some(ver) = version {
+                    params.insert(
+                        "version".to_string(),
+                        serde_json::Value::String(ver.clone()),
                     );
                 }
+                self.execute_module_rollback("package", params)?;
             }
 
             UndoOperation::DeleteUser { username } => {
-                if let Some(ref registry) = self.module_registry {
-                    let params: crate::modules::ModuleParams = [
-                        (
-                            "name".to_string(),
-                            serde_json::Value::String(username.clone()),
-                        ),
-                        (
-                            "state".to_string(),
-                            serde_json::Value::String("absent".to_string()),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect();
-                    let ctx = crate::modules::ModuleContext::default();
-                    if let Err(e) = registry.execute("user", &params, &ctx) {
-                        return Err(RollbackError::RollbackFailed(format!(
-                            "Failed to delete user {}: {}",
-                            username, e
-                        )));
-                    }
-                } else {
-                    warn!(
-                        "User deletion not implemented (no module registry): {}",
-                        username
-                    );
-                }
+                let params = [
+                    (
+                        "name".to_string(),
+                        serde_json::Value::String(username.clone()),
+                    ),
+                    (
+                        "state".to_string(),
+                        serde_json::Value::String("absent".to_string()),
+                    ),
+                ]
+                .into_iter()
+                .collect();
+                self.execute_module_rollback("user", params)?;
             }
 
             UndoOperation::RestoreUser { username, .. } => {
-                if let Some(ref registry) = self.module_registry {
-                    let params: crate::modules::ModuleParams = [
-                        (
-                            "name".to_string(),
-                            serde_json::Value::String(username.clone()),
-                        ),
-                        (
-                            "state".to_string(),
-                            serde_json::Value::String("present".to_string()),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect();
-                    let ctx = crate::modules::ModuleContext::default();
-                    if let Err(e) = registry.execute("user", &params, &ctx) {
-                        return Err(RollbackError::RollbackFailed(format!(
-                            "Failed to restore user {}: {}",
-                            username, e
-                        )));
-                    }
-                } else {
-                    warn!(
-                        "User restoration not implemented (no module registry): {}",
-                        username
-                    );
-                }
+                return Err(RollbackError::CannotRollback(format!(
+                    "Restoring captured attributes for user {username} is not supported; no user change was made"
+                )));
             }
 
             UndoOperation::ExecuteCommand { command, args } => {
@@ -852,7 +792,9 @@ impl RollbackManager {
             }
 
             UndoOperation::NoOp { reason } => {
-                debug!("No-op rollback action: {}", reason);
+                return Err(RollbackError::CannotRollback(format!(
+                    "No undo operation is available: {reason}"
+                )));
             }
         }
 
@@ -919,6 +861,206 @@ impl Default for RollbackManager {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn diligence_action(operation: UndoOperation) -> RollbackAction {
+        RollbackAction {
+            operation,
+            description: "synthetic rollback".to_string(),
+            priority: 0,
+            critical: true,
+            original_change: None,
+        }
+    }
+
+    struct DiligenceModule {
+        name: &'static str,
+        output: crate::modules::ModuleOutput,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl crate::modules::Module for DiligenceModule {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn description(&self) -> &'static str {
+            "Harmless fixed-result rollback fixture"
+        }
+        fn execute(
+            &self,
+            _: &crate::modules::ModuleParams,
+            _: &crate::modules::ModuleContext,
+        ) -> crate::modules::ModuleResult<crate::modules::ModuleOutput> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.output.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_rollback_missing_backup_preserves_destination() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("destination");
+        std::fs::write(&path, "existing data").unwrap();
+        let action = diligence_action(UndoOperation::RestoreFile {
+            path: path.clone(),
+            backup_path: directory.path().join("missing"),
+        });
+        assert!(RollbackManager::new()
+            .execute_rollback_action(&action)
+            .await
+            .is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "existing data");
+    }
+
+    #[tokio::test]
+    async fn test_diligence_rollback_requires_registry() {
+        for operation in [
+            UndoOperation::ChangeServiceState {
+                service: "synthetic-service".into(),
+                target_state: "stopped".into(),
+            },
+            UndoOperation::RemovePackage {
+                name: "synthetic-package".into(),
+            },
+            UndoOperation::InstallPackage {
+                name: "synthetic-package".into(),
+                version: None,
+            },
+            UndoOperation::DeleteUser {
+                username: "synthetic-user".into(),
+            },
+        ] {
+            assert!(RollbackManager::new()
+                .execute_rollback_action(&diligence_action(operation))
+                .await
+                .is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_rollback_without_undo_is_not_successful() {
+        let change = StateChange::Custom {
+            description: "synthetic irreversible change".to_string(),
+            undo_command: None,
+            undo_data: None,
+        };
+        let action = RollbackAction::from_state_change(&change);
+        assert!(RollbackManager::new()
+            .execute_rollback_action(&action)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_diligence_rollback_checks_module_result() {
+        use crate::modules::ModuleOutput;
+        for output in [
+            ModuleOutput::failed("synthetic failure"),
+            ModuleOutput::skipped("not executed"),
+            ModuleOutput {
+                rc: Some(1),
+                ..ModuleOutput::ok("nonzero exit")
+            },
+        ] {
+            for (name, operation) in [
+                (
+                    "service",
+                    UndoOperation::ChangeServiceState {
+                        service: "fixture".into(),
+                        target_state: "stopped".into(),
+                    },
+                ),
+                (
+                    "package",
+                    UndoOperation::RemovePackage {
+                        name: "fixture".into(),
+                    },
+                ),
+                (
+                    "package",
+                    UndoOperation::InstallPackage {
+                        name: "fixture".into(),
+                        version: Some("1".into()),
+                    },
+                ),
+                (
+                    "user",
+                    UndoOperation::DeleteUser {
+                        username: "fixture".into(),
+                    },
+                ),
+            ] {
+                let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let mut registry = ModuleRegistry::new();
+                registry.register(Arc::new(DiligenceModule {
+                    name,
+                    output: output.clone(),
+                    calls: calls.clone(),
+                }));
+                let manager = RollbackManager::new().with_module_registry(Arc::new(registry));
+                assert!(manager
+                    .execute_rollback_action(&diligence_action(operation))
+                    .await
+                    .is_err());
+                assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_rollback_user_restore_rejects_before_execution() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut registry = ModuleRegistry::new();
+        registry.register(Arc::new(DiligenceModule {
+            name: "user",
+            output: crate::modules::ModuleOutput::ok("fixture"),
+            calls: calls.clone(),
+        }));
+        let manager = RollbackManager::new().with_module_registry(Arc::new(registry));
+        let operation = UndoOperation::RestoreUser {
+            username: "fixture".into(),
+            backup_data: serde_json::json!({"uid": 1234}),
+        };
+        assert!(manager
+            .execute_rollback_action(&diligence_action(operation))
+            .await
+            .is_err());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_diligence_rollback_supported_actions_still_succeed() {
+        let directory = tempdir().unwrap();
+        let backup = directory.path().join("backup");
+        let destination = directory.path().join("destination");
+        std::fs::write(&backup, "restored").unwrap();
+        RollbackManager::new()
+            .execute_rollback_action(&diligence_action(UndoOperation::RestoreFile {
+                path: destination.clone(),
+                backup_path: backup,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(destination).unwrap(), "restored");
+        for output in [
+            crate::modules::ModuleOutput::ok("already restored"),
+            crate::modules::ModuleOutput::changed("restored"),
+        ] {
+            let mut registry = ModuleRegistry::new();
+            registry.register(Arc::new(DiligenceModule {
+                name: "service",
+                output,
+                calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }));
+            RollbackManager::new()
+                .with_module_registry(Arc::new(registry))
+                .execute_rollback_action(&diligence_action(UndoOperation::ChangeServiceState {
+                    service: "fixture".into(),
+                    target_state: "stopped".into(),
+                }))
+                .await
+                .unwrap();
+        }
+    }
 
     #[test]
     fn test_rollback_context_creation() {

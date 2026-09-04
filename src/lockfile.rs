@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -286,12 +287,65 @@ impl Lockfile {
         self.collections.get(name)
     }
 
-    /// Verify integrity of all locked items
+    /// Verify regular local file checksums with bounded read buffers.
+    /// Unsupported dependency sources and special files fail closed.
+    ///
+    /// Role/collection installation paths and remote content are not resolved by
+    /// this API, so their integrity cannot be established here.
     pub fn verify_integrity(&self) -> LockfileResult<()> {
-        // In a real implementation, this would:
-        // 1. Check that all roles/collections exist
-        // 2. Verify their checksums match
-        // 3. Verify dependencies are satisfied
+        if !self.roles.is_empty() || !self.collections.is_empty() {
+            return Err(LockfileError::ResolutionFailed(
+                "Integrity verification for roles and collections is not supported; no installed artifacts were verified".into(),
+            ));
+        }
+        for resource in self.resources.values() {
+            if resource.resource_type != ResourceType::File {
+                return Err(LockfileError::ResolutionFailed(format!(
+                    "Integrity verification for {:?} resource '{}' is not supported",
+                    resource.resource_type, resource.name,
+                )));
+            }
+            let expected = resource.checksum.as_deref().ok_or_else(|| {
+                LockfileError::ResolutionFailed(format!(
+                    "No SHA256 checksum recorded for local resource '{}'",
+                    resource.name,
+                ))
+            })?;
+            let mut options = fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                // Check the opened descriptor, not only a racy path lookup.
+                // A FIFO swapped into the path must not wait for a writer.
+                options.custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC);
+            }
+            let mut file = options.open(&resource.location)?;
+            if !file.metadata()?.is_file() {
+                return Err(LockfileError::ResolutionFailed(format!(
+                    "Integrity verification requires a regular local file for resource '{}'",
+                    resource.name,
+                )));
+            }
+            let mut hasher = Sha256::new();
+            let mut buffer = [0u8; 8192];
+            loop {
+                match file.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => hasher.update(&buffer[..count]),
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            let actual = format!("{:x}", hasher.finalize());
+            if !expected.eq_ignore_ascii_case(&actual) {
+                return Err(LockfileError::IntegrityFailed {
+                    name: resource.name.clone(),
+                    expected: expected.to_string(),
+                    actual,
+                });
+            }
+        }
         Ok(())
     }
 
@@ -428,6 +482,121 @@ impl LockfileManager {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_diligence_integrity_rejects_unverified_dependencies() {
+        let mut lockfile = Lockfile::default();
+        assert!(lockfile.verify_integrity().is_ok());
+        lockfile.add_role(LockedRole {
+            name: "test.role".into(),
+            version: "1.0.0".into(),
+            source: DependencySource::Galaxy { server: None },
+            checksum: "not-verified".into(),
+            dependencies: Vec::new(),
+        });
+        assert!(lockfile.verify_integrity().is_err());
+    }
+
+    #[test]
+    fn test_diligence_integrity_rejects_missing_or_modified_local_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("resource");
+        let mut lockfile = Lockfile::default();
+        lockfile.add_resource(LockedResource {
+            name: "local-fixture".into(),
+            resource_type: ResourceType::File,
+            location: path.to_string_lossy().into_owned(),
+            checksum: Some(compute_hash("expected")),
+            git_ref: None,
+        });
+        assert!(lockfile.verify_integrity().is_err());
+        fs::write(&path, "modified").unwrap();
+        assert!(lockfile.verify_integrity().is_err());
+        fs::write(&path, "expected").unwrap();
+        assert!(lockfile.verify_integrity().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_diligence_integrity_fifo_child() {
+        let Ok(path) = std::env::var("RUSTIBLE_DILIGENCE_INTEGRITY_FIFO") else {
+            return;
+        };
+        let mut lockfile = Lockfile::default();
+        lockfile.add_resource(LockedResource {
+            name: "private-fifo".into(),
+            resource_type: ResourceType::File,
+            location: path,
+            checksum: Some(compute_hash("")),
+            git_ref: None,
+        });
+        assert!(matches!(
+            lockfile.verify_integrity(),
+            Err(LockfileError::ResolutionFailed(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_diligence_integrity_rejects_fifo_without_waiting_for_writer() {
+        let dir = TempDir::new().unwrap();
+        let fifo = dir.path().join("fifo");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRUSR).unwrap();
+        let alias = dir.path().join("fifo-link");
+        std::os::unix::fs::symlink(&fifo, &alias).unwrap();
+        for path in [&fifo, &alias] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["test_diligence_integrity_fifo_child", "--nocapture"])
+                .env("RUSTIBLE_DILIGENCE_INTEGRITY_FIFO", path)
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    break child.wait().unwrap();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            };
+            assert!(
+                status.success(),
+                "non-regular input blocked or was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn test_diligence_integrity_hashes_multiple_chunks() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("resource");
+        let bytes: Vec<u8> = (0..(9 * 8192 + 3))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        fs::write(&path, &bytes).unwrap();
+        let mut lockfile = Lockfile::default();
+        lockfile.add_resource(LockedResource {
+            name: "multiple-chunks".into(),
+            resource_type: ResourceType::File,
+            location: path.to_string_lossy().into_owned(),
+            checksum: Some(format!("{:x}", Sha256::digest(&bytes))),
+            git_ref: None,
+        });
+        assert!(lockfile.verify_integrity().is_ok());
+        #[cfg(unix)]
+        {
+            let alias = dir.path().join("regular-link");
+            std::os::unix::fs::symlink(&path, &alias).unwrap();
+            lockfile
+                .resources
+                .get_mut("multiple-chunks")
+                .unwrap()
+                .location = alias.to_string_lossy().into_owned();
+            assert!(lockfile.verify_integrity().is_ok());
+        }
+    }
 
     #[test]
     fn test_lockfile_creation() {

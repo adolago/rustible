@@ -493,6 +493,13 @@ impl StateArgs {
                 output,
                 force,
             } => {
+                // The default-build converter cannot preserve Terraform resource
+                // addressing. Require the validated importer before any file IO.
+                if !cfg!(feature = "provisioning") {
+                    anyhow::bail!(
+                        "Terraform import is not supported without the provisioning feature; no state was written. Rebuild with --features provisioning and review the supported import shapes."
+                    );
+                }
                 ctx.output.banner("IMPORT TERRAFORM STATE");
                 ctx.output.info(&format!("Importing from: {:?}", tfstate));
                 ctx.output.info(&format!("Output to: {:?}", output));
@@ -1098,4 +1105,116 @@ fn convert_terraform_state(tf_state: &serde_json::Value) -> serde_json::Value {
             "imported_at": Utc::now().to_rfc3339()
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(feature = "provisioning"))]
+    #[tokio::test]
+    async fn test_diligence_default_terraform_import_rejects_without_overwrite() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("terraform.tfstate");
+        let output = directory.path().join("rustible.state.json");
+        let terraform_state = serde_json::json!({
+            "version": 4,
+            "serial": 1,
+            "lineage": "synthetic-lineage",
+            "resources": [{
+                "mode": "managed", "type": "aws_instance", "name": "web",
+                "instances": [
+                    {"index_key": 0, "attributes": {"id": "synthetic-zero"}},
+                    {"index_key": 1, "attributes": {"id": "synthetic-one"}}
+                ]
+            }]
+        });
+        std::fs::write(&source, terraform_state.to_string()).unwrap();
+        std::fs::write(&output, b"existing state must not change").unwrap();
+        let cli = crate::cli::Cli::try_parse_from([
+            "rustible",
+            "state",
+            "import-terraform",
+            "--tfstate",
+            source.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+            "--force",
+        ])
+        .unwrap();
+        let mut context = CommandContext::new(&cli, crate::config::Config::default());
+        let arguments = StateArgs {
+            command: StateCommand::ImportTerraform {
+                tfstate: source,
+                output: output.clone(),
+                force: true,
+            },
+        };
+        let result = arguments.execute(&mut context).await;
+        assert!(
+            result.is_err(),
+            "default build accepted a lossy Terraform import"
+        );
+        assert!(result.unwrap_err().to_string().contains("provisioning"));
+        assert_eq!(
+            std::fs::read(&output).unwrap(),
+            b"existing state must not change"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_diligence_state_list_remains_available() {
+        let directory = tempfile::tempdir().unwrap();
+        let cli = crate::cli::Cli::try_parse_from(["rustible", "state", "list"]).unwrap();
+        let mut context = CommandContext::new(&cli, crate::config::Config::default());
+        let arguments = StateArgs {
+            command: StateCommand::List {
+                state_dir: directory.path().to_path_buf(),
+                format: "table".to_string(),
+            },
+        };
+        assert_eq!(arguments.execute(&mut context).await.unwrap(), 0);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(feature = "provisioning")]
+    #[tokio::test]
+    async fn test_diligence_feature_import_validates_before_overwrite() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("terraform.tfstate");
+        let output = directory.path().join("state.json");
+        let mut input = serde_json::json!({
+            "version": 4, "serial": 1, "lineage": "synthetic-lineage",
+            "resources": [{"mode": "managed", "type": "aws_instance", "name": "web",
+                "instances": [{"attributes": {"id": "synthetic-zero"}},
+                              {"attributes": {"id": "synthetic-one"}}]}]
+        });
+        std::fs::write(&source, input.to_string()).unwrap();
+        std::fs::write(&output, b"existing state").unwrap();
+        let cli = crate::cli::Cli::try_parse_from(["rustible", "state", "list"]).unwrap();
+        let mut context = CommandContext::new(&cli, crate::config::Config::default());
+        let arguments = StateArgs {
+            command: StateCommand::ImportTerraform {
+                tfstate: source.clone(),
+                output: output.clone(),
+                force: true,
+            },
+        };
+        assert!(arguments.execute(&mut context).await.is_err());
+        assert_eq!(std::fs::read(&output).unwrap(), b"existing state");
+
+        input["resources"][0]["instances"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        std::fs::write(&source, input.to_string()).unwrap();
+        assert_eq!(arguments.execute(&mut context).await.unwrap(), 0);
+        let imported: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+        assert_eq!(imported["resources"].as_object().unwrap().len(), 1);
+        assert_eq!(
+            imported["resources"]["aws_instance.web"]["cloud_id"],
+            "synthetic-zero"
+        );
+    }
 }
