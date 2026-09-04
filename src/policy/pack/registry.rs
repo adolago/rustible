@@ -18,7 +18,7 @@ pub struct PackEvaluationResult {
     pub pack_name: String,
     /// Number of rules that passed.
     pub passed: usize,
-    /// Number of rules that failed (severity = Error).
+    /// Number of rules that failed (error severity or evaluation failure).
     pub failed: usize,
     /// Number of rules that produced warnings.
     pub warnings: usize,
@@ -83,7 +83,14 @@ impl PackRegistry {
         let mut details = Vec::new();
 
         for rule in &pack.rules {
-            let violations = rule.evaluate(playbook_data);
+            let violations = match rule.evaluate_result(playbook_data) {
+                Ok(violations) => violations,
+                Err(error) => {
+                    failed += 1;
+                    details.push(format!("[ERROR] {}: {}", rule.name, error));
+                    continue;
+                }
+            };
             if violations.is_empty() {
                 passed += 1;
             } else {
@@ -128,6 +135,24 @@ impl Default for PackRegistry {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn module_inspection_failure_is_error_at_every_severity() {
+        let mut pack = PackLoader::load_from_parsed(builtins::security::manifest());
+        pack.rules.retain(|rule| rule.name == "no-shell");
+        assert_eq!(pack.rules.len(), 1);
+        let mut observations = Vec::new();
+        for severity in [
+            crate::policy::RuleSeverity::Info,
+            crate::policy::RuleSeverity::Warning,
+            crate::policy::RuleSeverity::Error,
+        ] {
+            pack.rules[0].severity = severity;
+            let result = PackRegistry::evaluate_pack(&pack, &json!({"roles": ["fixture"]}));
+            observations.push((result.passed, result.failed, result.warnings));
+        }
+        assert_eq!(observations, vec![(0, 1, 0); 3]);
+    }
 
     #[test]
     fn test_discover_loads_builtins() {
