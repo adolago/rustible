@@ -615,14 +615,7 @@ pub fn find_config_section<'a>(
     let mut current: Option<&ConfigNode> = None;
 
     for (i, parent) in parents.iter().enumerate() {
-        let search_in = if i == 0 {
-            tree
-        } else {
-            match current {
-                Some(node) => &node.children[..],
-                None => return None,
-            }
-        };
+        let search_in = if i == 0 { tree } else { &current?.children[..] };
 
         current = search_in.iter().find(|n| n.line.trim() == parent.trim());
         current?;

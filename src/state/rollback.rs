@@ -421,7 +421,8 @@ impl RollbackExecutor {
                             format!("Rollback: remove created file {}", dest),
                             3,
                         )
-                    } else if let Some(content) = before.get("content") {
+                    } else {
+                        let content = before.get("content")?;
                         // Restore original content
                         (
                             "copy".to_string(),
@@ -432,8 +433,6 @@ impl RollbackExecutor {
                             format!("Rollback: restore original content of {}", dest),
                             2,
                         )
-                    } else {
-                        return None;
                     }
                 } else {
                     return None;
@@ -502,30 +501,24 @@ impl RollbackExecutor {
 
             // lineinfile module
             "lineinfile" => {
-                if let Some(before) = &task.before_state {
-                    if let Some(content) = before.get("content") {
-                        let path = task
-                            .args
-                            .get("path")
-                            .or_else(|| task.args.get("dest"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
+                let before = task.before_state.as_ref()?;
+                let content = before.get("content")?;
+                let path = task
+                    .args
+                    .get("path")
+                    .or_else(|| task.args.get("dest"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
 
-                        (
-                            "copy".to_string(),
-                            serde_json::json!({
-                                "dest": path,
-                                "content": content.clone()
-                            }),
-                            format!("Rollback: restore original content of {}", path),
-                            2,
-                        )
-                    } else {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
+                (
+                    "copy".to_string(),
+                    serde_json::json!({
+                        "dest": path,
+                        "content": content.clone()
+                    }),
+                    format!("Rollback: restore original content of {}", path),
+                    2,
+                )
             }
 
             // Command/shell modules - cannot auto-rollback
