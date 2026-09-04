@@ -254,10 +254,22 @@ impl Connection for LocalConnection {
                 ))
             })?;
 
-            // Creation mode does not change existing files. Set it on the open
-            // descriptor before any replacement content becomes visible.
+            // Only restrict access while old or partial contents remain. New
+            // permissions and special bits are granted after the complete write.
+            let restricted = mode
+                & dest_file
+                    .metadata()
+                    .map_err(|e| {
+                        ConnectionError::TransferFailed(format!(
+                            "Failed to inspect destination permissions: {}",
+                            e
+                        ))
+                    })?
+                    .permissions()
+                    .mode()
+                & 0o777;
             dest_file
-                .set_permissions(fs::Permissions::from_mode(mode))
+                .set_permissions(fs::Permissions::from_mode(restricted))
                 .map_err(|e| {
                     ConnectionError::TransferFailed(format!(
                         "Failed to set permissions on {}: {}",
@@ -393,7 +405,19 @@ impl Connection for LocalConnection {
 
             // Apply requested permissions to existing files before writing data.
             if let Some(mode) = options.mode {
-                file.set_permissions(fs::Permissions::from_mode(mode))
+                let restricted = mode
+                    & file
+                        .metadata()
+                        .map_err(|e| {
+                            ConnectionError::TransferFailed(format!(
+                                "Failed to inspect destination permissions: {}",
+                                e
+                            ))
+                        })?
+                        .permissions()
+                        .mode()
+                    & 0o777;
+                file.set_permissions(fs::Permissions::from_mode(restricted))
                     .map_err(|e| {
                         ConnectionError::TransferFailed(format!(
                             "Failed to set permissions on {}: {}",
@@ -612,6 +636,55 @@ pub async fn execute_local_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_diligence_upload_never_grants_mode_before_failed_write() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let conn = LocalConnection::new();
+        let scratch = tempfile::tempdir().unwrap();
+        let source = scratch.path().join("source");
+        fs::write(&source, b"harmless replacement").unwrap();
+        let mut observed = Vec::new();
+        for content_upload in [false, true] {
+            for (old_mode, requested_mode) in [(0o600, 0o644), (0o755, 0o4755)] {
+                let destination = scratch
+                    .path()
+                    .join(format!("fifo-{content_upload}-{requested_mode}"));
+                nix::unistd::mkfifo(
+                    &destination,
+                    nix::sys::stat::Mode::from_bits_truncate(old_mode),
+                )
+                .unwrap();
+                fs::set_permissions(&destination, fs::Permissions::from_mode(old_mode)).unwrap();
+                // Opening a reader prevents the writer open from blocking. Explicit
+                // mode uploads reject FIFO truncation, before any bytes are written.
+                let _reader = fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(nix::libc::O_NONBLOCK)
+                    .open(&destination)
+                    .unwrap();
+                let options = Some(TransferOptions::new().with_mode(requested_mode));
+                let result = if content_upload {
+                    conn.upload_content(b"harmless replacement", &destination, options)
+                        .await
+                } else {
+                    conn.upload(&source, &destination, options).await
+                };
+                observed.push((
+                    result.is_err(),
+                    fs::metadata(&destination).unwrap().permissions().mode() & 0o7777,
+                    old_mode,
+                ));
+            }
+        }
+        for (failed, mode, old_mode) in observed {
+            assert!(failed);
+            assert_eq!(
+                mode, old_mode,
+                "upload must not grant access or special bits before writing succeeds"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn test_diligence_review_upload_content_to_null_without_mode() {
