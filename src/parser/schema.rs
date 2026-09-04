@@ -182,11 +182,11 @@ pub struct ValidatorConfig {
     pub strict_mode: bool,
     /// Check for deprecated modules/syntax
     pub check_deprecations: bool,
-    /// Check for undefined variables in templates
+    /// Reserved option; requesting undefined-variable analysis returns an error.
     pub check_undefined_vars: bool,
-    /// Maximum depth to validate (for performance)
+    /// Maximum task-block nesting depth. Top-level tasks have depth zero.
     pub max_depth: usize,
-    /// Custom schema directory
+    /// Reserved option; supplying a custom schema directory returns an error.
     pub custom_schema_dir: Option<PathBuf>,
 }
 
@@ -195,7 +195,7 @@ impl Default for ValidatorConfig {
         Self {
             strict_mode: false,
             check_deprecations: true,
-            check_undefined_vars: true,
+            check_undefined_vars: false,
             max_depth: 50,
             custom_schema_dir: None,
         }
@@ -628,6 +628,29 @@ impl SchemaValidator {
     pub fn validate_playbook(&self, playbook: &JsonValue) -> SchemaResult<ValidationResult> {
         let mut result = ValidationResult::success();
 
+        // These options were previously stored but never implemented. Reject an
+        // explicit request instead of returning a misleading successful result.
+        for (requested, option) in [
+            (self.config.check_undefined_vars, "check_undefined_vars"),
+            (self.config.custom_schema_dir.is_some(), "custom_schema_dir"),
+        ] {
+            if requested {
+                result.add_error(ValidationError {
+                    path: format!("/config/{option}"),
+                    message: format!("Validator option '{option}' is unsupported"),
+                    line: None,
+                    column: None,
+                    severity: ErrorSeverity::Error,
+                    suggestion: Some(
+                        "Disable this option; the requested analysis is not implemented".into(),
+                    ),
+                });
+            }
+        }
+        if !result.valid {
+            return Ok(result);
+        }
+
         // Playbook should be an array of plays
         let plays = match playbook.as_array() {
             Some(arr) => arr,
@@ -659,6 +682,13 @@ impl SchemaValidator {
                     ErrorSeverity::Warning => result.add_warning(error),
                     ErrorSeverity::Info => result.add_info(error),
                 }
+            }
+        }
+
+        if self.config.strict_mode {
+            for mut warning in std::mem::take(&mut result.warnings) {
+                warning.severity = ErrorSeverity::Error;
+                result.add_error(warning);
             }
         }
 
@@ -774,9 +804,56 @@ impl SchemaValidator {
             }
         };
 
-        for (i, task) in task_arr.iter().enumerate() {
-            let task_path = format!("{}/{}", path, i);
+        // An explicit stack keeps validation bounded by the configured nesting
+        // limit without making the Rust call stack depend on input depth.
+        let mut pending: Vec<_> = task_arr
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, task)| (task, format!("{path}/{i}"), 0usize))
+            .collect();
+        while let Some((task, task_path, depth)) = pending.pop() {
             self.validate_task(task, &task_path, result);
+            let Some(task_obj) = task.as_object() else {
+                continue;
+            };
+            for section in ["always", "rescue", "block"] {
+                let Some(nested) = task_obj.get(section) else {
+                    continue;
+                };
+                let nested_path = format!("{task_path}/{section}");
+                let Some(nested_tasks) = nested.as_array() else {
+                    result.add_error(ValidationError {
+                        path: nested_path,
+                        message: "Tasks must be a list".into(),
+                        line: None,
+                        column: None,
+                        severity: ErrorSeverity::Error,
+                        suggestion: None,
+                    });
+                    continue;
+                };
+                if nested_tasks.is_empty() {
+                    continue;
+                }
+                if depth >= self.config.max_depth {
+                    result.add_error(ValidationError {
+                        path: nested_path,
+                        message: format!(
+                            "Maximum task nesting depth {} exceeded",
+                            self.config.max_depth
+                        ),
+                        line: None,
+                        column: None,
+                        severity: ErrorSeverity::Error,
+                        suggestion: None,
+                    });
+                    continue;
+                }
+                for (i, nested_task) in nested_tasks.iter().enumerate().rev() {
+                    pending.push((nested_task, format!("{nested_path}/{i}"), depth + 1));
+                }
+            }
         }
     }
 
@@ -1168,5 +1245,149 @@ mod tests {
         assert!(display.contains("error"));
         assert!(display.contains("5:3"));
         assert!(display.contains("dest"));
+    }
+}
+
+#[cfg(test)]
+mod diligence_contracts {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn nested_block_rescue_and_always_arguments_are_validated() {
+        let validator = SchemaValidator::new();
+        for section in ["tasks", "pre_tasks", "post_tasks", "handlers"] {
+            for nested in ["block", "rescue", "always"] {
+                let playbook = json!([{"hosts": "all", section: [{"block": [], nested: [{"copy": {"src": "synthetic"}}]}]}]);
+                let result = validator.validate_playbook(&playbook).unwrap();
+                let expected = format!("/0/{section}/0/{nested}/0/copy");
+                assert!(!result.valid, "{section}/{nested} was not validated");
+                assert!(result
+                    .errors
+                    .iter()
+                    .any(|e| e.path == expected && e.message.contains("dest")));
+            }
+        }
+    }
+
+    #[test]
+    fn nested_task_shapes_and_valid_nested_tasks_are_checked() {
+        let validator = SchemaValidator::new();
+        let bad = json!([{"hosts": "all", "tasks": [{"block": {"debug": {"msg": "literal"}}}]}]);
+        let result = validator.validate_playbook(&bad).unwrap();
+        assert!(!result.valid);
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.path == "/0/tasks/0/block" && e.message.contains("list")));
+        let good = json!([{"hosts": "all", "tasks": [{"block": [{"debug": {"msg": "literal"}}], "rescue": [], "always": [{"debug": {"msg": "literal"}}]}]}]);
+        assert!(validator.validate_playbook(&good).unwrap().valid);
+    }
+
+    #[test]
+    fn configured_depth_has_an_explicit_boundary() {
+        let validator = SchemaValidator::with_config(ValidatorConfig {
+            max_depth: 1,
+            ..Default::default()
+        });
+        let accepted =
+            json!([{"hosts": "all", "tasks": [{"block": [{"debug": {"msg": "literal"}}]}]}]);
+        assert!(validator.validate_playbook(&accepted).unwrap().valid);
+        let rejected = json!([{"hosts": "all", "tasks": [{"block": [{"block": [{"debug": {"msg": "literal"}}]}]}]}]);
+        let result = validator.validate_playbook(&rejected).unwrap();
+        assert!(!result.valid);
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.path == "/0/tasks/0/block/0/block" && e.message.contains("depth")));
+        let flat_only = SchemaValidator::with_config(ValidatorConfig {
+            max_depth: 0,
+            ..Default::default()
+        });
+        assert!(
+            flat_only
+                .validate_playbook(
+                    &json!([{"hosts": "all", "tasks": [{"debug": {"msg": "literal"}}]}])
+                )
+                .unwrap()
+                .valid
+        );
+        assert!(!flat_only.validate_playbook(&accepted).unwrap().valid);
+    }
+
+    struct WarningRule;
+    impl ValidationRule for WarningRule {
+        fn name(&self) -> &str {
+            "synthetic-warning"
+        }
+        fn validate(&self, _: &JsonValue, path: &str) -> Vec<ValidationError> {
+            vec![ValidationError {
+                path: path.into(),
+                message: "synthetic warning".into(),
+                line: None,
+                column: None,
+                severity: ErrorSeverity::Warning,
+                suggestion: None,
+            }]
+        }
+    }
+
+    #[test]
+    fn strict_mode_promotes_builtin_and_custom_warnings() {
+        let playbook = json!([{"hosts": "all", "tasks": [{"name": "missing module"}]}]);
+        let normal = SchemaValidator::new().validate_playbook(&playbook).unwrap();
+        assert!(normal.valid);
+        assert!(!normal.warnings.is_empty());
+        let mut strict = SchemaValidator::with_config(ValidatorConfig {
+            strict_mode: true,
+            ..Default::default()
+        });
+        strict.add_rule(Box::new(WarningRule));
+        let result = strict.validate_playbook(&playbook).unwrap();
+        assert!(!result.valid);
+        assert!(result.warnings.is_empty());
+        assert!(result
+            .errors
+            .iter()
+            .all(|e| e.severity == ErrorSeverity::Error));
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.message == "synthetic warning"));
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.message == "Task has no module"));
+    }
+
+    #[test]
+    fn unsupported_configurations_fail_explicitly() {
+        assert!(!ValidatorConfig::default().check_undefined_vars);
+        let playbook = json!([{"hosts": "all", "tasks": [{"debug": {"msg": "literal"}}]}]);
+        for (config, name) in [
+            (
+                ValidatorConfig {
+                    check_undefined_vars: true,
+                    ..Default::default()
+                },
+                "check_undefined_vars",
+            ),
+            (
+                ValidatorConfig {
+                    custom_schema_dir: Some(PathBuf::from("unused-synthetic-schema-dir")),
+                    ..Default::default()
+                },
+                "custom_schema_dir",
+            ),
+        ] {
+            let result = SchemaValidator::with_config(config)
+                .validate_playbook(&playbook)
+                .unwrap();
+            assert!(!result.valid);
+            assert!(result
+                .errors
+                .iter()
+                .any(|e| e.message.contains(name) && e.message.contains("unsupported")));
+        }
     }
 }
