@@ -46,6 +46,13 @@ pub enum ParseError {
 /// Result type for parsing operations
 pub type ParseResult<T> = Result<T, ParseError>;
 
+fn unsupported_password_lookup() -> minijinja::Error {
+    minijinja::Error::new(
+        minijinja::ErrorKind::InvalidOperation,
+        "password lookup is unsupported; supply a securely generated secret explicitly",
+    )
+}
+
 /// The main parser for Rustible
 #[derive(Debug)]
 pub struct Parser {
@@ -642,25 +649,37 @@ impl Parser {
         );
 
         // Random filter - select random element or generate random number
-        env.add_filter("random", |value: Value| -> Value {
-            use rand::Rng;
-            if matches!(value.kind(), ValueKind::Seq) {
-                let len = value.len().unwrap_or(0);
-                if len > 0 {
-                    let idx = rand::rng().random_range(0..len);
-                    value
-                        .get_item(&Value::from(idx))
-                        .unwrap_or(Value::UNDEFINED)
+        env.add_filter(
+            "random",
+            |value: Value| -> Result<Value, minijinja::Error> {
+                use rand::Rng;
+                if matches!(value.kind(), ValueKind::Seq) {
+                    let len = value.len().unwrap_or(0);
+                    if len > 0 {
+                        let idx = rand::rng().random_range(0..len);
+                        Ok(value
+                            .get_item(&Value::from(idx))
+                            .unwrap_or(Value::UNDEFINED))
+                    } else {
+                        Err(minijinja::Error::new(
+                            minijinja::ErrorKind::InvalidOperation,
+                            "random requires a non-empty sequence",
+                        ))
+                    }
+                } else if let Ok(max) = TryInto::<i64>::try_into(value) {
+                    if max <= 0 {
+                        return Err(minijinja::Error::new(
+                            minijinja::ErrorKind::InvalidOperation,
+                            "random requires a positive integer bound",
+                        ));
+                    }
+                    let n = rand::rng().random_range(0..max);
+                    Ok(Value::from(n))
                 } else {
-                    Value::UNDEFINED
+                    Ok(Value::UNDEFINED)
                 }
-            } else if let Ok(max) = TryInto::<i64>::try_into(value) {
-                let n = rand::rng().random_range(0..max);
-                Value::from(n)
-            } else {
-                Value::UNDEFINED
-            }
-        });
+            },
+        );
 
         // Shuffle filter
         env.add_filter("shuffle", |value: Value| -> Vec<Value> {
@@ -1041,48 +1060,59 @@ impl Parser {
         // Query/lookup function (simplified)
         env.add_function(
             "query",
-            |plugin: String, _args: Option<Value>| -> Vec<Value> {
+            |plugin: String, _args: Option<Value>| -> Result<Vec<Value>, minijinja::Error> {
+                if matches!(plugin.as_str(), "password" | "ansible.builtin.password") {
+                    return Err(unsupported_password_lookup());
+                }
                 // This would need full implementation for each lookup plugin
-                Vec::new()
+                Ok(Vec::new())
             },
         );
 
         // Lookup function
-        env.add_function("lookup", |plugin: String, args: Option<Value>| -> Value {
-            // Simplified lookup - would need full plugin system
-            match plugin.as_str() {
-                "env" => {
-                    if !unsafe_template_access_allowed() {
-                        return Value::UNDEFINED;
-                    }
-                    let var_value = args.as_ref().and_then(|a| {
-                        if matches!(a.kind(), ValueKind::Seq) {
-                            a.get_item(&Value::from(0)).ok()
-                        } else {
-                            Some(a.clone())
+        env.add_function(
+            "lookup",
+            |plugin: String, args: Option<Value>| -> Result<Value, minijinja::Error> {
+                if matches!(plugin.as_str(), "password" | "ansible.builtin.password") {
+                    return Err(unsupported_password_lookup());
+                }
+                // Simplified lookup - would need full plugin system
+                Ok(match plugin.as_str() {
+                    "env" => {
+                        if !unsafe_template_access_allowed() {
+                            return Ok(Value::UNDEFINED);
                         }
-                    });
-                    if let Some(v) = var_value {
-                        if let Some(var) = v.as_str() {
-                            std::env::var(var)
-                                .map(Value::from)
-                                .unwrap_or(Value::UNDEFINED)
+                        let var_value = args.as_ref().and_then(|a| {
+                            if matches!(a.kind(), ValueKind::Seq) {
+                                a.get_item(&Value::from(0)).ok()
+                            } else {
+                                Some(a.clone())
+                            }
+                        });
+                        if let Some(v) = var_value {
+                            if let Some(var) = v.as_str() {
+                                std::env::var(var)
+                                    .map(Value::from)
+                                    .unwrap_or(Value::UNDEFINED)
+                            } else {
+                                Value::UNDEFINED
+                            }
                         } else {
                             Value::UNDEFINED
                         }
-                    } else {
-                        Value::UNDEFINED
                     }
-                }
-                _ => Value::UNDEFINED,
-            }
-        });
+                    _ => Value::UNDEFINED,
+                })
+            },
+        );
 
-        // Password lookup (returns placeholder)
-        env.add_function("password", |_path: String| -> String {
-            // In real implementation, this would generate/retrieve passwords
-            "placeholder_password".to_string()
-        });
+        // Fail closed until secure generation, storage, and reuse are implemented.
+        env.add_function(
+            "password",
+            |_path: String| -> Result<Value, minijinja::Error> {
+                Err(unsupported_password_lookup())
+            },
+        );
 
         // Omit function (for omitting parameters)
         env.add_function("omit", || -> Value { Value::from("__omit_place_holder__") });
@@ -1460,5 +1490,72 @@ mod hash_test {
         let template_bad = "{{ 'hello' | hash('unknown') }}";
         let result_bad = parser.render_template(template_bad, &vars);
         assert!(result_bad.is_err());
+    }
+}
+
+#[cfg(test)]
+mod input_semantics_regressions {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn password_lookup_fails_without_creating_a_file() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("must-not-exist");
+        let mut vars = IndexMap::new();
+        vars.insert(
+            "path".into(),
+            serde_yaml::Value::String(path.display().to_string()),
+        );
+        let parser = Parser::new();
+        for template in [
+            "{{ password(path) }}",
+            "{{ lookup('password', path) }}",
+            "{{ query('password', path) }}",
+            "{{ lookup('ansible.builtin.password', path) }}",
+            "{{ query('ansible.builtin.password', path) }}",
+        ] {
+            assert!(
+                parser.render_template(template, &vars).is_err(),
+                "unsupported password lookup returned success"
+            );
+            assert!(!path.exists());
+        }
+    }
+
+    #[test]
+    fn random_invalid_inputs_return_errors_not_panics() {
+        for template in ["{{ 0 | random }}", "{{ -1 | random }}", "{{ [] | random }}"] {
+            let outcome = std::panic::catch_unwind(|| {
+                Parser::new().render_template(template, &IndexMap::new())
+            });
+            assert!(outcome.is_ok(), "invalid random input panicked");
+            assert!(outcome.unwrap().is_err(), "empty random range was accepted");
+        }
+    }
+
+    #[test]
+    fn random_valid_bounds_and_singleton_still_work() {
+        let parser = Parser::new();
+        assert_eq!(
+            parser
+                .render_template("{{ 1 | random }}", &IndexMap::new())
+                .unwrap(),
+            "0"
+        );
+        assert_eq!(
+            parser
+                .render_template("{{ ['only'] | random }}", &IndexMap::new())
+                .unwrap(),
+            "only"
+        );
+        for _ in 0..16 {
+            let value: i64 = parser
+                .render_template("{{ 7 | random }}", &IndexMap::new())
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!((0..7).contains(&value));
+        }
     }
 }

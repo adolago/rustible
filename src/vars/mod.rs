@@ -16,6 +16,7 @@ use aes_gcm::{
 use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
@@ -392,6 +393,11 @@ impl VarStore {
             return;
         }
 
+        self.merged_cache = Some(self.merge_layers());
+    }
+
+    /// Resolve the parent values without requiring mutation of its cache.
+    fn merge_layers(&self) -> IndexMap<String, serde_yaml::Value> {
         let mut merged = IndexMap::new();
 
         // Apply variables in precedence order (lowest to highest)
@@ -403,7 +409,7 @@ impl VarStore {
             }
         }
 
-        self.merged_cache = Some(merged);
+        merged
     }
 
     /// Merge a value into the merged map
@@ -479,8 +485,8 @@ impl VarStore {
 /// A child scope for temporary variable additions
 #[derive(Debug)]
 pub struct VarScope<'a> {
-    /// Parent store
-    parent: &'a VarStore,
+    /// Resolved parent values, borrowed from its cache or computed once for this scope.
+    parent: Cow<'a, IndexMap<String, serde_yaml::Value>>,
 
     /// Local overrides
     local: IndexMap<String, serde_yaml::Value>,
@@ -490,7 +496,11 @@ impl<'a> VarScope<'a> {
     /// Create a new scope
     fn new(parent: &'a VarStore) -> Self {
         Self {
-            parent,
+            parent: parent
+                .merged_cache
+                .as_ref()
+                .map(Cow::Borrowed)
+                .unwrap_or_else(|| Cow::Owned(parent.merge_layers())),
             local: IndexMap::new(),
         }
     }
@@ -509,23 +519,12 @@ impl<'a> VarScope<'a> {
 
     /// Get a variable (local overrides parent)
     pub fn get(&self, key: &str) -> Option<&serde_yaml::Value> {
-        self.local
-            .get(key)
-            .or_else(|| self.parent.get_variable(key).map(|v| &v.value))
+        self.local.get(key).or_else(|| self.parent.get(key))
     }
 
     /// Get all merged variables
     pub fn all(&self) -> IndexMap<String, serde_yaml::Value> {
-        let mut merged = IndexMap::new();
-
-        // Get parent variables
-        for precedence in VarPrecedence::all() {
-            if let Some(layer) = self.parent.layers.get(&precedence) {
-                for (key, var) in layer {
-                    merged.insert(key.clone(), var.value.clone());
-                }
-            }
-        }
+        let mut merged = self.parent.as_ref().clone();
 
         // Apply local overrides
         for (key, value) in &self.local {
