@@ -539,15 +539,32 @@ mod tests {
     #[test]
     fn test_build_shell_command_injection() {
         let conn = SsmConnection::new("i-abc");
-        let mut opts = ExecuteOptions::new().with_cwd("/tmp; rm -rf /");
+        let mut opts = ExecuteOptions::new().with_cwd("/tmp/literal dir; marker");
         opts.env
-            .insert("FOO".to_string(), "bar; echo pwned".to_string());
+            .insert("FOO".to_string(), "bar's value; marker".to_string());
         opts.escalate = true;
-        opts.escalate_user = Some("root; id".to_string());
+        opts.escalate_user = Some("user; marker".to_string());
 
-        let cmd = conn.build_shell_command("echo hello; ls", &opts);
-        assert!(cmd.contains("export 'FOO'='bar; echo pwned'"));
-        assert!(cmd.contains("cd '/tmp; rm -rf /'"));
-        assert!(cmd.contains("sudo -u 'root; id' -- sh -c 'echo hello; ls'"));
+        let cmd = conn.build_shell_command("printf '%s' 'hello; marker'", &opts);
+        // Parse only: this fixture is never sent to a shell or AWS.
+        let words = shell_words::split(&cmd).expect("generated command must parse");
+        assert_eq!(
+            words,
+            [
+                "export",
+                "FOO=bar's value; marker",
+                "&&",
+                "cd",
+                "/tmp/literal dir; marker",
+                "&&",
+                "sudo",
+                "-u",
+                "user; marker",
+                "--",
+                "sh",
+                "-c",
+                "printf '%s' 'hello; marker'",
+            ]
+        );
     }
 }
