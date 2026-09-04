@@ -24,7 +24,7 @@ azure = []
 gcp = []
 # Database modules (PostgreSQL, MySQL, etc.) - stub implementation
 database = ["dep:sqlx"]
-# WinRM connection support (Windows Remote Management) - beta, see docs/FEATURE_STATUS.md
+# WinRM connection implementation; validation status in docs/FEATURE_STATUS.md.
 winrm = ["dep:secrecy", "dep:md4"]
 # HTTP client features with reqwest - stub implementation
 reqwest = []
@@ -72,7 +72,7 @@ full-aws = ["full", "aws"]
 full-provisioning = ["full-aws", "provisioning"]
 # Full feature set with all HPC support
 full-hpc = ["full", "hpc", "pbs", "ofed", "parallel_fs", "redfish", "vsphere", "identity", "bare_metal", "lsf"]
-# Pure Rust build (no C dependencies)
+# Select Rust SSH and local backends; other dependencies may still contain C code.
 pure-rust = ["russh", "local"]
 
 [package]
@@ -80,7 +80,7 @@ name = "rustible"
 version = "0.1.1-alpha"
 edition = "2021"
 authors = ["Rustible Contributors"]
-description = "A modern, async-first configuration management and automation tool written in Rust - an Ansible alternative with better performance, type safety, and parallel execution"
+description = "An experimental automation engine written in Rust with Ansible-style YAML and asynchronous execution"
 license = "MIT"
 repository = "https://github.com/adolago/rustible"
 keywords = ["ansible", "automation", "configuration-management", "devops", "infrastructure"]
