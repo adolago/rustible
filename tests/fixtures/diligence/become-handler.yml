@@ -1,0 +1,12 @@
+- hosts: selected
+  gather_facts: false
+  become: true
+  become_user: __rustible_missing_user__
+  tasks:
+    - debug:
+        msg: notify
+      changed_when: true
+      notify: identity-handler
+  handlers:
+    - name: identity-handler
+      command: /usr/bin/id -un

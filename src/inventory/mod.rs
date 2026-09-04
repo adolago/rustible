@@ -779,6 +779,9 @@ impl Inventory {
 
     /// Apply a host variable from YAML (static version to avoid borrow issues)
     fn apply_host_var_static(host: &mut Host, key: &str, value: serde_yaml::Value) {
+        if key == "ansible_connection" {
+            host.set_var(key, value.clone());
+        }
         match key {
             "ansible_host" => {
                 if let serde_yaml::Value::String(s) = value {

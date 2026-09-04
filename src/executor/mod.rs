@@ -503,6 +503,10 @@ pub struct HostResult {
 /// ```
 pub struct Executor {
     config: ExecutorConfig,
+    task_tags: Vec<String>,
+    skip_tags: Vec<String>,
+    start_at_task: Mutex<Option<String>>,
+    handler_order: RwLock<Vec<String>>,
     runtime: Arc<RwLock<RuntimeContext>>,
     handlers: Arc<RwLock<HashMap<String, Handler>>>,
     notified_handlers: Arc<Mutex<HashSet<String>>>,
@@ -527,6 +531,10 @@ impl Executor {
         let forks = config.forks;
         Self {
             config,
+            task_tags: Vec::new(),
+            skip_tags: Vec::new(),
+            start_at_task: Mutex::new(None),
+            handler_order: RwLock::new(Vec::new()),
             runtime: Arc::new(RwLock::new(RuntimeContext::new())),
             handlers: Arc::new(RwLock::new(HashMap::new())),
             notified_handlers: Arc::new(Mutex::new(HashSet::new())),
@@ -546,6 +554,10 @@ impl Executor {
         let forks = config.forks;
         Self {
             config,
+            task_tags: Vec::new(),
+            skip_tags: Vec::new(),
+            start_at_task: Mutex::new(None),
+            handler_order: RwLock::new(Vec::new()),
             runtime: Arc::new(RwLock::new(runtime)),
             handlers: Arc::new(RwLock::new(HashMap::new())),
             notified_handlers: Arc::new(Mutex::new(HashSet::new())),
@@ -558,6 +570,25 @@ impl Executor {
             batch_processor: Arc::new(BatchProcessor::new(BatchConfig::default())),
             event_callback: None,
         }
+    }
+
+    /// Configure task selection without changing the default library execution contract.
+    pub fn with_task_selection(
+        mut self,
+        tags: Vec<String>,
+        skip_tags: Vec<String>,
+        start: Option<String>,
+    ) -> Self {
+        self.task_tags = tags
+            .into_iter()
+            .flat_map(|tag| tag.split(',').map(String::from).collect::<Vec<_>>())
+            .collect();
+        self.skip_tags = skip_tags
+            .into_iter()
+            .flat_map(|tag| tag.split(',').map(String::from).collect::<Vec<_>>())
+            .collect();
+        self.start_at_task = Mutex::new(start);
+        self
     }
 
     /// Set the recovery manager for this executor
@@ -685,6 +716,12 @@ impl Executor {
                 for (key, value) in &playbook.vars {
                     runtime.set_global_var(key.clone(), value.clone());
                 }
+                if let Some(path) = &playbook.path {
+                    let absolute = std::fs::canonicalize(path)?;
+                    if let Some(parent) = absolute.parent() {
+                        runtime.set_magic_var("playbook_dir".into(), serde_json::json!(parent));
+                    }
+                }
                 // Add extra vars (highest precedence)
                 for (key, value) in &self.config.extra_vars {
                     runtime.set_extra_var(key.clone(), value.clone());
@@ -708,8 +745,11 @@ impl Executor {
                 }
             }
 
-            // Run any remaining notified handlers
-            self.flush_handlers(tx_id.clone()).await?;
+            if self.start_at_task.lock().await.is_some() {
+                return Err(ExecutorError::RuntimeError(
+                    "Requested start task was not found".into(),
+                ));
+            }
 
             info!("Playbook completed: {}", playbook.name);
             Ok(all_results)
@@ -753,6 +793,12 @@ impl Executor {
         play: &Play,
         tx_id: Option<TransactionId>,
     ) -> ExecutorResult<HashMap<String, HostResult>> {
+        if play.r#become || self.config.r#become {
+            return Err(ExecutorError::RuntimeError(
+                "Play-level privilege escalation is not verified end-to-end; refusing execution"
+                    .into(),
+            ));
+        }
         self.emit_event(ExecutionEvent::PlayStart(play.name.clone()));
         info!("Starting play: {}", play.name);
 
@@ -761,12 +807,18 @@ impl Executor {
         // Register handlers for this play
         {
             let mut handlers = self.handlers.write().await;
+            handlers.clear();
+            let mut order = self.handler_order.write().await;
+            order.clear();
+            self.notified_handlers.lock().await.clear();
             for handler in &play.handlers {
+                order.push(handler.name.clone());
                 handlers.insert(handler.name.clone(), handler.clone());
             }
             // Register handlers from roles
             for role in &play.roles {
                 for handler in role.get_all_handlers() {
+                    order.push(handler.name.clone());
                     handlers.insert(handler.name.clone(), handler.clone());
                 }
             }
@@ -775,6 +827,10 @@ impl Executor {
         // Set play-level variables
         {
             let mut runtime = self.runtime.write().await;
+            runtime.clear_play_vars();
+            if let Some(connection) = &play.connection {
+                runtime.set_play_var("ansible_connection".into(), serde_json::json!(connection));
+            }
             for (key, value) in &play.vars {
                 runtime.set_play_var(key.clone(), value.clone());
             }
@@ -851,9 +907,53 @@ impl Executor {
         }
         all_tasks.extend(play.tasks.iter().cloned());
         all_tasks.extend(play.post_tasks.iter().cloned());
+        for task in &mut all_tasks {
+            task.r#become |= play.r#become || self.config.r#become;
+            if task.become_user.is_none() {
+                task.become_user = play
+                    .become_user
+                    .clone()
+                    .or_else(|| Some(self.config.become_user.clone()));
+            }
+        }
+
+        // Filter the actual flattened schedule, including pre/post and role tasks.
+        let mut start = self.start_at_task.lock().await;
+        all_tasks.retain(|task| {
+            if let Some(name) = start.as_ref() {
+                if &task.name != name {
+                    return false;
+                }
+                *start = None;
+            }
+            let tags: Vec<&str> = play
+                .tags
+                .iter()
+                .chain(task.tags.iter())
+                .map(String::as_str)
+                .collect();
+            let skipped = self
+                .skip_tags
+                .iter()
+                .any(|tag| tag == "all" || tags.contains(&tag.as_str()));
+            let selected = self.task_tags.is_empty()
+                || self.task_tags.iter().any(|tag| {
+                    tag == "all"
+                        || tags.contains(&tag.as_str())
+                        || (tag == "tagged" && !tags.is_empty())
+                        || (tag == "untagged" && tags.is_empty())
+                });
+            let never = tags.contains(&"never")
+                && !self
+                    .task_tags
+                    .iter()
+                    .any(|tag| tags.contains(&tag.as_str()));
+            !skipped && !never && (selected || tags.contains(&"always"))
+        });
+        drop(start);
 
         // Execute based on serial specification and strategy
-        let execution_result = if let Some(ref serial_spec) = play.serial {
+        let mut execution_result = if let Some(ref serial_spec) = play.serial {
             self.run_serial(
                 serial_spec,
                 &hosts,
@@ -880,33 +980,20 @@ impl Executor {
             }
         };
 
-        // Check if play failed
-        let play_failed = match &execution_result {
-            Ok(results) => results.values().any(|r| r.failed || r.unreachable),
-            Err(_) => true,
-        };
-
-        // Flush handlers at end of play
-        // If force_handlers is set, run handlers even if the play failed
-        if !play_failed || play.force_handlers {
-            if play.force_handlers && play_failed {
-                info!("Running handlers despite play failure (force_handlers=true)");
-            }
-            self.flush_handlers(tx_id.clone()).await?;
+        if let Ok(results) = &mut execution_result {
+            let eligible: Vec<String> = hosts
+                .iter()
+                .filter(|host| {
+                    results.get(*host).is_some_and(|result| {
+                        !result.unreachable && (!result.failed || play.force_handlers)
+                    })
+                })
+                .cloned()
+                .collect();
+            let handler_results = self.flush_handlers(tx_id.clone(), &eligible).await?;
+            Self::merge_host_results(results, handler_results);
         } else {
-            // Clear notified handlers without running them
-            let notified_count = {
-                let mut notified = self.notified_handlers.lock().await;
-                let count = notified.len();
-                notified.clear();
-                count
-            };
-            if notified_count > 0 {
-                warn!(
-                    "Skipping {} notified handlers due to play failure (use force_handlers=true to override)",
-                    notified_count
-                );
-            }
+            self.notified_handlers.lock().await.clear();
         }
 
         info!("Play completed: {}", play.name);
@@ -953,13 +1040,25 @@ impl Executor {
         let mut step_mode = self.config.step;
 
         for task in tasks {
+            // Finalize an exited block before scheduling a following normal task.
+            for (host, blocks) in &failed_blocks {
+                if blocks.iter().any(|id| {
+                    task.block_id.as_ref() != Some(id)
+                        && !rescued_blocks
+                            .get(host)
+                            .is_some_and(|rescued| rescued.contains(id))
+                }) {
+                    if let Some(result) = results.get_mut(host) {
+                        result.failed = true;
+                    }
+                }
+            }
             // Determine which hosts should run this task based on block state
-            let active_hosts: Vec<_> = hosts
+            let mut active_hosts: Vec<_> = hosts
                 .iter()
                 .filter(|h| {
                     let host_result = results.get(*h);
                     let host_failed_blocks = failed_blocks.get(*h);
-                    let host_rescued_blocks = rescued_blocks.get(*h);
 
                     // Skip if host has failed (and not in a block)
                     if host_result
@@ -978,9 +1077,6 @@ impl Executor {
                         let block_failed = host_failed_blocks
                             .map(|blocks| blocks.contains(block_id))
                             .unwrap_or(false);
-                        let block_rescued = host_rescued_blocks
-                            .map(|blocks| blocks.contains(block_id))
-                            .unwrap_or(false);
 
                         match task.block_role {
                             BlockRole::Normal => {
@@ -989,7 +1085,7 @@ impl Executor {
                             }
                             BlockRole::Rescue => {
                                 // Run rescue tasks only if block failed and hasn't been rescued yet
-                                block_failed && !block_rescued
+                                block_failed
                             }
                             BlockRole::Always => {
                                 // Always run always tasks
@@ -1003,12 +1099,41 @@ impl Executor {
                 .cloned()
                 .collect();
 
+            if task.run_once {
+                active_hosts.truncate(1);
+            }
             if active_hosts.is_empty() {
                 // Check if all tasks remaining are block-related
                 if task.block_id.is_none() {
                     warn!("All hosts have failed, stopping execution");
                     break;
                 }
+                continue;
+            }
+
+            if task.module == "meta"
+                && task
+                    .args
+                    .get("_raw_params")
+                    .or_else(|| task.args.get("action"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("flush_handlers")
+            {
+                let mut flush_hosts = Vec::new();
+                for host in &active_hosts {
+                    let context = ExecutionContext::new(host.clone());
+                    if let Some(condition) = &task.when {
+                        if !task
+                            .evaluate_condition(condition, &context, &self.runtime)
+                            .await?
+                        {
+                            continue;
+                        }
+                    }
+                    flush_hosts.push(host.clone());
+                }
+                let handler_results = self.flush_handlers(tx_id.clone(), &flush_hosts).await?;
+                Self::merge_host_results(&mut results, handler_results);
                 continue;
             }
 
@@ -1100,7 +1225,10 @@ impl Executor {
                     }
 
                     // If this is a rescue task, mark the block as rescued
-                    if task.block_role == BlockRole::Rescue {
+                    if task.block_role == BlockRole::Rescue
+                        && !task_failed
+                        && task_result.status != crate::executor::task::TaskStatus::Skipped
+                    {
                         if let Some(ref block_id) = task.block_id {
                             if let Some(blocks) = rescued_blocks.get_mut(&host) {
                                 blocks.insert(block_id.clone());
@@ -1114,22 +1242,22 @@ impl Executor {
                     let should_mark_failed = if task.block_id.is_some() {
                         // For block tasks, we handle failure differently
                         // The host only fails if rescue also fails
-                        task.block_role == BlockRole::Rescue && task_failed
+                        task.block_role != BlockRole::Normal && task_failed
                     } else {
                         task_failed
                     };
 
                     // Temporarily modify result for stats update
-                    let mut modified_result = task_result.clone();
-                    if task.block_id.is_some()
+                    let defer_block_failure = task.block_id.is_some()
                         && task.block_role == BlockRole::Normal
-                        && task_failed
-                    {
-                        // Don't count normal block failure as host failure
-                        modified_result.status = crate::executor::task::TaskStatus::Ok;
+                        && task_failed;
+                    if defer_block_failure {
+                        // A failed attempt is not a successful or skipped task.
+                        // The terminal host state is decided when the block exits.
+                        host_result.stats.failed += 1;
+                    } else {
+                        self.update_host_stats(host_result, &task_result);
                     }
-
-                    self.update_host_stats(host_result, &modified_result);
 
                     // Now set the actual failure state
                     if should_mark_failed && !task.ignore_errors {
@@ -1139,19 +1267,14 @@ impl Executor {
             }
         }
 
-        // After all tasks, check if any blocks failed without being rescued
-        for (host, host_failed_blocks) in &failed_blocks {
-            if let Some(_host_result) = results.get_mut(host) {
-                let host_rescued = rescued_blocks.get(host);
-                for block_id in host_failed_blocks {
-                    let was_rescued = host_rescued.map(|r| r.contains(block_id)).unwrap_or(false);
-                    if !was_rescued {
-                        // Block failed without rescue - this is a failure
-                        // But we need to check if there was a rescue section defined
-                        // For now, assume if rescue tasks were found, it was rescued
-                        // If no rescue tasks exist, it's a real failure
-                        // This is a simplification - proper implementation would track this differently
-                    }
+        for (host, blocks) in &failed_blocks {
+            if blocks.iter().any(|id| {
+                !rescued_blocks
+                    .get(host)
+                    .is_some_and(|rescued| rescued.contains(id))
+            }) {
+                if let Some(result) = results.get_mut(host) {
+                    result.failed = true;
                 }
             }
         }
@@ -1282,6 +1405,8 @@ impl Executor {
                         update_stats(&mut host_result.stats, &result);
                         if result.status == TaskStatus::Failed {
                             host_result.failed = true;
+                        } else if result.status == TaskStatus::Unreachable {
+                            host_result.unreachable = true;
                         }
                     }
                     Err(_) => {
@@ -1452,6 +1577,8 @@ impl Executor {
                                 update_stats(&mut host_result.stats, &result);
                                 if result.status == TaskStatus::Failed {
                                     host_result.failed = true;
+                                } else if result.status == TaskStatus::Unreachable {
+                                    host_result.unreachable = true;
                                 }
                             }
                             Err(_) => {
@@ -2011,6 +2138,9 @@ impl Executor {
     /// Resolve host pattern to list of hosts
     async fn resolve_hosts(&self, pattern: &str) -> ExecutorResult<Vec<String>> {
         let runtime = self.runtime.read().await;
+        if pattern.trim().is_empty() {
+            return Ok(Vec::new());
+        }
 
         // Handle special patterns
         if pattern == "all" {
@@ -2049,171 +2179,96 @@ impl Executor {
     /// 2. Ensures handlers run in definition order
     /// 3. Supports handler chaining (handlers can notify other handlers)
     /// 4. Deduplicates handlers so each runs only once per flush
-    async fn flush_handlers(&self, tx_id: Option<TransactionId>) -> ExecutorResult<()> {
-        let notified: Vec<String> = {
-            let mut notified = self.notified_handlers.lock().await;
-            let handlers: Vec<_> = notified.drain().collect();
-            handlers
-        };
-
-        if notified.is_empty() {
-            return Ok(());
-        }
-
-        info!("Running handlers for {} notifications", notified.len());
-
-        let handlers = self.handlers.read().await;
-
-        // Build a lookup map: notification name -> list of handlers that respond to it
-        // A handler responds to a notification if:
-        // 1. Its name matches the notification, OR
-        // 2. Its listen list contains the notification name
-        let mut notification_to_handlers: HashMap<String, Vec<String>> = HashMap::new();
-
-        for handler in handlers.values() {
-            // Handler responds to its own name
-            notification_to_handlers
-                .entry(handler.name.clone())
-                .or_default()
-                .push(handler.name.clone());
-
-            // Handler responds to each name in its listen list
-            for listen_name in &handler.listen {
-                notification_to_handlers
-                    .entry(listen_name.clone())
-                    .or_default()
-                    .push(handler.name.clone());
-            }
-        }
-
-        // Collect all handlers that need to run (deduped)
-        let mut handlers_to_run: HashSet<String> = HashSet::new();
-
-        for notification_name in &notified {
-            if let Some(responding_handlers) = notification_to_handlers.get(notification_name) {
-                for handler_name in responding_handlers {
-                    handlers_to_run.insert(handler_name.clone());
+    async fn flush_handlers(
+        &self,
+        tx_id: Option<TransactionId>,
+        eligible_hosts: &[String],
+    ) -> ExecutorResult<HashMap<String, HostResult>> {
+        let notifications: Vec<String> = self.notified_handlers.lock().await.drain().collect();
+        let mut requested: HashMap<String, HashSet<String>> = HashMap::new();
+        for notification in notifications {
+            if let Ok((host, name)) = serde_json::from_str::<(String, String)>(&notification) {
+                if eligible_hosts.contains(&host) {
+                    requested.entry(host).or_default().insert(name);
+                } else {
+                    // A conditional mid-play flush must not discard notifications
+                    // for hosts whose condition was false.
+                    self.notified_handlers.lock().await.insert(notification);
                 }
             } else {
-                // No handler found for this notification
-                warn!("Handler not found for notification: {}", notification_name);
-            }
-        }
-
-        if handlers_to_run.is_empty() {
-            debug!("No handlers matched the notifications");
-            return Ok(());
-        }
-
-        // Sort handlers by their definition order (order in the handlers map)
-        // We use the order from the handlers HashMap which preserves insertion order
-        let mut ordered_handlers: Vec<&Handler> = handlers
-            .values()
-            .filter(|h| handlers_to_run.contains(&h.name))
-            .collect();
-
-        // Stable sort is not needed since HashMap doesn't preserve order
-        // We'll use the order handlers appear in the play's handlers vector
-        // For now, alphabetical order ensures consistent behavior
-        ordered_handlers.sort_by(|a, b| a.name.cmp(&b.name));
-
-        info!("Running {} unique handlers", ordered_handlers.len());
-
-        // Track handlers that have already run in this flush cycle
-        let mut executed_handlers: HashSet<String> = HashSet::new();
-
-        // Get all active hosts from runtime
-        let hosts = {
-            let runtime = self.runtime.read().await;
-            runtime.get_all_hosts()
-        };
-
-        // Execute handlers, supporting handler chaining
-        // We loop until no new handlers are notified
-        let mut current_handlers = ordered_handlers;
-
-        loop {
-            let mut new_notifications: HashSet<String> = HashSet::new();
-
-            for handler in &current_handlers {
-                if executed_handlers.contains(&handler.name) {
-                    continue;
-                }
-
-                debug!("Running handler: {}", handler.name);
-                executed_handlers.insert(handler.name.clone());
-
-                // Create task from handler
-                // Note: We include notify field to support handler chaining
-                let task = Task {
-                    name: handler.name.clone(),
-                    module: handler.module.clone(),
-                    args: handler.args.clone(),
-                    when: handler.when.clone(),
-                    notify: Vec::new(), // Handlers don't chain via task.notify in our model
-                    register: None,
-                    loop_items: None,
-                    loop_var: "item".to_string(),
-                    loop_control: None,
-                    ignore_errors: false,
-                    changed_when: None,
-                    failed_when: None,
-                    delegate_to: None,
-                    delegate_facts: None,
-                    run_once: false,
-                    tags: Vec::new(),
-                    r#become: false,
-                    become_user: None,
-                    block_id: None,
-                    block_role: crate::executor::task::BlockRole::Normal,
-                    retries: None,
-                    delay: None,
-                    until: None,
-                    vars: IndexMap::new(),
-                };
-
-                // Run handler on all hosts
-                let results = self.run_task_on_hosts(&hosts, &task, tx_id.clone()).await?;
-
-                // Check if handler execution triggered any changes
-                // If so, check if any handlers listen to this handler's name (handler chaining)
-                let any_changed = results.values().any(|r| r.changed);
-                if any_changed {
-                    // Check if any other handlers listen to this handler's name
-                    if let Some(chained_handlers) = notification_to_handlers.get(&handler.name) {
-                        for chained_handler in chained_handlers {
-                            if chained_handler != &handler.name
-                                && !executed_handlers.contains(chained_handler)
-                            {
-                                new_notifications.insert(chained_handler.clone());
-                            }
-                        }
-                    }
+                // Legacy library notification has no host. Scope it to the active play,
+                // never the complete runtime inventory.
+                for host in eligible_hosts {
+                    requested
+                        .entry(host.clone())
+                        .or_default()
+                        .insert(notification.clone());
                 }
             }
-
-            // If no new handlers were triggered, we're done
-            if new_notifications.is_empty() {
-                break;
+        }
+        let handlers = self.handlers.read().await.clone();
+        let order = self.handler_order.read().await.clone();
+        let mut results: HashMap<String, HostResult> = HashMap::new();
+        let mut executed = HashSet::new();
+        for name in order {
+            if !executed.insert(name.clone()) {
+                continue;
             }
-
-            // Prepare the next round of handlers
-            current_handlers = handlers
-                .values()
-                .filter(|h| new_notifications.contains(&h.name))
+            let Some(handler) = handlers.get(&name) else {
+                continue;
+            };
+            let hosts: Vec<String> = eligible_hosts
+                .iter()
+                .filter(|host| {
+                    !results
+                        .get(*host)
+                        .is_some_and(|result| result.failed || result.unreachable)
+                        && requested.get(*host).is_some_and(|names| {
+                            names.contains(&handler.name)
+                                || handler.listen.iter().any(|name| names.contains(name))
+                        })
+                })
+                .cloned()
                 .collect();
-
-            if current_handlers.is_empty() {
-                break;
+            if hosts.is_empty() {
+                continue;
             }
-
-            debug!(
-                "Handler chaining: {} additional handlers triggered",
-                current_handlers.len()
-            );
+            let task = Task {
+                name: handler.name.clone(),
+                module: handler.module.clone(),
+                args: handler.args.clone(),
+                when: handler.when.clone(),
+                ..Task::default()
+            };
+            let task_results = self.run_task_on_hosts(&hosts, &task, tx_id.clone()).await?;
+            for (host, result) in task_results {
+                let host_result = results.entry(host.clone()).or_insert_with(|| HostResult {
+                    host,
+                    stats: ExecutionStats::default(),
+                    failed: false,
+                    unreachable: false,
+                });
+                self.update_host_stats(host_result, &result);
+            }
         }
+        Ok(results)
+    }
 
-        Ok(())
+    fn merge_host_results(
+        results: &mut HashMap<String, HostResult>,
+        additional: HashMap<String, HostResult>,
+    ) {
+        for (host, result) in additional {
+            let current = results.entry(host).or_insert_with(|| HostResult {
+                host: result.host.clone(),
+                stats: ExecutionStats::default(),
+                failed: false,
+                unreachable: false,
+            });
+            current.stats.merge(&result.stats);
+            current.failed |= result.failed;
+            current.unreachable |= result.unreachable;
+        }
     }
 
     /// Notify a handler to be run at end of play

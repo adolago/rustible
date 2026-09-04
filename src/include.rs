@@ -272,6 +272,15 @@ impl TaskIncluder {
             )
         })?;
 
+        let document: serde_yaml::Value = serde_yaml::from_str(&content)
+            .map_err(|_| Error::playbook_parse(path, "Invalid included YAML", None))?;
+        crate::executor::playbook::reject_unprotected_no_log(&document).map_err(|_| {
+            Error::playbook_parse(
+                path,
+                "no_log requires end-to-end redaction; refusing included tasks",
+                None,
+            )
+        })?;
         let tasks: Vec<Task> = serde_yaml::from_str(&content).map_err(|e| {
             Error::playbook_parse(
                 path,

@@ -1,0 +1,6 @@
+- hosts: selected
+  gather_facts: false
+  tasks:
+    - name: explicit-ssh
+      connection: ssh
+      command: /bin/echo must-not-run-locally

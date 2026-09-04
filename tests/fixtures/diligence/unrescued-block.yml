@@ -1,0 +1,12 @@
+- name: Failure must escape unrescued block
+  hosts: selected
+  gather_facts: false
+  tasks:
+    - name: failing-block
+      block:
+        - name: block-failure
+          fail:
+            msg: intended-test-failure
+    - name: should-not-run-after-block
+      debug:
+        msg: failure-was-lost

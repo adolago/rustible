@@ -1,0 +1,16 @@
+- hosts: selected
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: notify
+      changed_when: true
+      notify: delayed-handler
+    - meta: flush_handlers
+      when: false
+    - name: handler-not-yet-run
+      assert:
+        that: handler_ran is not defined
+  handlers:
+    - name: delayed-handler
+      set_fact:
+        handler_ran: true

@@ -155,6 +155,11 @@ impl Playbook {
 
     /// Parse a playbook from YAML content
     pub fn parse(content: &str, path: Option<PathBuf>) -> ExecutorResult<Self> {
+        // Reject confidentiality directives before any task output can be emitted.
+        // Full redaction is not yet implemented across callbacks and persisted bundles.
+        let document: serde_yaml::Value = serde_yaml::from_str(content)
+            .map_err(|_| ExecutorError::ParseError("Invalid playbook YAML".into()))?;
+        reject_unprotected_no_log(&document)?;
         // Ansible playbooks are arrays of plays at the top level
         let plays: Vec<PlayDefinition> = serde_yaml::from_str(content)
             .map_err(|e| ExecutorError::ParseError(format!("YAML parse error: {}", e)))?;
@@ -257,7 +262,7 @@ pub struct PlayDefinition {
     #[serde(default)]
     pub environment: IndexMap<String, JsonValue>,
     /// Tags for this play
-    #[serde(default, deserialize_with = "deserialize_seq_or_null")]
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
     pub tags: Vec<String>,
     /// Serial execution (number of hosts at a time)
     #[serde(default)]
@@ -400,7 +405,7 @@ pub struct TaskDefinition {
     #[serde(default, deserialize_with = "deserialize_flexible_bool")]
     pub run_once: bool,
     /// Tags
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
     pub tags: Vec<String>,
     /// Become
     #[serde(default, deserialize_with = "deserialize_flexible_bool")]
@@ -851,17 +856,17 @@ impl Role {
                 };
 
                 if tasks_file.exists() {
-                    if let Ok(content) = std::fs::read_to_string(&tasks_file) {
-                        if let Ok(task_defs) = serde_yaml::from_str::<Vec<TaskDefinition>>(&content)
-                        {
-                            for task_def in task_defs {
-                                if let Ok(tasks) =
-                                    parse_task_definition(task_def, Some(&tasks_file))
-                                {
-                                    role.tasks.extend(tasks);
-                                }
-                            }
-                        }
+                    let content = std::fs::read_to_string(&tasks_file)?;
+                    let document: serde_yaml::Value = serde_yaml::from_str(&content)
+                        .map_err(|_| ExecutorError::ParseError("Invalid role tasks YAML".into()))?;
+                    reject_unprotected_no_log(&document)?;
+                    let task_defs: Vec<TaskDefinition> =
+                        serde_yaml::from_value(document).map_err(|_| {
+                            ExecutorError::ParseError("Invalid role task definition".into())
+                        })?;
+                    for task_def in task_defs {
+                        role.tasks
+                            .extend(parse_task_definition(task_def, Some(&tasks_file))?);
                     }
                 }
 
@@ -874,16 +879,18 @@ impl Role {
                     role_path.join("handlers").join("main.yml")
                 };
                 if handlers_file.exists() {
-                    if let Ok(content) = std::fs::read_to_string(&handlers_file) {
-                        if let Ok(handler_defs) =
-                            serde_yaml::from_str::<Vec<HandlerDefinition>>(&content)
-                        {
-                            for handler_def in handler_defs {
-                                if let Ok(handler) = parse_handler_definition(handler_def) {
-                                    role.handlers.push(handler);
-                                }
-                            }
-                        }
+                    let content = std::fs::read_to_string(&handlers_file)?;
+                    let document: serde_yaml::Value =
+                        serde_yaml::from_str(&content).map_err(|_| {
+                            ExecutorError::ParseError("Invalid role handlers YAML".into())
+                        })?;
+                    reject_unprotected_no_log(&document)?;
+                    let handler_defs: Vec<HandlerDefinition> = serde_yaml::from_value(document)
+                        .map_err(|_| {
+                            ExecutorError::ParseError("Invalid role handler definition".into())
+                        })?;
+                    for handler_def in handler_defs {
+                        role.handlers.push(parse_handler_definition(handler_def)?);
                     }
                 }
 
@@ -893,11 +900,8 @@ impl Role {
                     if let Ok(content) = std::fs::read_to_string(&meta_file) {
                         if let Ok(meta) = serde_yaml::from_str::<RoleMeta>(&content) {
                             for dep in meta.dependencies {
-                                if let Ok(dep_role) =
-                                    Role::from_definition(dep, Some(playbook_path))
-                                {
-                                    role.dependencies.push(dep_role);
-                                }
+                                role.dependencies
+                                    .push(Role::from_definition(dep, Some(playbook_path))?);
                             }
                         }
                     }
@@ -917,8 +921,18 @@ impl Role {
             all_tasks.extend(dep.get_all_tasks());
         }
 
-        // Then add our tasks
+        // Then add our tasks, retaining role selection and conditions.
         all_tasks.extend(self.tasks.clone());
+        for task in &mut all_tasks {
+            task.tags.extend(self.tags.iter().cloned());
+            task.r#become |= self.r#become.unwrap_or(false);
+            if let Some(condition) = &self.when {
+                task.when = Some(match &task.when {
+                    Some(child) => format!("({condition}) and ({child})"),
+                    None => condition.clone(),
+                });
+            }
+        }
 
         all_tasks
     }
@@ -1030,11 +1044,45 @@ struct Platform {
     versions: Option<Vec<String>>,
 }
 
+/// Fail closed until no_log is honored by every logging and persistence boundary.
+pub(crate) fn reject_unprotected_no_log(value: &serde_yaml::Value) -> ExecutorResult<()> {
+    match value {
+        serde_yaml::Value::Mapping(map) => {
+            if map
+                .get(serde_yaml::Value::String("no_log".into()))
+                .is_some_and(|v| v != &serde_yaml::Value::Bool(false))
+            {
+                return Err(ExecutorError::ParseError("no_log requires end-to-end redaction, which is not yet supported; refusing execution".into()));
+            }
+            for value in map.values() {
+                reject_unprotected_no_log(value)?;
+            }
+        }
+        serde_yaml::Value::Sequence(values) => {
+            for value in values {
+                reject_unprotected_no_log(value)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// Parse a task definition into Task(s)
 fn parse_task_definition(
     def: TaskDefinition,
     playbook_path: Option<&PathBuf>,
 ) -> ExecutorResult<Vec<Task>> {
+    if def
+        .module
+        .get("no_log")
+        .is_some_and(|v| v != &JsonValue::Bool(false))
+    {
+        return Err(ExecutorError::ParseError(
+            "no_log requires end-to-end redaction, which is not yet supported; refusing execution"
+                .into(),
+        ));
+    }
     let mut tasks = Vec::new();
 
     // Handle block/rescue/always
@@ -1108,6 +1156,19 @@ fn parse_task_definition(
             }
         }
 
+        for task in &mut tasks {
+            task.tags.extend(def.tags.iter().cloned());
+            task.r#become |= def.r#become;
+            if task.become_user.is_none() {
+                task.become_user = def.become_user.clone();
+            }
+            if let Some(condition) = def.when.as_ref().map(WhenCondition::to_condition) {
+                task.when = Some(match &task.when {
+                    Some(child) => format!("({condition}) and ({child})"),
+                    None => condition,
+                });
+            }
+        }
         return Ok(tasks);
     }
 
@@ -1124,6 +1185,9 @@ fn parse_task_definition(
                 args
             },
             when: def.when.as_ref().map(|w| w.to_condition()),
+            tags: def.tags.clone(),
+            r#become: def.r#become,
+            become_user: def.become_user.clone(),
             ..Default::default()
         };
         return Ok(vec![task]);
@@ -1142,6 +1206,9 @@ fn parse_task_definition(
                 args
             },
             when: def.when.as_ref().map(|w| w.to_condition()),
+            tags: def.tags.clone(),
+            r#become: def.r#become,
+            become_user: def.become_user.clone(),
             ..Default::default()
         };
         return Ok(vec![task]);
@@ -1171,6 +1238,9 @@ fn parse_task_definition(
                 args
             },
             when: def.when.as_ref().map(|w| w.to_condition()),
+            tags: def.tags.clone(),
+            r#become: def.r#become,
+            become_user: def.become_user.clone(),
             ..Default::default()
         };
         return Ok(vec![task]);
@@ -1194,6 +1264,9 @@ fn parse_task_definition(
                 args
             },
             when: def.when.as_ref().map(|w| w.to_condition()),
+            tags: def.tags.clone(),
+            r#become: def.r#become,
+            become_user: def.become_user.clone(),
             ..Default::default()
         };
         return Ok(vec![task]);
@@ -1242,9 +1315,13 @@ fn parse_task_definition(
         become_user: def.become_user,
         block_id: None,
         block_role: crate::executor::task::BlockRole::Normal,
-        retries: None,
-        delay: None,
-        until: None,
+        retries: def
+            .retries
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|_| ExecutorError::ParseError("retries exceeds supported range".into()))?,
+        delay: def.delay.map(|n| n as u64),
+        until: def.until.as_ref().map(WhenCondition::to_condition),
         vars: extract_task_vars(&def.module),
     };
 
@@ -1254,11 +1331,15 @@ fn parse_task_definition(
 
 /// Extract the `vars` mapping from the flattened module fields.
 fn extract_task_vars(module: &IndexMap<String, JsonValue>) -> IndexMap<String, JsonValue> {
-    module
+    let mut vars: IndexMap<String, JsonValue> = module
         .get("vars")
-        .and_then(|v| v.as_object())
+        .and_then(JsonValue::as_object)
         .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Some(connection) = module.get("connection") {
+        vars.insert("ansible_connection".into(), connection.clone());
+    }
+    vars
 }
 
 fn normalize_builtin_module_name(name: &str) -> &str {
@@ -1384,6 +1465,12 @@ fn convert_serial_value_to_spec(value: SerialValue) -> crate::playbook::SerialSp
 
 /// Parse a handler definition
 fn parse_handler_definition(def: HandlerDefinition) -> ExecutorResult<Handler> {
+    if def.module.contains_key("become") || def.module.contains_key("connection") {
+        return Err(ExecutorError::ParseError(
+            "Handler transport and privilege directives are not yet supported; refusing execution"
+                .into(),
+        ));
+    }
     let (module_name, module_args) = {
         let non_module_keys = ["name", "listen", "when"];
 

@@ -1,0 +1,9 @@
+- hosts: remote.invalid
+  gather_facts: false
+  tasks:
+    - name: remote-loop
+      file:
+        path: __SCRATCH__/remote-controller-sentinel
+        state: touch
+      loop: [one, two]
+      ignore_errors: true

@@ -390,11 +390,20 @@ impl RuntimeContext {
                 ctx.add_host(host_name.clone(), None);
             }
 
-            // Set host variables
-            for (key, value) in &host.vars {
+            // Preserve effective group/host values before transport defaults.
+            let host_vars = inventory.get_host_vars(host);
+            for (key, value) in &host_vars {
                 if let Ok(json_value) = serde_json::to_value(value) {
                     ctx.set_host_var(&host_name, key.clone(), json_value);
                 }
+            }
+
+            if !host_vars.contains_key("ansible_connection") {
+                ctx.set_host_var(
+                    &host_name,
+                    "ansible_connection".to_string(),
+                    serde_json::json!(host.connection.connection.to_string()),
+                );
             }
 
             // Also set connection-related ansible variables
@@ -498,6 +507,34 @@ impl RuntimeContext {
     pub fn clear_play_vars(&mut self) {
         self.play_vars.clear();
         self.task_vars.clear();
+    }
+
+    /// Resolve transport only from authored configuration. Remote facts and
+    /// registered module output must never authorize controller-local execution.
+    pub fn configured_connection(&self, host: &str) -> Option<String> {
+        let mut value = self.global_vars.get("ansible_connection");
+        for group in self.groups.values() {
+            if group.hosts.iter().any(|name| name == host) {
+                value = group.vars.get("ansible_connection").or(value);
+            }
+        }
+        if let Some(data) = self.host_data.get(host) {
+            value = data.vars.get("ansible_connection").or(value);
+        }
+        value = self.play_vars.get("ansible_connection").or(value);
+        for scope in &self.block_vars_stack {
+            value = scope.get("ansible_connection").or(value);
+        }
+        value = self.task_vars.get("ansible_connection").or(value);
+        value = self.extra_vars.get("ansible_connection").or(value);
+        // An invalid explicit value is still explicit; it must not trigger the
+        // implicit-localhost default.
+        value.map(|value| {
+            value
+                .as_str()
+                .unwrap_or("__invalid_transport__")
+                .to_string()
+        })
     }
 
     /// Get a variable by name, respecting precedence
