@@ -372,12 +372,8 @@ fn find_playbook(search_paths: &[String], playbook: &str) -> ApiResult<String> {
                 }
             }
         }
-        if playbook_path.exists() {
-            return Err(ApiError::Forbidden(format!(
-                "Access denied to playbook outside search paths: {}",
-                playbook
-            )));
-        }
+        // Do not inspect an absolute path outside every configured root. Its
+        // existence must not change the response for an inaccessible playbook.
         return Err(ApiError::NotFound(format!(
             "Playbook not found or access denied: {}",
             playbook
@@ -982,7 +978,7 @@ mod tests {
 
         // Test absolute path outside search path
         let result = find_playbook(&search_paths, secret_file.to_str().unwrap());
-        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
     }
 
     #[test]
