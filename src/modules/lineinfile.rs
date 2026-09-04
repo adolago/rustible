@@ -395,6 +395,12 @@ impl LineinfileModule {
                         };
 
                         if !changed {
+                            if mode.is_some() {
+                                return Err(ModuleError::Unsupported(
+                                    "Remote mode-only updates are unsupported by lineinfile; no file was uploaded"
+                                        .to_string(),
+                                ));
+                            }
                             return Ok(ModuleOutput::ok(format!(
                                 "File '{}' already has desired content",
                                 path
@@ -527,7 +533,7 @@ impl LineinfileModule {
         };
 
         // Apply changes based on state
-        let changed = match state {
+        let content_changed = match state {
             LineState::Present => {
                 let line_str = line.as_ref().ok_or_else(|| {
                     ModuleError::MissingParameter("line is required for state=present".to_string())
@@ -573,7 +579,17 @@ impl LineinfileModule {
             }
         };
 
-        if !changed {
+        #[cfg(unix)]
+        let mode_changed = if let Some(desired) = mode.filter(|_| content_opt.is_some()) {
+            use std::os::unix::fs::PermissionsExt;
+            (fs::metadata(path)?.permissions().mode() & 0o7777) != (desired & 0o7777)
+        } else {
+            false
+        };
+        #[cfg(not(unix))]
+        let mode_changed = false;
+
+        if !content_changed && !mode_changed {
             return Ok(ModuleOutput::ok(format!(
                 "File '{}' already has desired content",
                 path_str
@@ -582,7 +598,7 @@ impl LineinfileModule {
 
         // In check mode, don't actually write
         if context.check_mode {
-            let diff = if context.diff_mode {
+            let diff = if context.diff_mode && content_changed {
                 Some(Diff::new(
                     original_lines.as_ref().unwrap().join("\n"),
                     lines.join("\n"),
@@ -601,14 +617,22 @@ impl LineinfileModule {
         }
 
         // Create backup if requested
-        let backup_file = if backup {
+        let backup_file = if backup && content_changed {
             Self::create_backup(path, &backup_suffix)?
         } else {
             None
         };
 
-        // Write the file
-        Self::write_file(path, &lines, create, mode)?;
+        if content_changed {
+            Self::write_file(path, &lines, create, mode)?;
+        } else {
+            // A permission-only change must preserve the original bytes and mtime.
+            #[cfg(unix)]
+            if let Some(desired) = mode {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(path, fs::Permissions::from_mode(desired))?;
+            }
+        }
 
         let mut output = ModuleOutput::changed(format!("Modified '{}'", path_str));
 
@@ -616,7 +640,7 @@ impl LineinfileModule {
             output = output.with_data("backup_file", serde_json::json!(backup_path));
         }
 
-        if context.diff_mode {
+        if context.diff_mode && content_changed {
             output = output.with_diff(Diff::new(
                 original_lines.as_ref().unwrap().join("\n"),
                 lines.join("\n"),

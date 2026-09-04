@@ -275,7 +275,7 @@ impl StatModule {
         #[cfg(unix)]
         let (mode, uid, gid, atime, mtime) = {
             (
-                metadata.mode(),
+                metadata.mode() & 0o7777,
                 metadata.uid(),
                 metadata.gid(),
                 metadata.atime(),
@@ -316,8 +316,8 @@ impl StatModule {
             }
         }
 
-        // Get symlink target if it's a symlink and follow is true
-        if is_symlink && follow {
+        // Unfollowed metadata describes the link; preserve its raw target spelling.
+        if is_symlink {
             if let Ok(target) = std::fs::read_link(path) {
                 if let Some(stat_obj) = stat_data.as_object_mut() {
                     stat_obj.insert(
