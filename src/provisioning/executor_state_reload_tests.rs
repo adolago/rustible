@@ -96,12 +96,13 @@ impl Resource for FixtureResource {
     }
     async fn update(
         &self,
-        _: &str,
+        id: &str,
         _: &Value,
-        _: &Value,
+        config: &Value,
         _: &ProviderContext,
     ) -> ProvisioningResult<ResourceResult> {
-        panic!("unused fixture path")
+        self.events.lock().push(format!("update:{id}"));
+        Ok(ResourceResult::success(id, config.clone()))
     }
     async fn destroy(&self, id: &str, _: &ProviderContext) -> ProvisioningResult<ResourceResult> {
         self.events.lock().push(format!("destroy:{id}"));
@@ -449,4 +450,106 @@ async fn generating_another_plan_invalidates_the_previous_plan() {
     assert!(executor.apply(&previous).await.is_err());
     assert_eq!(*backend.events.lock(), ["load_locked"]);
     assert!(executor.apply(&current).await.unwrap().success);
+}
+
+mod dependency_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn successful_creates_persist_forward_dependencies_for_later_destroy() {
+        let backend = Arc::new(MemoryBackend::default());
+        let executor = executor(
+            backend.clone(),
+            json!({
+                "base": {"id": "created-base"},
+                "middle": {"id": "created-middle", "depends_on": ["fixture_item.base"]},
+                "leaf": {"id": "created-leaf", "depends_on": ["fixture_item.middle"]}
+            }),
+        )
+        .await;
+        let plan = executor.plan().await.unwrap();
+        assert!(executor.apply(&plan).await.unwrap().success);
+        let saved = backend.saved.lock().clone().unwrap();
+        // Exercise the production state serializer/reader as well as the mock backend.
+        let restored =
+            ProvisioningState::from_json_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+        assert_eq!(
+            restored
+                .get_resource(&ResourceId::new("fixture_item", "middle"))
+                .unwrap()
+                .dependencies,
+            [ResourceId::new("fixture_item", "base")]
+        );
+        assert_eq!(
+            restored
+                .get_resource(&ResourceId::new("fixture_item", "leaf"))
+                .unwrap()
+                .dependencies,
+            [ResourceId::new("fixture_item", "middle")]
+        );
+        *backend.saved.lock() = Some(restored);
+        let destroyer = super::executor(backend.clone(), json!({})).await;
+        let plan = destroyer.plan_destroy().await.unwrap();
+        backend.events.lock().clear();
+        assert!(destroyer.apply(&plan).await.unwrap().success);
+        let destroys: Vec<_> = backend
+            .events
+            .lock()
+            .iter()
+            .filter(|event| event.starts_with("destroy:"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            destroys,
+            [
+                "destroy:created-leaf",
+                "destroy:created-middle",
+                "destroy:created-base"
+            ]
+        );
+        assert!(backend.saved.lock().as_ref().unwrap().resources.is_empty());
+    }
+
+    #[tokio::test]
+    async fn successful_update_replaces_stale_forward_dependencies() {
+        let backend = Arc::new(MemoryBackend::default());
+        let mut saved = state_with("first", "first");
+        saved.add_resource(
+            state_with("second", "second")
+                .resources
+                .into_values()
+                .next()
+                .unwrap(),
+        );
+        let mut leaf = state_with("leaf", "leaf")
+            .resources
+            .into_values()
+            .next()
+            .unwrap();
+        leaf.config = json!({"id": "leaf", "depends_on": ["fixture_item.first"]});
+        leaf.dependencies = vec![ResourceId::new("fixture_item", "first")];
+        saved.add_resource(leaf);
+        *backend.saved.lock() = Some(saved);
+        let executor = executor(
+            backend.clone(),
+            json!({
+                "first": {"id": "first"}, "second": {"id": "second"},
+                "leaf": {"id": "leaf", "depends_on": ["fixture_item.second"]}
+            }),
+        )
+        .await;
+        let plan = executor.plan().await.unwrap();
+        assert_eq!(plan.to_update, [ResourceId::new("fixture_item", "leaf")]);
+        assert!(executor.apply(&plan).await.unwrap().success);
+        let saved = backend.saved.lock();
+        assert_eq!(
+            saved
+                .as_ref()
+                .unwrap()
+                .get_resource(&ResourceId::new("fixture_item", "leaf"))
+                .unwrap()
+                .dependencies,
+            [ResourceId::new("fixture_item", "second")]
+        );
+    }
 }

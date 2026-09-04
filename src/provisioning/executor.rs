@@ -807,13 +807,14 @@ impl ProvisioningExecutor {
         result: &ResourceResult,
     ) -> ProvisioningResult<()> {
         let config = self.get_resource_config(&action.resource_id)?;
-        let resource_state = ResourceState::new(
+        let mut resource_state = ResourceState::new(
             action.resource_id.clone(),
             result.cloud_id.as_deref().unwrap_or(""),
             &action.provider,
             config,
             result.attributes.clone(),
         );
+        resource_state.dependencies = action.depends_on.clone();
 
         self.state.write().add_resource(resource_state);
         Ok(())
@@ -830,6 +831,7 @@ impl ProvisioningExecutor {
 
         if let Some(resource) = state.get_resource_mut(&action.resource_id) {
             resource.config = config;
+            resource.dependencies = action.depends_on.clone();
             resource.update_attributes(result.attributes.clone());
             if let Some(ref cloud_id) = result.cloud_id {
                 resource.cloud_id = cloud_id.clone();

@@ -44,6 +44,28 @@ and synchronous executor taint/untaint changes are not persisted by those method
 apply reload discards such cache-only edits. Those contracts require separate
 repairs. Tests use memory-only backends and resources, not cloud acceptance runs.
 
+### Destroy dependency ordering and stored metadata
+
+Destroy plans order selected dependents before their prerequisites, using each
+resource's stored forward `dependencies`. An explicit `PlanBuilder` dependency
+override supplies forward prerequisites too. Only edges between selected destroy
+actions are reversed; target selection does not expand. Cycles among those actions
+fail when execution order is calculated. Create/update actions keep their existing
+prerequisite-first ordering.
+
+Successful creates and updates now persist their action dependencies in resource
+state; successful replacement uses the same creation path. The separate
+`dependents` field is not maintained or used as the source of ordering. Legacy
+states with missing dependency metadata are not backfilled, and unchanged
+resources do not acquire metadata through this repair.
+
+This establishes ordering for the recorded, selected graph, not a complete safe
+destroy guarantee. Unselected live dependents can still block deletion or lose a
+prerequisite, and missing legacy metadata cannot establish the required order.
+Mixed create/update/destroy transitions, provider-aware replacement, taint
+planning and dependency-failure handling need separate repairs. Verification uses
+synthetic graphs, the real state serializer and memory-only resource operations.
+
 ---
 
 ## Provisioning CLI Commands
