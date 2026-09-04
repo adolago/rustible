@@ -465,18 +465,15 @@ impl Inventory {
     fn parse_yaml(&mut self, content: &str) -> InventoryResult<()> {
         let data: serde_yaml::Value = serde_yaml::from_str(content)?;
 
-        if let serde_yaml::Value::Mapping(map) = data {
-            // Check if this is an "all" wrapper
-            if let Some(all) = map.get(serde_yaml::Value::String("all".to_string())) {
-                self.parse_yaml_group("all", all)?;
-            } else {
-                // Parse as flat structure
-                for (key, value) in map {
-                    if let serde_yaml::Value::String(group_name) = key {
-                        self.parse_yaml_group(&group_name, &value)?;
-                    }
-                }
-            }
+        let map = data
+            .as_mapping()
+            .ok_or_else(|| invalid_yaml_structure("inventory must be a mapping of groups"))?;
+        // `all` is a group, not a wrapper that hides its top-level siblings.
+        for (key, value) in map {
+            let group_name = key
+                .as_str()
+                .ok_or_else(|| invalid_yaml_structure("group names must be strings"))?;
+            self.parse_yaml_group(group_name, value)?;
         }
 
         Ok(())
@@ -484,6 +481,7 @@ impl Inventory {
 
     /// Parse a YAML group definition
     fn parse_yaml_group(&mut self, name: &str, value: &serde_yaml::Value) -> InventoryResult<()> {
+        validate_yaml_group_shape(value)?;
         let _group = self
             .groups
             .entry(name.to_string())
@@ -512,7 +510,7 @@ impl Inventory {
                                                 existing_host,
                                                 key,
                                                 var_value.clone(),
-                                            );
+                                            )?;
                                         }
                                     }
                                 }
@@ -534,7 +532,7 @@ impl Inventory {
                                             &mut host,
                                             key,
                                             var_value.clone(),
-                                        );
+                                        )?;
                                     }
                                 }
                             }
@@ -592,69 +590,15 @@ impl Inventory {
         Ok(())
     }
 
-    /// Apply a host variable from YAML
+    /// Apply a host variable from YAML.
     #[allow(dead_code)]
-    fn apply_host_var(&self, host: &mut Host, key: &str, value: serde_yaml::Value) {
-        match key {
-            "ansible_host" => {
-                if let serde_yaml::Value::String(s) = value {
-                    host.ansible_host = Some(s);
-                }
-            }
-            "ansible_port" => {
-                if let serde_yaml::Value::Number(n) = value {
-                    if let Some(port) = n.as_u64() {
-                        host.connection.ssh.port = port as u16;
-                    }
-                }
-            }
-            "ansible_user" => {
-                if let serde_yaml::Value::String(s) = value {
-                    host.connection.ssh.user = Some(s);
-                }
-            }
-            "ansible_ssh_private_key_file" => {
-                if let serde_yaml::Value::String(s) = value {
-                    host.connection.ssh.private_key_file = Some(s);
-                }
-            }
-            "ansible_connection" => {
-                if let serde_yaml::Value::String(s) = value {
-                    host.connection.connection = match s.as_str() {
-                        "local" => ConnectionType::Local,
-                        "docker" => ConnectionType::Docker,
-                        "podman" => ConnectionType::Podman,
-                        "winrm" => ConnectionType::Winrm,
-                        _ => ConnectionType::Ssh,
-                    };
-                }
-            }
-            "ansible_become" => {
-                host.connection.r#become = match value {
-                    serde_yaml::Value::Bool(b) => b,
-                    serde_yaml::Value::String(s) => s.to_lowercase() == "true" || s == "1",
-                    _ => false,
-                };
-            }
-            "ansible_become_method" => {
-                if let serde_yaml::Value::String(s) = value {
-                    host.connection.become_method = s;
-                }
-            }
-            "ansible_become_user" => {
-                if let serde_yaml::Value::String(s) = value {
-                    host.connection.become_user = s;
-                }
-            }
-            "ansible_python_interpreter" => {
-                if let serde_yaml::Value::String(s) = value {
-                    host.connection.python_interpreter = Some(s);
-                }
-            }
-            _ => {
-                host.set_var(key, value);
-            }
-        }
+    fn apply_host_var(
+        &self,
+        host: &mut Host,
+        key: &str,
+        value: serde_yaml::Value,
+    ) -> InventoryResult<()> {
+        Self::apply_host_var_static(host, key, value)
     }
 
     /// Parse JSON inventory format (compatible with Ansible dynamic inventory)
@@ -705,7 +649,10 @@ impl Inventory {
 
                     if let Some(serde_json::Value::Object(vars)) = group_data.get("vars") {
                         for (var_key, var_value) in vars {
-                            let yaml_value = json_to_yaml(var_value);
+                            let yaml_value = json_to_yaml(var_value)?;
+                            if var_key == "ansible_port" {
+                                parse_inventory_port(&yaml_value)?;
+                            }
                             vars_to_add.push((var_key.clone(), yaml_value));
                         }
                     }
@@ -759,13 +706,13 @@ impl Inventory {
                             // Collect the vars first
                             let yaml_vars: Vec<(String, serde_yaml::Value)> = vars_map
                                 .iter()
-                                .map(|(k, v)| (k.clone(), json_to_yaml(v)))
-                                .collect();
+                                .map(|(k, v)| Ok((k.clone(), json_to_yaml(v)?)))
+                                .collect::<InventoryResult<_>>()?;
 
                             // Then apply them
                             if let Some(host) = self.hosts.get_mut(host_name) {
                                 for (var_key, yaml_value) in yaml_vars {
-                                    Self::apply_host_var_static(host, &var_key, yaml_value);
+                                    Self::apply_host_var_static(host, &var_key, yaml_value)?;
                                 }
                             }
                         }
@@ -778,7 +725,11 @@ impl Inventory {
     }
 
     /// Apply a host variable from YAML (static version to avoid borrow issues)
-    fn apply_host_var_static(host: &mut Host, key: &str, value: serde_yaml::Value) {
+    fn apply_host_var_static(
+        host: &mut Host,
+        key: &str,
+        value: serde_yaml::Value,
+    ) -> InventoryResult<()> {
         match key {
             "ansible_host" => {
                 if let serde_yaml::Value::String(s) = value {
@@ -786,11 +737,7 @@ impl Inventory {
                 }
             }
             "ansible_port" => {
-                if let serde_yaml::Value::Number(n) = value {
-                    if let Some(port) = n.as_u64() {
-                        host.connection.ssh.port = port as u16;
-                    }
-                }
+                host.connection.ssh.port = parse_inventory_port(&value)?;
             }
             "ansible_user" => {
                 if let serde_yaml::Value::String(s) = value {
@@ -839,6 +786,7 @@ impl Inventory {
                 host.set_var(key, value);
             }
         }
+        Ok(())
     }
 
     /// Parse INI inventory format
@@ -881,7 +829,10 @@ impl Inventory {
                 // Parse group variable
                 if let Some((key, value)) = line.split_once('=') {
                     let key = key.trim();
-                    let value = parse_ini_value(value.trim());
+                    let value = parse_ini_value(value.trim())?;
+                    if key == "ansible_port" {
+                        parse_inventory_port(&value)?;
+                    }
 
                     if let Some(group) = self.groups.get_mut(&current_group) {
                         group.set_var(key, value);
@@ -1335,67 +1286,109 @@ fn glob_to_regex(pattern: &str) -> String {
     regex
 }
 
-/// Parse INI value (handle quoted strings, lists, etc.)
-fn parse_ini_value(value: &str) -> serde_yaml::Value {
+/// Report malformed YAML without reproducing potentially sensitive values.
+fn invalid_yaml_structure(message: &str) -> InventoryError {
+    InventoryError::Yaml(<serde_yaml::Error as serde::de::Error>::custom(message))
+}
+
+/// Validate group structure before interpreting it; null groups/sections are empty.
+fn validate_yaml_group_shape(value: &serde_yaml::Value) -> InventoryResult<()> {
+    if value.is_null() {
+        return Ok(());
+    }
+    let group = value
+        .as_mapping()
+        .ok_or_else(|| invalid_yaml_structure("group definitions must be mappings or null"))?;
+    for (key, section) in group {
+        let name = key
+            .as_str()
+            .ok_or_else(|| invalid_yaml_structure("group section names must be strings"))?;
+        if !matches!(name, "hosts" | "children" | "vars") {
+            return Err(invalid_yaml_structure(
+                "group sections must be hosts, children, or vars",
+            ));
+        }
+        if section.is_null() {
+            continue;
+        }
+        let entries = section
+            .as_mapping()
+            .ok_or_else(|| invalid_yaml_structure("group sections must be mappings or null"))?;
+        for (entry_key, entry_value) in entries {
+            let entry_name = entry_key
+                .as_str()
+                .ok_or_else(|| invalid_yaml_structure("inventory names must be strings"))?;
+            if name == "hosts" && !entry_value.is_null() {
+                let host_vars = entry_value.as_mapping().ok_or_else(|| {
+                    invalid_yaml_structure("host variables must be mappings or null")
+                })?;
+                for var_key in host_vars.keys() {
+                    if var_key.as_str().is_none() {
+                        return Err(invalid_yaml_structure("variable names must be strings"));
+                    }
+                }
+            }
+            if name == "vars" && entry_name == "ansible_port" {
+                parse_inventory_port(entry_value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// SSH destination ports are integer values in 1..=65535; numeric strings are accepted.
+fn parse_inventory_port(value: &serde_yaml::Value) -> InventoryResult<u16> {
+    let port = match value {
+        serde_yaml::Value::Number(number) => {
+            number.as_u64().and_then(|port| u16::try_from(port).ok())
+        }
+        serde_yaml::Value::String(port) => port.parse::<u16>().ok(),
+        _ => None,
+    };
+    port.filter(|port| *port != 0).ok_or_else(|| {
+        HostParseError::InvalidPort("expected an integer in 1..=65535".to_string()).into()
+    })
+}
+
+/// Parse an INI group value, preserving numeric types and explicitly quoted strings.
+fn parse_ini_value(value: &str) -> InventoryResult<serde_yaml::Value> {
     let value = value.trim();
 
-    // Handle quoted strings
-    if (value.starts_with('"') && value.ends_with('"'))
-        || (value.starts_with('\'') && value.ends_with('\''))
-    {
-        return serde_yaml::Value::String(value[1..value.len() - 1].to_string());
+    if value.starts_with('"') || value.starts_with('\'') {
+        let words = shell_words::split(value).map_err(|_| {
+            InventoryError::InvalidIniFormat("unmatched quote in group variable".to_string())
+        })?;
+        if words.len() != 1 {
+            return Err(InventoryError::InvalidIniFormat(
+                "quoted group variable must contain one value".to_string(),
+            ));
+        }
+        return Ok(serde_yaml::Value::String(words[0].clone()));
     }
 
-    // Handle booleans
     match value.to_lowercase().as_str() {
-        "true" | "yes" | "on" | "y" | "t" => return serde_yaml::Value::Bool(true),
-        "false" | "no" | "off" | "n" | "f" => return serde_yaml::Value::Bool(false),
+        "true" | "yes" | "on" | "y" | "t" => return Ok(serde_yaml::Value::Bool(true)),
+        "false" | "no" | "off" | "n" | "f" => return Ok(serde_yaml::Value::Bool(false)),
         _ => {}
     }
 
-    // Handle numbers
-    if let Ok(n) = value.parse::<i64>() {
-        return serde_yaml::Value::Number(n.into());
+    if let Ok(number) = value.parse::<i64>() {
+        return Ok(serde_yaml::Value::Number(number.into()));
     }
-    if let Ok(n) = value.parse::<f64>() {
-        // Use From<i64> for the integer part, or convert to string for precision
-        if n.fract() == 0.0 && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
-            return serde_yaml::Value::Number((n as i64).into());
+    if let Ok(number) = value.parse::<u64>() {
+        return Ok(serde_yaml::Value::Number(number.into()));
+    }
+    if let Ok(number) = value.parse::<f64>() {
+        if number.is_finite() {
+            return Ok(serde_yaml::Value::Number(number.into()));
         }
-        // For floats, we need to use a different approach as serde_yaml may not support from_f64
-        return serde_yaml::Value::Number(serde_yaml::Number::from(n as i64));
     }
-
-    // Default to string
-    serde_yaml::Value::String(value.to_string())
+    Ok(serde_yaml::Value::String(value.to_string()))
 }
 
-/// Convert JSON value to YAML value
-fn json_to_yaml(value: &serde_json::Value) -> serde_yaml::Value {
-    match value {
-        serde_json::Value::Null => serde_yaml::Value::Null,
-        serde_json::Value::Bool(b) => serde_yaml::Value::Bool(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                serde_yaml::Value::Number(i.into())
-            } else if let Some(f) = n.as_f64() {
-                serde_yaml::Value::Number((f as i64).into())
-            } else {
-                serde_yaml::Value::Number(0.into())
-            }
-        }
-        serde_json::Value::String(s) => serde_yaml::Value::String(s.clone()),
-        serde_json::Value::Array(arr) => {
-            serde_yaml::Value::Sequence(arr.iter().map(json_to_yaml).collect())
-        }
-        serde_json::Value::Object(obj) => {
-            let mut map = serde_yaml::Mapping::new();
-            for (k, v) in obj {
-                map.insert(serde_yaml::Value::String(k.clone()), json_to_yaml(v));
-            }
-            serde_yaml::Value::Mapping(map)
-        }
-    }
+/// Let serde preserve signed, unsigned, fractional, and nested JSON values.
+fn json_to_yaml(value: &serde_json::Value) -> InventoryResult<serde_yaml::Value> {
+    Ok(serde_yaml::to_value(value)?)
 }
 
 impl std::fmt::Display for Inventory {

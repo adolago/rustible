@@ -303,8 +303,8 @@ impl Host {
 
     /// Parse host definition from string (e.g., "host1 ansible_host=192.168.1.1 ansible_port=22")
     pub fn parse(input: &str) -> Result<Self, HostParseError> {
-        let parts: Vec<&str> = input.split_whitespace().collect();
-        if parts.is_empty() {
+        let parts = shell_words::split(input).map_err(|_| HostParseError::InvalidSyntax)?;
+        if parts.is_empty() || parts[0].is_empty() {
             return Err(HostParseError::EmptyInput);
         }
 
@@ -317,8 +317,14 @@ impl Host {
                     "ansible_host" => host.ansible_host = Some(value.to_string()),
                     "ansible_port" => {
                         host.connection.ssh.port = value
-                            .parse()
-                            .map_err(|_| HostParseError::InvalidPort(value.to_string()))?;
+                            .parse::<u16>()
+                            .ok()
+                            .filter(|port| *port != 0)
+                            .ok_or_else(|| {
+                                HostParseError::InvalidPort(
+                                    "expected an integer in 1..=65535".to_string(),
+                                )
+                            })?;
                     }
                     "ansible_user" => host.connection.ssh.user = Some(value.to_string()),
                     "ansible_ssh_private_key_file" => {
@@ -355,6 +361,8 @@ impl Host {
                         );
                     }
                 }
+            } else {
+                return Err(HostParseError::InvalidSyntax);
             }
         }
 
@@ -391,6 +399,8 @@ impl std::fmt::Display for Host {
 pub enum HostParseError {
     #[error("empty input")]
     EmptyInput,
+    #[error("invalid host definition: expected balanced quotes and key=value assignments")]
+    InvalidSyntax,
     #[error("invalid port: {0}")]
     InvalidPort(String),
     #[error("invalid connection type: {0}")]
