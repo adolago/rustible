@@ -40,6 +40,7 @@ use super::{
     ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleResult, ParallelizationHint,
     ParamExt,
 };
+use crate::connection::TransferOptions;
 use crate::utils::shell_escape;
 use std::path::PathBuf;
 
@@ -204,6 +205,11 @@ impl Module for ScriptModule {
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
+        if context.r#become {
+            return Err(ModuleError::Unsupported(
+                "Script privilege escalation is not implemented; refusing execution".into(),
+            ));
+        }
         // Get the script path and arguments
         let script_input = self.get_script_path(params)?;
         let (script_path, args) = self.parse_script_and_args(&script_input);
@@ -251,52 +257,92 @@ impl Module for ScriptModule {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| ModuleError::ExecutionFailed("No async runtime available".to_string()))?;
 
-        // Upload the script
-        let conn = connection.clone();
-        let script_bytes = local_script.clone();
-        let path = remote_path_buf.clone();
-        std::thread::scope(|s| {
-            s.spawn(|| {
-                rt.block_on(async move { conn.upload_content(&script_bytes, &path, None).await })
-            })
-            .join()
-            .unwrap()
-        })
-        .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to upload script: {}", e)))?;
-
-        // Make the script executable
-        let conn = connection.clone();
-        // Use shell_escape for safety, although remote_path is a UUID
-        let chmod_cmd = format!("chmod +x {}", shell_escape(&remote_path));
-        std::thread::scope(|s| {
-            s.spawn(|| rt.block_on(async move { conn.execute(&chmod_cmd, None).await }))
+        let operation = (|| -> ModuleResult<ModuleOutput> {
+            // Restrict creation before any script bytes reach a shared directory.
+            let conn = connection.clone();
+            let script_bytes = local_script.clone();
+            let path = remote_path_buf.clone();
+            std::thread::scope(|s| {
+                s.spawn(|| {
+                    rt.block_on(async move {
+                        conn.upload_content(
+                            &script_bytes,
+                            &path,
+                            Some(TransferOptions {
+                                mode: Some(0o700),
+                                owner: None,
+                                group: None,
+                                create_dirs: false,
+                                backup: false,
+                            }),
+                        )
+                        .await
+                    })
+                })
                 .join()
                 .unwrap()
-        })
-        .map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to make script executable: {}", e))
-        })?;
+            })
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to upload script: {}", e)))?;
 
-        // Build the execution command
-        // We use shell_escape for chdir and args to prevent command injection
-        let exec_cmd = if let Some(ref exec) = executable {
-            // Parse executable string into parts and escape each part to prevent injection
-            // This handles cases where executable contains arguments (e.g. "python3 -u")
-            // while preventing shell injection attacks.
-            let parts = shell_words::split(exec).map_err(|e| {
-                ModuleError::InvalidParameter(format!("Invalid executable string: {}", e))
+            // Make the script executable
+            let conn = connection.clone();
+            // Use shell_escape for safety, although remote_path is a UUID
+            let chmod_cmd = format!("chmod 0700 -- {}", shell_escape(&remote_path));
+            let chmod_result = std::thread::scope(|s| {
+                s.spawn(|| rt.block_on(async move { conn.execute(&chmod_cmd, None).await }))
+                    .join()
+                    .unwrap()
+            })
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to make script executable: {}", e))
             })?;
-            let safe_exec = parts
-                .iter()
-                .map(|p| shell_escape(p))
-                .collect::<Vec<_>>()
-                .join(" ");
+            if !chmod_result.success {
+                return Err(ModuleError::ExecutionFailed(
+                    "Failed to restrict uploaded script permissions".into(),
+                ));
+            }
 
-            if let Some(ref dir) = chdir {
+            // Build the execution command
+            // We use shell_escape for chdir and args to prevent command injection
+            let exec_cmd = if let Some(ref exec) = executable {
+                // Parse executable string into parts and escape each part to prevent injection
+                // This handles cases where executable contains arguments (e.g. "python3 -u")
+                // while preventing shell injection attacks.
+                let parts = shell_words::split(exec).map_err(|e| {
+                    ModuleError::InvalidParameter(format!("Invalid executable string: {}", e))
+                })?;
+                let safe_exec = parts
+                    .iter()
+                    .map(|p| shell_escape(p))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                if let Some(ref dir) = chdir {
+                    format!(
+                        "cd -- {} && {} {} {}",
+                        shell_escape(dir),
+                        safe_exec,
+                        shell_escape(&remote_path),
+                        args.iter()
+                            .map(|a| shell_escape(a))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )
+                } else {
+                    format!(
+                        "{} {} {}",
+                        safe_exec,
+                        shell_escape(&remote_path),
+                        args.iter()
+                            .map(|a| shell_escape(a))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )
+                }
+            } else if let Some(ref dir) = chdir {
                 format!(
-                    "cd {} && {} {} {}",
+                    "cd -- {} && {} {}",
                     shell_escape(dir),
-                    safe_exec,
                     shell_escape(&remote_path),
                     args.iter()
                         .map(|a| shell_escape(a))
@@ -305,78 +351,65 @@ impl Module for ScriptModule {
                 )
             } else {
                 format!(
-                    "{} {} {}",
-                    safe_exec,
+                    "{} {}",
                     shell_escape(&remote_path),
                     args.iter()
                         .map(|a| shell_escape(a))
                         .collect::<Vec<_>>()
                         .join(" ")
                 )
-            }
-        } else if let Some(ref dir) = chdir {
-            format!(
-                "cd {} && {} {}",
-                shell_escape(dir),
-                shell_escape(&remote_path),
-                args.iter()
-                    .map(|a| shell_escape(a))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
-        } else {
-            format!(
-                "{} {}",
-                shell_escape(&remote_path),
-                args.iter()
-                    .map(|a| shell_escape(a))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
-        };
+            };
 
-        // Execute the script
-        let conn = connection.clone();
-        let result = std::thread::scope(|s| {
-            s.spawn(|| rt.block_on(async move { conn.execute(&exec_cmd, None).await }))
-                .join()
-                .unwrap()
-        })
-        .map_err(|e| ModuleError::ExecutionFailed(format!("Script execution failed: {}", e)))?;
+            // Execute the script
+            let conn = connection.clone();
+            let result = std::thread::scope(|s| {
+                s.spawn(|| rt.block_on(async move { conn.execute(&exec_cmd, None).await }))
+                    .join()
+                    .unwrap()
+            })
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Script execution failed: {}", e)))?;
 
-        // Clean up the temporary script
+            // Build output
+            let mut output = if result.success {
+                ModuleOutput::changed("Script executed successfully")
+            } else {
+                ModuleOutput::failed(format!("Script failed with exit code {}", result.exit_code))
+            };
+
+            output.stdout = Some(result.stdout.clone());
+            output.stderr = Some(result.stderr.clone());
+            output.rc = Some(result.exit_code);
+
+            output = output.with_data(
+                "stdout_lines",
+                serde_json::json!(result.stdout.lines().collect::<Vec<_>>()),
+            );
+            output = output.with_data(
+                "stderr_lines",
+                serde_json::json!(result.stderr.lines().collect::<Vec<_>>()),
+            );
+            output = output.with_data("script", serde_json::json!(script_path));
+            output = output.with_data("args", serde_json::json!(args));
+
+            Ok(output)
+        })();
+
+        // Run cleanup on upload, chmod, parsing, transport and script failures too.
         let conn = connection.clone();
-        // Use shell_escape for safety
-        let rm_cmd = format!("rm -f {}", shell_escape(&remote_path));
-        let _ = std::thread::scope(|s| {
+        let rm_cmd = format!("rm -f -- {}", shell_escape(&remote_path));
+        let cleanup = std::thread::scope(|s| {
             s.spawn(|| rt.block_on(async move { conn.execute(&rm_cmd, None).await }))
                 .join()
-                .unwrap()
         });
-
-        // Build output
-        let mut output = if result.success {
-            ModuleOutput::changed("Script executed successfully")
-        } else {
-            ModuleOutput::failed(format!("Script failed with exit code {}", result.exit_code))
-        };
-
-        output.stdout = Some(result.stdout.clone());
-        output.stderr = Some(result.stderr.clone());
-        output.rc = Some(result.exit_code);
-
-        output = output.with_data(
-            "stdout_lines",
-            serde_json::json!(result.stdout.lines().collect::<Vec<_>>()),
-        );
-        output = output.with_data(
-            "stderr_lines",
-            serde_json::json!(result.stderr.lines().collect::<Vec<_>>()),
-        );
-        output = output.with_data("script", serde_json::json!(script_path));
-        output = output.with_data("args", serde_json::json!(args));
-
-        Ok(output)
+        match operation {
+            Err(error) => Err(error),
+            Ok(output) => match cleanup {
+                Ok(Ok(result)) if result.success => Ok(output),
+                _ => Err(ModuleError::ExecutionFailed(
+                    "Private script cleanup failed".into(),
+                )),
+            },
+        }
     }
 }
 

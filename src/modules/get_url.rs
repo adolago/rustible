@@ -31,6 +31,7 @@ use super::{
 use crate::connection::TransferOptions;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
@@ -144,6 +145,11 @@ impl Module for GetUrlModule {
         let mode = Self::parse_mode(params)?;
         let owner = params.get_string("owner")?;
         let group = params.get_string("group")?;
+        if context.connection.is_none() && (owner.is_some() || group.is_some()) {
+            return Err(ModuleError::Unsupported(
+                "Local get_url owner/group changes are not supported".into(),
+            ));
+        }
 
         // Validate URL scheme
         if !url.starts_with("http://") && !url.starts_with("https://") {
@@ -180,6 +186,11 @@ impl Module for GetUrlModule {
                         dest
                     )));
                 }
+            } else if Path::new(&dest).exists() {
+                return Ok(ModuleOutput::ok(format!(
+                    "File already exists at {} (use force=true to overwrite)",
+                    dest
+                )));
             }
         }
 
@@ -196,8 +207,22 @@ impl Module for GetUrlModule {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|e| ModuleError::ExecutionFailed(format!("No tokio runtime: {}", e)))?;
 
-        let response = rt
-            .block_on(async { client.get(&url).send().await })
+        let mut request = client.get(&url);
+        if let Some(headers) = params.get("headers") {
+            let headers = headers.as_object().ok_or_else(|| {
+                ModuleError::InvalidParameter(
+                    "headers must be a mapping of names to string values".into(),
+                )
+            })?;
+            for (name, value) in headers {
+                let value = value.as_str().ok_or_else(|| {
+                    ModuleError::InvalidParameter("HTTP header values must be strings".into())
+                })?;
+                request = request.header(name, value);
+            }
+        }
+        let mut response = rt
+            .block_on(async { request.send().await })
             .map_err(|e| ModuleError::ExecutionFailed(format!("HTTP request failed: {}", e)))?;
 
         let status = response.status();
@@ -218,8 +243,22 @@ impl Module for GetUrlModule {
             }
         }
 
-        let bytes = rt.block_on(async { response.bytes().await }).map_err(|e| {
-            ModuleError::ExecutionFailed(format!("Failed to read response body: {}", e))
+        // Content-Length is optional and untrusted. Enforce the limit on the
+        // actual streamed bytes before retaining each chunk.
+        let bytes = rt.block_on(async {
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to read response body: {}", e))
+            })? {
+                if chunk.len() as u64 > MAX_FILE_SIZE.saturating_sub(bytes.len() as u64) {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "File too large (max: {} bytes)",
+                        MAX_FILE_SIZE
+                    )));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(bytes)
         })?;
 
         // Verify checksum if provided
@@ -243,6 +282,44 @@ impl Module for GetUrlModule {
                     .await
             })
             .map_err(|e| ModuleError::ExecutionFailed(format!("Failed to upload file: {}", e)))?;
+        } else {
+            // Stage privately in the destination directory and atomically replace
+            // its directory entry, without following a final symlink/hardlink.
+            let path = Path::new(&dest);
+            let parent = path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+            staged.write_all(&bytes)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let final_mode = mode.unwrap_or_else(|| {
+                    std::fs::metadata(path)
+                        .map(|meta| meta.permissions().mode() & 0o7777)
+                        .unwrap_or(0o644)
+                });
+                staged
+                    .as_file()
+                    .set_permissions(std::fs::Permissions::from_mode(final_mode))?;
+            }
+            if force {
+                staged
+                    .persist(path)
+                    .map_err(|error| ModuleError::Io(error.error))?;
+            } else {
+                match staged.persist_noclobber(path) {
+                    Ok(_) => {}
+                    Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        return Ok(ModuleOutput::ok(format!(
+                            "File already exists at {} (use force=true to overwrite)",
+                            dest
+                        )));
+                    }
+                    Err(error) => return Err(ModuleError::Io(error.error)),
+                }
+            }
         }
 
         let mut output = ModuleOutput::changed(format!(
