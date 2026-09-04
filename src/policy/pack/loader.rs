@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::manifest::PolicyPackManifest;
-use crate::policy::RuleSeverity;
+use crate::policy::{PolicyError, PolicyResult, RuleSeverity};
 
 /// A loaded policy pack ready for evaluation.
 #[derive(Debug, Clone)]
@@ -154,8 +154,14 @@ impl PackRule {
     /// Evaluate this rule against the given playbook JSON, returning a list of
     /// violation messages (empty means the rule passed).
     pub fn evaluate(&self, input: &Value) -> Vec<String> {
-        match &self.check {
-            RuleCheck::ModuleBlacklist(modules) => eval_module_blacklist(modules, input),
+        self.evaluate_result(input)
+            .unwrap_or_else(|error| vec![error.to_string()])
+    }
+
+    /// Keep inspection failures separate from ordinary policy violations.
+    pub(super) fn evaluate_result(&self, input: &Value) -> PolicyResult<Vec<String>> {
+        let violations = match &self.check {
+            RuleCheck::ModuleBlacklist(modules) => return eval_module_blacklist(modules, input),
             RuleCheck::RequireTag(tag_field) => eval_require_tag(tag_field, input),
             RuleCheck::MaxTasks(max) => eval_max_tasks(*max, input),
             RuleCheck::RequireName => eval_require_name(input),
@@ -163,7 +169,8 @@ impl PackRule {
                 "unsupported policy check '{}': no evaluator is implemented",
                 key
             )],
-        }
+        };
+        Ok(violations)
     }
 }
 
@@ -184,25 +191,9 @@ fn tasks_from_play(play: &Value) -> Vec<&Value> {
         .unwrap_or_default()
 }
 
-fn eval_module_blacklist(modules: &[String], input: &Value) -> Vec<String> {
-    let mut violations = Vec::new();
-    for play in plays_from_input(input) {
-        for task in tasks_from_play(play) {
-            for module in modules {
-                if task.get(module.as_str()).is_some() {
-                    let task_name = task
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("<unnamed>");
-                    violations.push(format!(
-                        "task '{}' uses denied module '{}'",
-                        task_name, module
-                    ));
-                }
-            }
-        }
-    }
-    violations
+fn eval_module_blacklist(modules: &[String], input: &Value) -> PolicyResult<Vec<String>> {
+    let modules: Vec<_> = modules.iter().map(String::as_str).collect();
+    crate::policy::traversal::denied_modules(&modules, input).map_err(PolicyError::InvalidInput)
 }
 
 fn eval_require_tag(tag_field: &str, input: &Value) -> Vec<String> {

@@ -5,6 +5,7 @@
 //! before execution.
 
 pub mod pack;
+mod traversal;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,9 @@ pub enum PolicyError {
 
     #[error("Invalid OPA output: {0}")]
     InvalidOutput(String),
+
+    #[error("Invalid policy input: {0}")]
+    InvalidInput(String),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -269,24 +273,7 @@ fn eval_require_field(field: &str, input: &Value) -> PolicyResult<Vec<String>> {
 }
 
 fn eval_deny_module(module_name: &str, input: &Value) -> PolicyResult<Vec<String>> {
-    let plays = plays_from_input(input);
-    let mut violations = Vec::new();
-    for play in plays {
-        let tasks = tasks_from_play(play);
-        for task in tasks {
-            if task.get(module_name).is_some() {
-                let task_name = task
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("<unnamed>");
-                violations.push(format!(
-                    "task '{}' uses denied module '{}'",
-                    task_name, module_name
-                ));
-            }
-        }
-    }
-    Ok(violations)
+    traversal::denied_modules(&[module_name], input).map_err(PolicyError::InvalidInput)
 }
 
 fn eval_deny_privilege_escalation(host_pattern: &str, input: &Value) -> PolicyResult<Vec<String>> {
