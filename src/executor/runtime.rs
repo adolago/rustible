@@ -762,24 +762,29 @@ impl RuntimeContext {
         &self.all_hosts
     }
 
-    /// Get hosts in a group
+    /// Get hosts in a group, visiting each group once even for directly added cycles.
     pub fn get_group_hosts(&self, group: &str) -> Option<Vec<String>> {
-        self.groups.get(group).map(|g| {
-            let mut hosts = g.hosts.clone();
-
-            // Include hosts from child groups
-            for child in &g.children {
-                if let Some(child_hosts) = self.get_group_hosts(child) {
-                    for h in child_hosts {
-                        if !hosts.contains(&h) {
-                            hosts.push(h);
-                        }
-                    }
+        self.groups.get(group)?;
+        let mut hosts = Vec::new();
+        let mut seen_hosts = std::collections::HashSet::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut pending = vec![group];
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name) {
+                continue;
+            }
+            let Some(current) = self.groups.get(name) else {
+                continue;
+            };
+            for host in &current.hosts {
+                if seen_hosts.insert(host.as_str()) {
+                    hosts.push(host.clone());
                 }
             }
-
-            hosts
-        })
+            // Reverse the stack insertion to preserve depth-first child order.
+            pending.extend(current.children.iter().rev().map(String::as_str));
+        }
+        Some(hosts)
     }
 
     /// Set a fact for a host
