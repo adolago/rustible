@@ -292,7 +292,7 @@ jobs:
           cat coverage-summary.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-  # Build release artifacts for all platforms
+  # Build the declared Linux/macOS targets; see docs/PLATFORM_SUPPORT.md.
   build:
     name: Build (${{ matrix.target }})
     needs: [test, feature_matrix, security]
