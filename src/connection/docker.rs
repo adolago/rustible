@@ -4,6 +4,7 @@
 //! docker CLI commands. It allows executing commands inside containers
 //! and copying files to/from containers.
 
+use crate::utils::shell_escape;
 use async_trait::async_trait;
 use std::path::Path;
 use std::process::Stdio;
@@ -14,6 +15,47 @@ use super::{
     CommandResult, Connection, ConnectionError, ConnectionResult, ExecuteOptions, FileStat,
     TransferOptions,
 };
+
+// cp resolves container paths from /; use that same operand for shell helpers.
+fn transfer_path(path: &Path, remote: bool) -> ConnectionResult<String> {
+    let value = path
+        .to_str()
+        .filter(|s| !s.is_empty() && !s.contains('\0'))
+        .ok_or_else(|| {
+            ConnectionError::TransferFailed(
+                "Transfer paths must be nonempty UTF-8 without NUL".into(),
+            )
+        })?;
+    if remote {
+        Ok(if value.starts_with('/') {
+            value.to_owned()
+        } else {
+            format!("/{value}")
+        })
+    } else {
+        Ok(if path.is_absolute() {
+            value.to_owned()
+        } else {
+            format!("./{value}")
+        })
+    }
+}
+
+fn transfer_ownership(options: &TransferOptions) -> ConnectionResult<Option<String>> {
+    for value in [&options.owner, &options.group].into_iter().flatten() {
+        if value.is_empty() || value.contains(['\0', ':']) {
+            return Err(ConnectionError::TransferFailed(
+                "Owner/group fields must be nonempty and contain neither NUL nor ':'".into(),
+            ));
+        }
+    }
+    Ok(match (&options.owner, &options.group) {
+        (Some(owner), Some(group)) => Some(format!("{owner}:{group}")),
+        (Some(owner), None) => Some(owner.clone()),
+        (None, Some(group)) => Some(format!(":{group}")),
+        (None, None) => None,
+    })
+}
 
 /// Docker connection for executing commands inside containers
 #[derive(Debug, Clone)]
@@ -118,9 +160,11 @@ impl DockerConnection {
     fn build_cp_to_container_command(&self, local_path: &Path, remote_path: &Path) -> Command {
         let mut cmd = Command::new(&self.docker_path);
 
-        cmd.arg("cp")
-            .arg(local_path)
-            .arg(format!("{}:{}", self.container, remote_path.display()));
+        cmd.arg("cp").arg("--").arg(local_path).arg(format!(
+            "{}:{}",
+            self.container,
+            remote_path.display()
+        ));
 
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd
@@ -131,11 +175,44 @@ impl DockerConnection {
         let mut cmd = Command::new(&self.docker_path);
 
         cmd.arg("cp")
+            .arg("--")
             .arg(format!("{}:{}", self.container, remote_path.display()))
             .arg(local_path);
 
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd
+    }
+
+    async fn execute_transfer_command(
+        &self,
+        command: &str,
+        operation: &str,
+    ) -> ConnectionResult<()> {
+        let result = self.execute(command, None).await?;
+        if !result.success || result.exit_code != 0 {
+            return Err(ConnectionError::TransferFailed(format!(
+                "{operation} failed (exit {}): {}",
+                result.exit_code, result.stderr
+            )));
+        }
+        Ok(())
+    }
+
+    async fn test_path(&self, flag: &str, path: &Path) -> ConnectionResult<bool> {
+        let path = transfer_path(path, true)?;
+        let command = format!(
+            "test {flag} {} ; status=$?; if [ \"$status\" -eq 0 ]; then printf yes; elif [ \"$status\" -eq 1 ]; then printf no; else exit \"$status\"; fi",
+            shell_escape(&path)
+        );
+        let result = self.execute(&command, None).await?;
+        match (result.exit_code, result.success, result.stdout.trim()) {
+            (0, true, "yes") => Ok(true),
+            (0, true, "no") => Ok(false),
+            _ => Err(ConnectionError::TransferFailed(format!(
+                "Path test failed (exit {}): {}",
+                result.exit_code, result.stderr
+            ))),
+        }
     }
 
     /// Check if container is running
@@ -293,6 +370,11 @@ impl Connection for DockerConnection {
     ) -> ConnectionResult<()> {
         let options = options.unwrap_or_default();
 
+        let local_operand = transfer_path(local_path, false)?;
+        let remote_operand = transfer_path(remote_path, true)?;
+        let ownership = transfer_ownership(&options)?;
+        let remote_path = Path::new(&remote_operand);
+
         debug!(
             local = %local_path.display(),
             remote = %remote_path.display(),
@@ -303,13 +385,17 @@ impl Connection for DockerConnection {
         // Create parent directories if needed
         if options.create_dirs {
             if let Some(parent) = remote_path.parent() {
-                let mkdir_cmd = format!("mkdir -p {}", parent.display());
-                self.execute(&mkdir_cmd, None).await?;
+                let mkdir_cmd = format!(
+                    "mkdir -p -- {}",
+                    shell_escape(&transfer_path(parent, true)?)
+                );
+                self.execute_transfer_command(&mkdir_cmd, "Create parent directory")
+                    .await?;
             }
         }
 
         // Copy file to container
-        let mut cmd = self.build_cp_to_container_command(local_path, remote_path);
+        let mut cmd = self.build_cp_to_container_command(Path::new(&local_operand), remote_path);
         let output = cmd.output().await.map_err(|e| {
             ConnectionError::TransferFailed(format!("Failed to execute docker cp: {}", e))
         })?;
@@ -324,21 +410,20 @@ impl Connection for DockerConnection {
 
         // Set permissions if specified
         if let Some(mode) = options.mode {
-            let chmod_cmd = format!("chmod {:o} {}", mode, remote_path.display());
-            self.execute(&chmod_cmd, None).await?;
+            let chmod_cmd = format!("chmod {:o} -- {}", mode, shell_escape(&remote_operand));
+            self.execute_transfer_command(&chmod_cmd, "Set file mode")
+                .await?;
         }
 
         // Set owner/group if specified
-        if options.owner.is_some() || options.group.is_some() {
-            let ownership = match (&options.owner, &options.group) {
-                (Some(o), Some(g)) => format!("{}:{}", o, g),
-                (Some(o), None) => o.to_string(),
-                (None, Some(g)) => format!(":{}", g),
-                (None, None) => return Ok(()),
-            };
-
-            let chown_cmd = format!("chown {} {}", ownership, remote_path.display());
-            self.execute(&chown_cmd, None).await?;
+        if let Some(ownership) = ownership {
+            let chown_cmd = format!(
+                "chown -- {} {}",
+                shell_escape(&ownership),
+                shell_escape(&remote_operand)
+            );
+            self.execute_transfer_command(&chown_cmd, "Set file ownership")
+                .await?;
         }
 
         Ok(())
@@ -351,6 +436,8 @@ impl Connection for DockerConnection {
         options: Option<TransferOptions>,
     ) -> ConnectionResult<()> {
         let options = options.unwrap_or_default();
+        transfer_path(remote_path, true)?;
+        transfer_ownership(&options)?;
 
         debug!(
             remote = %remote_path.display(),
@@ -375,6 +462,10 @@ impl Connection for DockerConnection {
     }
 
     async fn download(&self, remote_path: &Path, local_path: &Path) -> ConnectionResult<()> {
+        let remote_operand = transfer_path(remote_path, true)?;
+        let local_operand = transfer_path(local_path, false)?;
+        let remote_path = Path::new(&remote_operand);
+        let local_path = Path::new(&local_operand);
         debug!(
             remote = %remote_path.display(),
             local = %local_path.display(),
@@ -407,6 +498,7 @@ impl Connection for DockerConnection {
     }
 
     async fn download_content(&self, remote_path: &Path) -> ConnectionResult<Vec<u8>> {
+        let remote_operand = transfer_path(remote_path, true)?;
         debug!(
             remote = %remote_path.display(),
             container = %self.container,
@@ -414,7 +506,7 @@ impl Connection for DockerConnection {
         );
 
         // Use cat to read file content
-        let command = format!("cat {}", remote_path.display());
+        let command = format!("cat -- {}", shell_escape(&remote_operand));
         let result = self.execute(&command, None).await?;
 
         if !result.success {
@@ -428,20 +520,17 @@ impl Connection for DockerConnection {
     }
 
     async fn path_exists(&self, path: &Path) -> ConnectionResult<bool> {
-        let command = format!("test -e {} && echo yes || echo no", path.display());
-        let result = self.execute(&command, None).await?;
-        Ok(result.stdout.trim() == "yes")
+        self.test_path("-e", path).await
     }
 
     async fn is_directory(&self, path: &Path) -> ConnectionResult<bool> {
-        let command = format!("test -d {} && echo yes || echo no", path.display());
-        let result = self.execute(&command, None).await?;
-        Ok(result.stdout.trim() == "yes")
+        self.test_path("-d", path).await
     }
 
     async fn stat(&self, path: &Path) -> ConnectionResult<FileStat> {
+        let path = transfer_path(path, true)?;
         // Use stat command to get file info
-        let command = format!("stat -c '%s|%a|%u|%g|%X|%Y|%F' {}", path.display());
+        let command = format!("stat -c '%s|%a|%u|%g|%X|%Y|%F' -- {}", shell_escape(&path));
         let result = self.execute(&command, None).await?;
 
         if !result.success {
