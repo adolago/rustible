@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::builtins;
-use super::loader::{PackLoader, PolicyPack};
+use super::loader::{PackLoader, PolicyPack, RuleCheck};
 use super::manifest::PolicyPackManifest;
 
 /// Result of evaluating a single policy pack against playbook data.
@@ -87,7 +87,14 @@ impl PackRegistry {
             if violations.is_empty() {
                 passed += 1;
             } else {
-                let severity_label = match rule.severity {
+                // An unavailable evaluator cannot become a pass or advisory
+                // merely because a caller chose a lower rule severity.
+                let severity = if matches!(rule.check, RuleCheck::Custom(_)) {
+                    &crate::policy::RuleSeverity::Error
+                } else {
+                    &rule.severity
+                };
+                let severity_label = match severity {
                     crate::policy::RuleSeverity::Error => {
                         failed += 1;
                         "ERROR"
@@ -128,6 +135,23 @@ impl Default for PackRegistry {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn unsupported_evaluation_is_failure_even_at_lower_severities() {
+        let mut pack = PackLoader::load_from_parsed(builtins::operations::manifest());
+        for severity in [
+            crate::policy::RuleSeverity::Info,
+            crate::policy::RuleSeverity::Warning,
+        ] {
+            for rule in &mut pack.rules {
+                rule.severity = severity.clone();
+            }
+            let result = PackRegistry::evaluate_pack(&pack, &json!([]));
+            assert_eq!(result.passed, 0);
+            assert_eq!(result.failed, 3);
+            assert_eq!(result.warnings, 0);
+        }
+    }
 
     #[test]
     fn test_discover_loads_builtins() {

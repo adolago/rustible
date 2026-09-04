@@ -226,7 +226,7 @@ rules:
   - max-tasks
 parameters:
   - name: max_tasks_per_play
-    description: "Maximum number of tasks per play"
+    description: "Reserved metadata; max-tasks currently uses a fixed limit of 20"
     param_type: integer
     default_value: "20"
     required: false
@@ -238,7 +238,7 @@ parameters:
 
     ctx.output.success("Policy pack skeleton created");
     ctx.output.hint(&format!(
-        "Edit '{}' to customise your policy pack, then load it with 'policy check'.",
+        "Edit '{}' to customise your policy pack, then load it through the Rust PackRegistry::load API. The 'policy check' CLI currently evaluates built-in packs only.",
         manifest_path.display()
     ));
 
