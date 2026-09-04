@@ -75,12 +75,13 @@ impl ComplianceReport {
             .collect()
     }
 
-    /// Calculate overall compliance score (percentage)
+    /// Calculate the percentage of passed non-skipped checks. Inspect `grade()`
+    /// to distinguish unmeasured or incomplete results from completed scans.
     pub fn compliance_score(&self) -> f64 {
         self.overall_stats.compliance_percentage()
     }
 
-    /// Get letter grade
+    /// Get a letter grade, `N/A`, or `Incomplete`.
     pub fn grade(&self) -> &'static str {
         self.overall_stats.grade()
     }
@@ -95,6 +96,14 @@ impl ComplianceReport {
         }
     }
 
+    fn score_label(&self) -> String {
+        if self.grade() == "N/A" {
+            "N/A".to_string()
+        } else {
+            format!("{:.1}%", self.compliance_score())
+        }
+    }
+
     fn render_text(&self) -> String {
         let mut output = String::new();
         output.push_str(&format!("=== {} ===\n", self.title));
@@ -103,17 +112,19 @@ impl ComplianceReport {
             output.push_str(&format!("Target: {}\n", target));
         }
         output.push_str(&format!(
-            "\nOverall Score: {:.1}% (Grade: {})\n",
-            self.compliance_score(),
+            "\nOverall Score: {} (Grade: {})\n",
+            self.score_label(),
             self.grade()
         ));
         output.push_str(&format!(
-            "Total: {} | Pass: {} | Fail: {} | Warning: {} | Skipped: {}\n\n",
+            "Total: {} | Pass: {} | Fail: {} | Warning: {} | Skipped: {} | Error: {} | Unknown: {}\n\n",
             self.overall_stats.total_checks,
             self.overall_stats.passed,
             self.overall_stats.failed,
             self.overall_stats.warnings,
-            self.overall_stats.skipped
+            self.overall_stats.skipped,
+            self.overall_stats.errors,
+            self.overall_stats.unknown_checks()
         ));
 
         for finding in &self.findings {
@@ -145,11 +156,21 @@ impl ComplianceReport {
         html.push_str("th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }");
         html.push_str("th { background-color: #4CAF50; color: white; }");
         html.push_str("</style></head><body>");
-        html.push_str(&format!("<h1>{}</h1>", self.title));
+        html.push_str(&format!("<h1>{}</h1>", escape_html_text(&self.title)));
         html.push_str(&format!(
-            "<p>Score: {:.1}% | Grade: {}</p>",
-            self.compliance_score(),
+            "<p>Score: {} | Grade: {}</p>",
+            self.score_label(),
             self.grade()
+        ));
+        html.push_str(&format!(
+            "<p>Total: {} | Pass: {} | Fail: {} | Warning: {} | Skipped: {} | Error: {} | Unknown: {}</p>",
+            self.overall_stats.total_checks,
+            self.overall_stats.passed,
+            self.overall_stats.failed,
+            self.overall_stats.warnings,
+            self.overall_stats.skipped,
+            self.overall_stats.errors,
+            self.overall_stats.unknown_checks()
         ));
         html.push_str("<table><tr><th>Status</th><th>ID</th><th>Title</th><th>Severity</th></tr>");
 
@@ -161,7 +182,11 @@ impl ComplianceReport {
             };
             html.push_str(&format!(
                 "<tr><td class=\"{}\">{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                class, finding.status, finding.check_id, finding.title, finding.severity
+                class,
+                finding.status,
+                escape_html_text(&finding.check_id),
+                escape_html_text(&finding.title),
+                finding.severity
             ));
         }
 
@@ -170,20 +195,41 @@ impl ComplianceReport {
     }
 
     fn render_csv(&self) -> String {
-        let mut csv = String::new();
-        csv.push_str("Status,Check ID,Title,Severity,Framework\n");
+        let mut writer = csv::Writer::from_writer(Vec::new());
+        writer
+            .write_record(["Status", "Check ID", "Title", "Severity", "Framework"])
+            .expect("writing the fixed CSV header to memory cannot fail");
         for finding in &self.findings {
-            csv.push_str(&format!(
-                "{},{},{},{},{}\n",
-                finding.status,
-                finding.check_id,
-                finding.title.replace(',', ";"),
-                finding.severity,
-                finding.framework
-            ));
+            writer
+                .write_record([
+                    finding.status.to_string(),
+                    finding.check_id.clone(),
+                    finding.title.clone(),
+                    finding.severity.to_string(),
+                    finding.framework.to_string(),
+                ])
+                .expect("writing five CSV fields to memory cannot fail");
         }
-        csv
+        let bytes = writer
+            .into_inner()
+            .expect("flushing a CSV writer to memory cannot fail");
+        String::from_utf8(bytes).expect("CSV output from UTF-8 strings remains UTF-8")
     }
+}
+
+fn escape_html_text(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 impl Default for ComplianceReport {
