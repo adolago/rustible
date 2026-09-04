@@ -10,7 +10,7 @@ use super::{
 };
 use std::fs;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Desired state for a file/directory
 #[derive(Debug, Clone, PartialEq)]
@@ -95,6 +95,42 @@ impl SelinuxContext {
 pub struct FileModule;
 
 impl FileModule {
+    /// Resolve each link relative to its containing directory, including a
+    /// dangling final target that state=file/touch may create.
+    fn resolve_link_target(path: &Path) -> ModuleResult<PathBuf> {
+        let mut target = path.to_path_buf();
+        for links in 0..=40 {
+            let metadata = match fs::symlink_metadata(&target) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(target),
+                Err(error) => return Err(error.into()),
+            };
+            if !metadata.file_type().is_symlink() {
+                return Ok(target);
+            }
+            if links == 40 {
+                break;
+            }
+            let next = fs::read_link(&target)?;
+            target = if next.is_absolute() {
+                next
+            } else {
+                target.parent().unwrap_or_else(|| Path::new(".")).join(next)
+            };
+        }
+        Err(ModuleError::InvalidParameter(
+            "Symbolic link chain exceeds 40 links or contains a cycle".into(),
+        ))
+    }
+
+    fn attribute_metadata(path: &Path, follow: bool) -> std::io::Result<fs::Metadata> {
+        if follow {
+            fs::metadata(path)
+        } else {
+            fs::symlink_metadata(path)
+        }
+    }
+
     fn get_current_state(path: &Path) -> Option<FileState> {
         if !path.exists() && !path.is_symlink() {
             return None;
@@ -119,13 +155,14 @@ impl FileModule {
     fn set_permissions(
         path: &Path,
         mode: u32,
+        follow: bool,
         metadata: Option<&fs::Metadata>,
     ) -> ModuleResult<bool> {
         let meta_storage;
         let meta = match metadata {
             Some(m) => m,
             None => {
-                meta_storage = fs::symlink_metadata(path)?;
+                meta_storage = Self::attribute_metadata(path, follow)?;
                 &meta_storage
             }
         };
@@ -147,15 +184,20 @@ impl FileModule {
         path: &Path,
         owner: Option<u32>,
         group: Option<u32>,
+        follow: bool,
         metadata: Option<&fs::Metadata>,
     ) -> ModuleResult<bool> {
-        use std::os::unix::fs::chown;
+        use std::os::unix::fs::{chown, lchown};
+
+        if owner.is_none() && group.is_none() {
+            return Ok(false);
+        }
 
         let meta_storage;
         let meta = match metadata {
             Some(m) => m,
             None => {
-                meta_storage = fs::symlink_metadata(path)?;
+                meta_storage = Self::attribute_metadata(path, follow)?;
                 &meta_storage
             }
         };
@@ -167,7 +209,11 @@ impl FileModule {
         let target_group_id = group.unwrap_or(current_group_id);
 
         if current_user_id != target_user_id || current_group_id != target_group_id {
-            chown(path, Some(target_user_id), Some(target_group_id))?;
+            if follow {
+                chown(path, Some(target_user_id), Some(target_group_id))?;
+            } else {
+                lchown(path, Some(target_user_id), Some(target_group_id))?;
+            }
             return Ok(true);
         }
         Ok(false)
@@ -327,7 +373,10 @@ impl FileModule {
             None
         };
 
-        for entry in walkdir::WalkDir::new(path).follow_links(follow) {
+        for entry in walkdir::WalkDir::new(path)
+            .follow_links(follow)
+            .follow_root_links(follow)
+        {
             let entry = match entry {
                 Ok(e) => e,
                 Err(e) => {
@@ -346,9 +395,9 @@ impl FileModule {
             }
 
             // Fetch metadata once per file to reuse for permissions and owner checks
-            // We use symlink_metadata because set_permissions/set_owner use it
+            // Inspect the same object that the requested follow behavior updates.
             let metadata = if mode.is_some() || owner.is_some() || group.is_some() {
-                Some(fs::symlink_metadata(entry_path).map_err(|e| {
+                Some(Self::attribute_metadata(entry_path, follow).map_err(|e| {
                     ModuleError::ExecutionFailed(format!(
                         "Failed to stat {}: {}",
                         entry_path.display(),
@@ -362,13 +411,13 @@ impl FileModule {
 
             // Set mode if specified
             if let Some(m) = mode {
-                if Self::set_permissions(entry_path, m, metadata_ref)? {
+                if Self::set_permissions(entry_path, m, follow, metadata_ref)? {
                     changed = true;
                 }
             }
 
             // Set ownership if specified
-            if Self::set_owner(entry_path, owner, group, metadata_ref)? {
+            if Self::set_owner(entry_path, owner, group, follow, metadata_ref)? {
                 changed = true;
             }
 
@@ -615,6 +664,45 @@ impl Module for FileModule {
             selevel: params.get_string("selevel")?,
         };
 
+        // Timestamp/SELinux helpers follow links. Reject unsupported no-follow
+        // requests before creating files or changing any other attributes.
+        let manages_attributes = matches!(
+            state,
+            FileState::File | FileState::Directory | FileState::Touch
+        );
+        if !follow && manages_attributes {
+            if path.is_symlink()
+                && (access_time.is_some()
+                    || modification_time.is_some()
+                    || state == FileState::Touch
+                    || selinux.is_set())
+            {
+                return Err(ModuleError::Unsupported(
+                    "Timestamp and SELinux updates on symbolic links require follow=true".into(),
+                ));
+            }
+            if state == FileState::Directory && recurse && selinux.is_set() && path.exists() {
+                for entry in walkdir::WalkDir::new(path)
+                    .follow_links(false)
+                    .follow_root_links(false)
+                {
+                    let entry = entry.map_err(|error| {
+                        ModuleError::ExecutionFailed(format!("Error inspecting directory: {error}"))
+                    })?;
+                    if entry.file_type().is_symlink() {
+                        return Err(ModuleError::Unsupported(
+                            "Recursive SELinux updates containing symbolic links require follow=true".into(),
+                        ));
+                    }
+                }
+            }
+        }
+        let target_path = if follow && manages_attributes {
+            Self::resolve_link_target(path)?
+        } else {
+            path.to_path_buf()
+        };
+        let path = target_path.as_path();
         let current_state = Self::get_current_state(path);
 
         // Handle each state
@@ -667,11 +755,11 @@ impl Module for FileModule {
 
                 let created = Self::create_directory(path, mode, recurse)?;
                 let perm_changed = if let Some(m) = mode {
-                    Self::set_permissions(path, m, None)?
+                    Self::set_permissions(path, m, follow, None)?
                 } else {
                     false
                 };
-                let owner_changed = Self::set_owner(path, owner, group, None)?;
+                let owner_changed = Self::set_owner(path, owner, group, follow, None)?;
                 let times_changed = Self::set_times(path, access_time, modification_time)?;
                 let selinux_changed = Self::set_selinux_context(path, &selinux, None)?;
 
@@ -707,8 +795,10 @@ impl Module for FileModule {
 
             FileState::File => {
                 if context.check_mode {
-                    if current_state == Some(FileState::File) {
-                        if mode.is_some()
+                    if current_state == Some(FileState::File)
+                        || (!follow && current_state == Some(FileState::Link))
+                    {
+                        if (mode.is_some() && current_state != Some(FileState::Link))
                             || owner.is_some()
                             || group.is_some()
                             || access_time.is_some()
@@ -731,24 +821,21 @@ impl Module for FileModule {
                     )));
                 }
 
-                // Resolve path if follow is enabled and it's a symlink
-                let target_path = if follow && path.is_symlink() {
-                    fs::read_link(path)
-                        .map(|p| p.to_path_buf())
-                        .unwrap_or_else(|_| path.to_path_buf())
+                // A no-follow link is the object to manage, including when its
+                // target is absent. Do not create or truncate that target.
+                let created = if !follow && path.is_symlink() {
+                    false
                 } else {
-                    path.to_path_buf()
+                    Self::create_file(path, mode)?
                 };
-
-                let created = Self::create_file(&target_path, mode)?;
                 let perm_changed = if let Some(m) = mode {
-                    Self::set_permissions(&target_path, m, None)?
+                    Self::set_permissions(path, m, follow, None)?
                 } else {
                     false
                 };
-                let owner_changed = Self::set_owner(&target_path, owner, group, None)?;
-                let times_changed = Self::set_times(&target_path, access_time, modification_time)?;
-                let selinux_changed = Self::set_selinux_context(&target_path, &selinux, None)?;
+                let owner_changed = Self::set_owner(path, owner, group, follow, None)?;
+                let times_changed = Self::set_times(path, access_time, modification_time)?;
+                let selinux_changed = Self::set_selinux_context(path, &selinux, None)?;
 
                 if created {
                     Ok(ModuleOutput::changed(format!(
@@ -865,9 +952,9 @@ impl Module for FileModule {
                 }
 
                 if let Some(m) = mode {
-                    Self::set_permissions(path, m, None)?;
+                    Self::set_permissions(path, m, follow, None)?;
                 }
-                Self::set_owner(path, owner, group, None)?;
+                Self::set_owner(path, owner, group, follow, None)?;
                 Self::set_selinux_context(path, &selinux, None)?;
 
                 Ok(ModuleOutput::changed(format!("Touched '{}'", path_str)))
