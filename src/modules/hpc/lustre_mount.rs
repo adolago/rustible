@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
-use regex::Regex;
+use crate::utils::regex_cache::get_regex;
 
 use crate::connection::{Connection, ExecuteOptions};
 use crate::modules::{
@@ -96,7 +96,7 @@ fn run_cmd_ok(
 /// Valid formats: `<IPv4>@<network>` where network is `tcp`, `tcp1`, `o2ib`, `o2ib0`, etc.
 /// Examples: `10.0.0.1@tcp`, `192.168.1.100@o2ib`, `10.0.0.1@tcp0`
 fn is_valid_nid(nid: &str) -> bool {
-    let re = Regex::new(r"^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})@(tcp|o2ib)\d*$").unwrap();
+    let re = get_regex(r"^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})@(tcp|o2ib)\d*$").unwrap();
     if !re.is_match(nid) {
         return false;
     }
