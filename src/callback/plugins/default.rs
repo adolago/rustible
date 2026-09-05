@@ -179,7 +179,7 @@ pub struct DefaultCallbackConfig {
     pub no_color: bool,
     /// Whether to show diffs for changed files
     pub show_diff: bool,
-    /// Whether to show task duration
+    /// Whether to show per-task durations (printed at any verbosity)
     pub show_duration: bool,
     /// Whether to show skipped tasks
     pub show_skipped: bool,
@@ -195,7 +195,7 @@ impl Default for DefaultCallbackConfig {
             verbosity: 0,
             no_color: false,
             show_diff: false,
-            show_duration: true,
+            show_duration: false,
             show_skipped: true,
             show_ok: true,
             show_recap: true,
@@ -500,19 +500,35 @@ impl DefaultCallback {
                 }
             }
         }
+    }
 
-        // Show duration if configured
-        if self.config.show_duration {
-            if self.use_color() {
-                println!(
-                    "    {}: {}",
-                    "duration".bright_black(),
-                    Self::format_duration(result.duration).bright_black()
-                );
-            } else {
-                println!("    duration: {}", Self::format_duration(result.duration));
-            }
+    /// Print the task duration when configured, independent of verbosity.
+    fn print_duration(&self, result: &ExecutionResult) {
+        if !self.config.show_duration {
+            return;
         }
+        if self.use_color() {
+            println!(
+                "    {}: {}",
+                "duration".bright_black(),
+                Self::format_duration(result.duration).bright_black()
+            );
+        } else {
+            println!("    duration: {}", Self::format_duration(result.duration));
+        }
+    }
+
+    /// Decide whether a task result is printed under the configured filters.
+    /// Skipped results follow `show_skipped` only; `show_ok` applies to
+    /// successful, unchanged, non-skipped results.
+    fn should_display(&self, result: &ModuleResult) -> bool {
+        if result.skipped {
+            return self.config.show_skipped;
+        }
+        if result.success && !result.changed {
+            return self.config.show_ok;
+        }
+        true
     }
 
     /// Create a task key for tracking
@@ -687,10 +703,7 @@ impl ExecutionCallback for DefaultCallback {
         }
 
         // Check if we should display this result
-        if result.result.skipped && !self.config.show_skipped {
-            return;
-        }
-        if result.result.success && !result.result.changed && !self.config.show_ok {
+        if !self.should_display(&result.result) {
             return;
         }
 
@@ -760,6 +773,7 @@ impl ExecutionCallback for DefaultCallback {
 
         // Show verbose output
         self.print_verbose_result(result);
+        self.print_duration(result);
 
         let _ = io::stdout().flush();
     }
@@ -873,6 +887,26 @@ mod tests {
     fn test_default_callback_with_verbosity() {
         let callback = DefaultCallback::new().with_verbosity(2);
         assert_eq!(callback.verbosity(), Verbosity::MoreVerbose);
+    }
+
+    #[test]
+    fn test_display_filters_keep_skipped_independent_of_show_ok() {
+        let hide_ok = DefaultCallback::builder().show_ok(false).build();
+        assert!(hide_ok.should_display(&ModuleResult::skipped("skip")));
+        assert!(!hide_ok.should_display(&ModuleResult::ok("ok")));
+        assert!(hide_ok.should_display(&ModuleResult::changed("changed")));
+        assert!(hide_ok.should_display(&ModuleResult::failed("failed")));
+
+        let hide_skipped = DefaultCallback::builder().show_skipped(false).build();
+        assert!(!hide_skipped.should_display(&ModuleResult::skipped("skip")));
+        assert!(hide_skipped.should_display(&ModuleResult::ok("ok")));
+    }
+
+    #[test]
+    fn test_task_durations_are_opt_in() {
+        assert!(!DefaultCallback::new().config.show_duration);
+        let timed = DefaultCallback::builder().show_duration(true).build();
+        assert!(timed.config.show_duration);
     }
 
     #[test]
