@@ -92,7 +92,10 @@ fn duration_preserves_normalization_and_the_largest_valid_value() {
     let mut value = serde_json::to_value(ResultInfo::ok()).unwrap();
     value["duration"] = serde_json::json!({"secs": 0, "nanos": u32::MAX});
     let normalized: ResultInfo = serde_json::from_value(value.clone()).unwrap();
-    assert_eq!(normalized.duration, std::time::Duration::new(4, 294_967_295));
+    assert_eq!(
+        normalized.duration,
+        std::time::Duration::new(4, 294_967_295)
+    );
     value["duration"] = serde_json::json!({"secs": u64::MAX, "nanos": 999_999_999});
     let boundary: ResultInfo = serde_json::from_value(value).unwrap();
     assert_eq!(boundary.duration, std::time::Duration::MAX);

@@ -995,7 +995,9 @@ mod duration_serde {
         D: Deserializer<'de>,
     {
         let helper = DurationHelper::deserialize(deserializer)?;
-        Ok(Duration::new(helper.secs, helper.nanos))
+        Duration::from_secs(helper.secs)
+            .checked_add(Duration::from_nanos(u64::from(helper.nanos)))
+            .ok_or_else(|| serde::de::Error::custom("duration exceeds the maximum supported value"))
     }
 }
 
