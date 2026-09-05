@@ -786,7 +786,11 @@ fn truncate_output(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}... (truncated, {} bytes total)", &s[..max_len], s.len())
+        let mut end = max_len;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}... (truncated, {} bytes total)", &s[..end], s.len())
     }
 }
 
@@ -991,7 +995,9 @@ mod duration_serde {
         D: Deserializer<'de>,
     {
         let helper = DurationHelper::deserialize(deserializer)?;
-        Ok(Duration::new(helper.secs, helper.nanos))
+        Duration::from_secs(helper.secs)
+            .checked_add(Duration::from_nanos(u64::from(helper.nanos)))
+            .ok_or_else(|| serde::de::Error::custom("duration exceeds the maximum supported value"))
     }
 }
 

@@ -10,10 +10,12 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-arbitrary = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dependencies.rustible]
 path = ".."
+default-features = false
+features = ["local"]
 
 # Prevent this from interfering with workspaces
 [workspace]
