@@ -1070,10 +1070,9 @@ impl Task {
             .acquire(hint, &ctx.host, &self.module)
             .await;
 
-        let module_name = self
-            .module
-            .strip_prefix("ansible.builtin.")
-            .unwrap_or(&self.module);
+        // Dispatch on the same canonical name the registry resolves, so the
+        // guards below see `copy` for `ansible.legacy.copy` as well.
+        let module_name = ModuleRegistry::normalize_module_name(&self.module);
         match module_name {
             "debug" => self.execute_debug(&args, ctx).await,
             "set_fact" => self.execute_set_fact(&args, ctx, runtime).await,
@@ -2904,6 +2903,41 @@ mod tests {
         let result = probe_local_target("copy").await;
         assert_eq!(result.status, TaskStatus::Ok);
         assert_eq!(result.msg.as_deref(), Some("none"));
+    }
+
+    async fn probe_local_target_via_task(
+        task_module: &str,
+        registered: &'static str,
+    ) -> TaskResult {
+        let mut registry = ModuleRegistry::new();
+        registry.register(Arc::new(ConnectionProbe(registered)));
+        let mut runtime = RuntimeContext::new();
+        runtime.set_host_var(
+            "web1",
+            "ansible_connection".into(),
+            serde_json::json!("local"),
+        );
+        Task::new("probe", task_module)
+            .execute_module(
+                &ExecutionContext::new("web1"),
+                &Arc::new(RwLock::new(runtime)),
+                &Arc::new(RwLock::new(HashMap::new())),
+                &Arc::new(Mutex::new(std::collections::HashSet::new())),
+                &Arc::new(ParallelizationManager::new()),
+                &Arc::new(registry),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn diligence_collection_prefixed_names_follow_the_same_dispatch_rule() {
+        let result = probe_local_target_via_task("ansible.legacy.copy", "copy").await;
+        assert_eq!(result.msg.as_deref(), Some("none"));
+        let result =
+            probe_local_target_via_task("ansible.builtin.connection_probe", "connection_probe")
+                .await;
+        assert_eq!(result.msg.as_deref(), Some("connection"));
     }
 
     #[tokio::test]

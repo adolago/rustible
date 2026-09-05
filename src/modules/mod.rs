@@ -1849,7 +1849,9 @@ impl ModuleRegistry {
         self.categories.insert(name, category);
     }
 
-    fn normalize_module_name(name: &str) -> &str {
+    /// Strip the `ansible.builtin.` / `ansible.legacy.` collection prefixes that
+    /// Ansible treats as aliases of the short module name.
+    pub fn normalize_module_name(name: &str) -> &str {
         if let Some(stripped) = name.strip_prefix("ansible.builtin.") {
             stripped.rsplit('.').next().unwrap_or(stripped)
         } else if let Some(stripped) = name.strip_prefix("ansible.legacy.") {
