@@ -107,3 +107,8 @@
 **Vulnerability:** The `VaultAction::Edit` and `VaultAction::Create` subcommands used `std::env::temp_dir().join(format!(".rustible_vault_{}", std::process::id()))` to store plaintext secrets temporarily. This predictable naming convention makes it vulnerable to local file exposure or Time-of-Check to Time-of-Use (TOCTOU) attacks.
 **Learning:** `std::env::temp_dir` with predictable file names is dangerous for sensitive contents like unencrypted passwords or secrets.
 **Prevention:** Use the `tempfile` crate (e.g., `tempfile::Builder::new().tempfile()`) to generate secure, atomic temporary files with random names. For external tools, `.into_temp_path()` drops the lock but ensures the file is automatically removed.
+
+## 2025-06-25 - Predictable temporary file vulnerability in Vault command
+**Vulnerability:** The vault edit and create commands used `std::env::temp_dir()` combined with `std::process::id()` to create a predictable temporary file path. This could allow a local attacker to guess the file name and intercept or modify sensitive unencrypted data.
+**Learning:** Using predictable paths for temporary files that hold sensitive data is a security risk, especially on shared systems where `/tmp` is accessible to multiple users.
+**Prevention:** Always use secure temporary file creation utilities like `tempfile::Builder::new().tempfile()` which ensure unique names and atomic creation with secure default permissions.
