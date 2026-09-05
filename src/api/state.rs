@@ -285,31 +285,9 @@ impl AppState {
         *self.inventory.write() = Some(Arc::new(inventory));
     }
 
-    /// Cancel a job.
-    pub fn cancel_job(&self, id: Uuid) -> bool {
-        if let Some(job) = self.jobs.write().get_mut(&id) {
-            if matches!(
-                job.status,
-                JobStatus::Pending | JobStatus::Running | JobStatus::ActionRequired
-            ) {
-                job.status = JobStatus::Cancelled;
-                job.finished_at = Some(Utc::now());
-
-                if let Some(runtime) = self.kernel_jobs.read().get(&id).cloned() {
-                    runtime.resume_notify.notify_waiters();
-                }
-
-                // Broadcast cancellation
-                if let Some(tx) = self.ws_channels.read().get(&id) {
-                    let _ = tx.send(WsMessage::StatusChange {
-                        job_id: id,
-                        status: JobStatus::Cancelled,
-                        message: Some("Job cancelled by user".to_string()),
-                    });
-                }
-                return true;
-            }
-        }
+    /// Cancellation is unsupported until workers can acknowledge that they stopped.
+    /// The legacy method returns false without changing status or waking workflows.
+    pub fn cancel_job(&self, _id: Uuid) -> bool {
         false
     }
 }

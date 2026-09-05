@@ -8,29 +8,14 @@ ignore = [
     # Status: No fix available - the RSA crate has not released a fixed version
     # Risk: Medium severity (5.9) timing attack for key recovery
     # Mitigation: This is a transitive dependency via russh/ssh-key for SSH connectivity
-    # The timing attack requires local access and precise timing measurements
-    # We accept this risk as SSH is optional and the attack is difficult to execute
+    # Timing may be observable over a network; local access is not required.
+    # This remains an explicit unresolved exception, not proof of safety.
+    # Default builds enable russh; do not claim that the default excludes RSA.
     "RUSTSEC-2023-0071",
 
-    # RUSTSEC-2021-0145: atty - potential unaligned read (unsound)
-    # Status: Transitive dependency through validator_derive if present
-    # If atty appears it's from unmaintained dependencies
-    "RUSTSEC-2021-0145",
-
-    # RUSTSEC-2024-0421: idna - Punycode decoding issue
-    # Status: Transitive dependency via validator/url crates
-    # Risk: URL parsing edge cases with malformed Punycode
-    # Mitigation: We don't process untrusted URLs from external sources
-    "RUSTSEC-2024-0421",
-
-    # --- AWS SDK bundled rustls 0.21 / rustls-webpki 0.101.7 --------------
-    # Reaches us only through the AWS SDK (aws-config -> aws-smithy-http-client
-    # -> rustls 0.21 -> rustls-webpki 0.101.7), and only under the `aws` feature.
-    # Fix requires the AWS SDK to move onto the rustls 0.23 line; tracked
-    # separately. The default (russh/local) build does not pull this crate.
-    "RUSTSEC-2026-0098",  # rustls-webpki: URI name-constraints incorrectly accepted
-    "RUSTSEC-2026-0099",  # rustls-webpki: name-constraints accepted for non-DNS SANs
-    "RUSTSEC-2026-0104",  # rustls-webpki: reachable panic in CRL parsing
+    # The legacy AWS Hyper/rustls client has been removed, so its former
+    # rustls-webpki exceptions are deliberately no longer ignored. atty is
+    # absent and idna is patched; neither needs a standing exception.
 ]
 
 # Only fail on actual vulnerabilities, not warnings about unmaintained packages

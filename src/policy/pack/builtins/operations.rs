@@ -1,9 +1,7 @@
 //! Built-in operations baseline policy pack.
 //!
-//! Rules:
-//! - `max-forks`             -- warn when forks configuration is excessive
-//! - `require-limit`         -- require a limit pattern for production runs
-//! - `deny-localhost-in-prod` -- deny using localhost in production plays
+//! Declared checks currently lack evaluators and fail as unsupported:
+//! `max-forks`, `require-limit`, and `deny-localhost-in-prod`.
 
 use crate::policy::pack::manifest::{PackCategory, PackParameter, PolicyPackManifest};
 
@@ -13,7 +11,7 @@ pub fn manifest() -> PolicyPackManifest {
         name: "operations-baseline".into(),
         version: "1.0.0".into(),
         description:
-            "Operations baseline rules: safe fork limits, require limits, deny localhost in prod"
+            "Unavailable operations checks: fork limits, production limits and localhost targeting"
                 .into(),
         category: PackCategory::Operations,
         rules: vec![
@@ -23,7 +21,7 @@ pub fn manifest() -> PolicyPackManifest {
         ],
         parameters: vec![PackParameter {
             name: "max_forks".into(),
-            description: "Maximum allowed fork count before warning".into(),
+            description: "Reserved metadata; fork limit evaluation is unsupported".into(),
             param_type: "integer".into(),
             default_value: Some("50".into()),
             required: false,

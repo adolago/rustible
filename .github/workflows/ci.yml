@@ -40,6 +40,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Test release policies
+        run: python3 -m unittest discover -s scripts -p 'test_validate_*.py' -v
+
       - name: Run clippy
         run: |
           # Default features only; --all-features includes experimental cloud modules.
@@ -289,7 +292,7 @@ jobs:
           cat coverage-summary.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-  # Build release artifacts for all platforms
+  # Build the declared Linux/macOS targets; see docs/PLATFORM_SUPPORT.md.
   build:
     name: Build (${{ matrix.target }})
     needs: [test, feature_matrix, security]

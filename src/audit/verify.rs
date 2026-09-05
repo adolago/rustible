@@ -67,7 +67,7 @@ impl AuditVerifier {
         let entries_checked = entries.len();
         for (i, entry) in entries.iter().enumerate() {
             // Check sequence continuity
-            if entry.sequence != entries[0].sequence + i as u64 {
+            if i > 0 && entries[i - 1].sequence.checked_add(1) != Some(entry.sequence) {
                 return Ok(VerificationReport {
                     valid: false,
                     entries_checked,

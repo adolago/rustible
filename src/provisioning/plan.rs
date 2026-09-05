@@ -3,7 +3,7 @@
 //! This module provides the ExecutionPlan and PlanBuilder for determining
 //! what changes need to be made to reach the desired infrastructure state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use colored::Colorize;
@@ -536,7 +536,7 @@ impl PlanBuilder {
         self
     }
 
-    /// Set resource dependencies
+    /// Set forward resource dependencies (prerequisites), overriding stored metadata.
     pub fn with_dependencies(mut self, id: ResourceId, deps: Vec<ResourceId>) -> Self {
         self.dependencies.insert(id, deps);
         self
@@ -626,9 +626,39 @@ impl PlanBuilder {
             }
         }
 
-        // Add dependencies to actions
+        // Destroying a prerequisite must wait for its selected dependents.
+        // Derive reverse execution edges from forward resource metadata; the
+        // optional stored `dependents` list is not maintained as a source of truth.
+        let destroy_ids: HashSet<_> = plan
+            .actions
+            .iter()
+            .filter(|action| action.change_type == ChangeType::Destroy)
+            .map(|action| action.resource_id.clone())
+            .collect();
+        let mut destroy_predecessors: HashMap<ResourceId, Vec<ResourceId>> = HashMap::new();
+        for dependent in &destroy_ids {
+            let dependencies = self.dependencies.get(dependent).or_else(|| {
+                self.current_state
+                    .get_resource(dependent)
+                    .map(|state| &state.dependencies)
+            });
+            for prerequisite in dependencies.into_iter().flatten() {
+                if destroy_ids.contains(prerequisite) {
+                    destroy_predecessors
+                        .entry(prerequisite.clone())
+                        .or_default()
+                        .push(dependent.clone());
+                }
+            }
+        }
+
+        // Action dependencies always name operations that must complete first.
         for action in &mut plan.actions {
-            if let Some(deps) = self.dependencies.get(&action.resource_id) {
+            if action.change_type == ChangeType::Destroy {
+                action.depends_on = destroy_predecessors
+                    .remove(&action.resource_id)
+                    .unwrap_or_default();
+            } else if let Some(deps) = self.dependencies.get(&action.resource_id) {
                 action.depends_on = deps.clone();
             }
         }
@@ -686,6 +716,10 @@ fn parse_provider(resource_type: &str) -> (String, String) {
         (resource_type.to_string(), String::new())
     }
 }
+
+#[cfg(test)]
+#[path = "plan_destroy_tests.rs"]
+mod destroy_tests;
 
 #[cfg(test)]
 mod tests {

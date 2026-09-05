@@ -1,0 +1,5 @@
+- hosts: selected
+  gather_facts: false
+  tasks:
+    - name: group-local
+      command: /bin/echo group-local

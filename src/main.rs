@@ -175,7 +175,7 @@ all:
 # Web Server Playbook
 - name: Configure web servers
   hosts: webservers
-  r#become: true
+  become: true
   gather_facts: true
 
   vars:
@@ -213,7 +213,7 @@ all:
 # Docker Playbook
 - name: Setup Docker
   hosts: all
-  r#become: true
+  become: true
   gather_facts: true
 
   tasks:

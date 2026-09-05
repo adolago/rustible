@@ -499,18 +499,46 @@ pub struct ComplianceStats {
 }
 
 impl ComplianceStats {
-    /// Calculate compliance percentage
+    /// Count results not represented by one of the explicit status counters.
+    pub fn unknown_checks(&self) -> u32 {
+        u64::from(self.total_checks).saturating_sub(self.classified_checks()) as u32
+    }
+
+    fn classified_checks(&self) -> u64 {
+        u64::from(self.passed)
+            + u64::from(self.failed)
+            + u64::from(self.warnings)
+            + u64::from(self.skipped)
+            + u64::from(self.errors)
+    }
+
+    /// Calculate passed checks as a percentage of all non-skipped checks.
+    /// Errors and unknown results remain in the denominator. Returns zero for
+    /// unmeasured or inconsistent statistics; inspect `grade()` for their status.
     pub fn compliance_percentage(&self) -> f64 {
-        let applicable = self.total_checks - self.skipped - self.errors;
+        if self.classified_checks() > u64::from(self.total_checks) {
+            return 0.0;
+        }
+        let applicable = self.total_checks - self.skipped;
         if applicable == 0 {
-            100.0
+            0.0
         } else {
             (self.passed as f64 / applicable as f64) * 100.0
         }
     }
 
-    /// Get a letter grade based on compliance percentage
+    /// Get a letter grade, `N/A` for no applicable checks, or `Incomplete` when
+    /// any result is an error/unknown or the public counters are inconsistent.
     pub fn grade(&self) -> &'static str {
+        if self.classified_checks() > u64::from(self.total_checks)
+            || self.errors > 0
+            || self.unknown_checks() > 0
+        {
+            return "Incomplete";
+        }
+        if self.total_checks == self.skipped {
+            return "N/A";
+        }
         let pct = self.compliance_percentage();
         if pct >= 95.0 {
             "A+"

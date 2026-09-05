@@ -1,0 +1,13 @@
+- name: Handler failure must fail run
+  hosts: selected
+  gather_facts: false
+  tasks:
+    - name: notify-failing-handler
+      debug:
+        msg: changed-marker
+      changed_when: true
+      notify: failing-handler
+  handlers:
+    - name: failing-handler
+      fail:
+        msg: intended-handler-failure

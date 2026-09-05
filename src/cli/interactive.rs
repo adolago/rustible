@@ -65,7 +65,7 @@ impl InteractiveSession {
         println!();
         let _ = self.term.write_line(&format!(
             "  {}",
-            "Tip: Use arrow keys to navigate menus, Space to select multiple items, Enter to confirm"
+            "Tip: Use arrow keys to navigate menus, Enter to confirm"
                 .cyan()
                 .dimmed()
         ));
@@ -79,7 +79,7 @@ impl InteractiveSession {
             "🔍 Check playbook (dry-run)",
             "📋 List hosts",
             "📝 List tasks",
-            "🔐 Vault operations",
+            "🔒 Vault operations",
             "✨ Initialize project",
             "✅ Validate playbook",
             "⚙️ Settings",
@@ -87,7 +87,7 @@ impl InteractiveSession {
         ];
 
         let selection = Select::with_theme(&self.theme)
-            .with_prompt("What would you like to do?")
+            .with_prompt("🎯 What would you like to do?")
             .items(&items)
             .default(0)
             .interact_on(&self.term)?;
@@ -137,7 +137,7 @@ impl InteractiveSession {
         items.push("✏️ Enter custom path...".to_string());
 
         let selection = Select::with_theme(&self.theme)
-            .with_prompt("📖 Select a playbook")
+            .with_prompt("📖 Select a playbook (use arrow keys, enter to confirm)")
             .items(&items)
             .default(0)
             .interact_on(&self.term)?;
@@ -199,7 +199,7 @@ impl InteractiveSession {
         items.push("🏠 Use localhost (no inventory)".to_string());
 
         let selection = Select::with_theme(&self.theme)
-            .with_prompt("📋 Select inventory")
+            .with_prompt("📋 Select inventory (use arrow keys, enter to confirm)")
             .items(&items)
             .default(0)
             .interact_on(&self.term)?;
@@ -350,7 +350,7 @@ impl InteractiveSession {
         ];
 
         let verbosity = Select::with_theme(&self.theme)
-            .with_prompt("🔊 Verbose level")
+            .with_prompt("🔊 Verbose level (use arrow keys, enter to confirm)")
             .items(&verbosity_items)
             .default(0)
             .interact_on(&self.term)? as u8;
@@ -376,13 +376,13 @@ impl InteractiveSession {
             "👁️ View encrypted file",
             "✏️ Edit encrypted file",
             "✨ Create new encrypted file",
-            "🔑 Rekey (change password)",
+            "🔒 Rekey (change password)",
             "🔏 Encrypt a string",
             "🔙 Back to main menu",
         ];
 
         let selection = Select::with_theme(&self.theme)
-            .with_prompt("🔐 Vault operation")
+            .with_prompt("🔒 Vault operation")
             .items(&items)
             .default(0)
             .interact_on(&self.term)?;

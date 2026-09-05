@@ -43,53 +43,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine version
+      - name: Validate release version and package contract
         id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          fi
-
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          # Check if prerelease
-          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-          else
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-          fi
-
-          echo "Release version: $VERSION"
-          echo "Is prerelease: ${{ steps.version.outputs.is_prerelease }}"
-
-      - name: Validate semver
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-
-          # Validate semantic versioning format
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$ ]]; then
-            echo "::error::Invalid semantic version format: $VERSION"
-            exit 1
-          fi
-
-          echo "Version $VERSION is valid semver"
-
-      - name: Check Cargo.toml version match
-        run: |
-          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\([^"]*\)".*/\1/')
-          RELEASE_VERSION="${{ steps.version.outputs.version }}"
-
-          echo "Cargo.toml version: $CARGO_VERSION"
-          echo "Release version: $RELEASE_VERSION"
-
-          # Extract base version (without prerelease suffix) for comparison
-          BASE_RELEASE_VERSION=$(echo "$RELEASE_VERSION" | sed 's/-.*//')
-
-          if [ "$CARGO_VERSION" != "$BASE_RELEASE_VERSION" ] && [ "$CARGO_VERSION" != "$RELEASE_VERSION" ]; then
-            echo "::warning::Cargo.toml version ($CARGO_VERSION) differs from release version ($RELEASE_VERSION)"
-          fi
+        env:
+          RELEASE_VERSION_INPUT: ${{ inputs.version }}
+        run: python3 scripts/validate_release.py
 
   test:
     name: Test Suite
@@ -177,6 +135,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Declared Unix control-node targets; see docs/PLATFORM_SUPPORT.md.
+          # Native Windows builds are unsupported by unconditional Unix source.
           # Linux x86_64 (glibc)
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -206,18 +166,6 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
-            features: pure-rust
-
-          # Windows x86_64 (MSVC)
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
-            features: pure-rust
-
-          # Windows ARM64
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
             features: pure-rust
 
     steps:
@@ -262,7 +210,6 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} --features ${{ matrix.features }}
 
       - name: Prepare release assets (Unix)
-        if: runner.os != 'Windows'
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           BINARY_NAME="rustible"
@@ -278,25 +225,6 @@ jobs:
           # Generate checksums
           sha256sum "${RELEASE_DIR}.tar.gz" > "${RELEASE_DIR}.tar.gz.sha256"
 
-      - name: Prepare release assets (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $VERSION = "${{ needs.validate.outputs.version }}"
-          $BINARY_NAME = "rustible.exe"
-          $RELEASE_DIR = "rustible-v${VERSION}-${{ matrix.target }}"
-
-          New-Item -ItemType Directory -Force -Path $RELEASE_DIR
-          Copy-Item "target/${{ matrix.target }}/release/$BINARY_NAME" "$RELEASE_DIR/"
-          Copy-Item README.md, LICENSE* "$RELEASE_DIR/" -ErrorAction SilentlyContinue
-
-          # Create archive
-          Compress-Archive -Path "$RELEASE_DIR/*" -DestinationPath "${RELEASE_DIR}.zip"
-
-          # Generate checksums
-          $hash = Get-FileHash "${RELEASE_DIR}.zip" -Algorithm SHA256
-          "$($hash.Hash.ToLower())  ${RELEASE_DIR}.zip" | Out-File -Encoding ASCII "${RELEASE_DIR}.zip.sha256"
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -304,8 +232,6 @@ jobs:
           path: |
             rustible-v*.tar.gz
             rustible-v*.tar.gz.sha256
-            rustible-v*.zip
-            rustible-v*.zip.sha256
           if-no-files-found: error
 
   release:
@@ -379,10 +305,12 @@ jobs:
           key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Verify package
-        run: cargo package --allow-dirty
+        run: |
+          cargo package --locked
+          python3 scripts/validate_package.py
 
       - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -417,8 +345,8 @@ jobs:
           echo "| Linux ARM64 | aarch64-unknown-linux-gnu | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS Intel | x86_64-apple-darwin | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS Apple Silicon | aarch64-apple-darwin | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows x64 | x86_64-pc-windows-msvc | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows ARM64 | aarch64-pc-windows-msvc | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Native Windows control-node binaries are unsupported and are not published." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ "$CRATES_STATUS" == "success" ]; then

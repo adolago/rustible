@@ -52,7 +52,7 @@ impl ResourceId {
     /// Parse from address string
     pub fn from_address(address: &str) -> Option<Self> {
         let parts: Vec<&str> = address.splitn(2, '.').collect();
-        if parts.len() == 2 {
+        if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
             Some(Self::new(parts[0], parts[1]))
         } else {
             None
@@ -621,7 +621,7 @@ impl ProvisioningState {
         // Verify checksum if present
         if let Some(ref stored_checksum) = state.checksum {
             let computed = state.compute_checksum();
-            if stored_checksum != &computed {
+            if stored_checksum != &computed && stored_checksum != &Self::legacy_checksum(content)? {
                 return Err(ProvisioningError::StateCorruption(
                     "State file checksum mismatch".to_string(),
                 ));
@@ -690,9 +690,46 @@ impl ProvisioningState {
         let mut state_for_hash = self.clone();
         state_for_hash.checksum = None;
 
-        let content = serde_json::to_string(&state_for_hash).unwrap_or_default();
+        // serde_json::Value uses sorted object keys by default. Sort explicitly
+        // as well, because another dependency may enable preserve_order.
+        let mut value = serde_json::to_value(&state_for_hash)
+            .expect("provisioning state contains only JSON-serializable values");
+        fn sort_objects(value: &mut Value) {
+            match value {
+                Value::Object(object) => {
+                    for value in object.values_mut() {
+                        sort_objects(value);
+                    }
+                    object.sort_keys();
+                }
+                Value::Array(values) => values.iter_mut().for_each(sort_objects),
+                _ => {}
+            }
+        }
+        sort_objects(&mut value);
+        let content = serde_json::to_string(&value).expect("JSON value serialization cannot fail");
         let hash = Sha256::digest(content.as_bytes());
         format!("{:x}", hash)
+    }
+
+    /// Verify old order-dependent checksums against the original JSON order,
+    /// not a newly randomized HashMap. Newly saved states use canonical hashes.
+    /// Reordered or altered legacy files still fail verification; no checksum is
+    /// ignored and no existing file is rewritten during loading.
+    fn legacy_checksum(content: &str) -> ProvisioningResult<String> {
+        use sha2::{Digest, Sha256};
+
+        #[derive(Serialize, Deserialize)]
+        #[serde(untagged)]
+        enum OrderedJson {
+            Object(indexmap::IndexMap<String, OrderedJson>),
+            Array(Vec<OrderedJson>),
+            Scalar(Value),
+        }
+        let mut original: indexmap::IndexMap<String, OrderedJson> = serde_json::from_str(content)?;
+        original.insert("checksum".into(), OrderedJson::Scalar(Value::Null));
+        let bytes = serde_json::to_vec(&original)?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
     }
 
     /// Add a resource to state
@@ -1090,8 +1127,74 @@ impl ProvisioningState {
         }
     }
 
-    /// Import from Terraform state JSON
+    /// Import root, managed, unindexed resources from Terraform v4 state JSON.
+    /// Unsupported addressing is rejected before returning any imported state.
     pub fn import_from_terraform(tf_state: &Value) -> ProvisioningResult<Self> {
+        let invalid = |message: &str| ProvisioningError::ImportError {
+            resource_type: "terraform_state".into(),
+            resource_id: "unknown".into(),
+            message: message.to_string(),
+        };
+        if tf_state.get("version").and_then(Value::as_u64) != Some(4)
+            || tf_state.get("serial").and_then(Value::as_u64).is_none()
+            || !tf_state
+                .get("lineage")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.is_empty())
+        {
+            return Err(invalid(
+                "Expected Terraform state version 4 with a serial and nonempty lineage",
+            ));
+        }
+        let resources = tf_state
+            .get("resources")
+            .and_then(Value::as_array)
+            .ok_or_else(|| invalid("Terraform state resources must be an array"))?;
+        if tf_state
+            .get("outputs")
+            .is_some_and(|outputs| !outputs.is_object())
+        {
+            return Err(invalid("Terraform state outputs must be an object"));
+        }
+        let mut addresses = HashSet::new();
+        for resource in resources {
+            if resource.get("module").is_some() {
+                return Err(invalid("Module-qualified Terraform resources are not supported; import was not performed"));
+            }
+            if resource.get("mode").and_then(Value::as_str) != Some("managed") {
+                return Err(invalid("Only managed Terraform resources are supported; data resources cannot be imported"));
+            }
+            let resource_type = resource
+                .get("type")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| invalid("Missing resource type"))?;
+            let name = resource
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| invalid("Missing resource name"))?;
+            let address = format!("{resource_type}.{name}");
+            if !addresses.insert(address.clone()) {
+                return Err(invalid(&format!(
+                    "Duplicate Terraform resource address: {address}"
+                )));
+            }
+            let instances = resource
+                .get("instances")
+                .and_then(Value::as_array)
+                .ok_or_else(|| invalid("Terraform resource instances must be an array"))?;
+            if instances.len() != 1 {
+                return Err(invalid("Exactly one unindexed instance per resource is supported; import was not performed"));
+            }
+            let instance = &instances[0];
+            if instance.get("index_key").is_some() || instance.get("deposed").is_some() {
+                return Err(invalid("Indexed or deposed Terraform instances are not supported; import was not performed"));
+            }
+            if !instance.get("attributes").is_some_and(Value::is_object) {
+                return Err(invalid("Terraform instance attributes must be an object"));
+            }
+        }
         let mut state = Self::new();
 
         // Extract lineage if present
@@ -1179,15 +1282,6 @@ impl ProvisioningState {
                             attributes,
                         );
                         resource_state.dependencies = dependencies;
-
-                        // Set index for count/for_each
-                        if let Some(index_key) = instance.get("index_key") {
-                            if let Some(n) = index_key.as_u64() {
-                                resource_state.index = Some(ResourceIndex::Number(n as usize));
-                            } else if let Some(s) = index_key.as_str() {
-                                resource_state.index = Some(ResourceIndex::Key(s.to_string()));
-                            }
-                        }
 
                         state.add_resource(resource_state);
                     }
@@ -1581,6 +1675,111 @@ impl std::fmt::Display for StateSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_diligence_state_checksum_roundtrips_many_maps() {
+        let mut state = ProvisioningState::new();
+        for index in 0..32 {
+            let mut resource = ResourceState::new(
+                ResourceId::new("test_resource", format!("item{index}")),
+                format!("synthetic-{index}"),
+                "test",
+                serde_json::json!({}),
+                serde_json::json!({}),
+            );
+            for item in 0..8 {
+                resource
+                    .metadata
+                    .insert(format!("key{item}"), format!("value{item}"));
+            }
+            state.add_resource(resource);
+            state.providers.insert(
+                format!("provider{index}"),
+                serde_json::json!({"nested": {"b": 2, "a": 1}}),
+            );
+        }
+        state.prepare_for_save();
+        let content = serde_json::to_string_pretty(&state).unwrap();
+        for _ in 0..16 {
+            let restored =
+                ProvisioningState::from_json_str(&content).expect("unchanged state must load");
+            assert_eq!(restored.resources.len(), 32);
+            assert_eq!(restored.compute_checksum(), state.compute_checksum());
+        }
+        let mut modified: Value = serde_json::from_str(&content).unwrap();
+        modified["resources"]["test_resource.item0"]["cloud_id"] = Value::String("changed".into());
+        assert!(ProvisioningState::from_json_str(&modified.to_string()).is_err());
+    }
+
+    #[test]
+    fn test_diligence_legacy_checksum_is_verified_without_rewriting() {
+        use sha2::{Digest, Sha256};
+        let mut state = ProvisioningState::new();
+        for index in 0..32 {
+            state.providers.insert(
+                format!("provider{index}"),
+                serde_json::json!({"region": "synthetic"}),
+            );
+        }
+        // Reproduce the legacy checksum using the original serialized map order.
+        state.checksum = Some(format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&state).unwrap())
+        ));
+        let content = serde_json::to_string_pretty(&state).unwrap();
+        for _ in 0..8 {
+            let restored = ProvisioningState::from_json_str(&content).unwrap();
+            assert_eq!(restored.checksum, state.checksum);
+            assert_eq!(restored.providers.len(), 32);
+        }
+        let modified = content.replace("synthetic", "modified");
+        assert!(ProvisioningState::from_json_str(&modified).is_err());
+    }
+
+    #[test]
+    fn test_diligence_terraform_import_rejects_lossy_shapes() {
+        let valid = serde_json::json!({
+            "version": 4, "serial": 1, "lineage": "test-lineage", "outputs": {},
+            "resources": [{"mode": "managed", "type": "aws_instance", "name": "web",
+                "provider": "provider[\"aws\"]", "instances": [{"attributes": {"id": "synthetic-one"}}]}]
+        });
+        let mut indexed = valid.clone();
+        indexed["resources"][0]["instances"][0]["index_key"] = serde_json::json!(0);
+        let mut multiple = valid.clone();
+        multiple["resources"][0]["instances"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"attributes": {"id": "synthetic-two"}}));
+        let mut module = valid.clone();
+        module["resources"][0]["module"] = serde_json::json!("module.child");
+        let mut data = valid.clone();
+        data["resources"][0]["mode"] = serde_json::json!("data");
+        let mut duplicate = valid.clone();
+        duplicate["resources"]
+            .as_array_mut()
+            .unwrap()
+            .push(valid["resources"][0].clone());
+        for (name, input) in [
+            ("indexed", indexed),
+            ("multiple", multiple),
+            ("module", module),
+            ("data", data),
+            ("duplicate", duplicate),
+            ("empty object", serde_json::json!({})),
+            ("array", serde_json::json!([])),
+        ] {
+            assert!(
+                ProvisioningState::import_from_terraform(&input).is_err(),
+                "accepted {name}"
+            );
+        }
+        assert_eq!(
+            ProvisioningState::import_from_terraform(&valid)
+                .unwrap()
+                .resource_count(),
+            1
+        );
+    }
 
     #[test]
     fn test_resource_id() {
@@ -2227,11 +2426,8 @@ output "vpc_id" {
     }
 
     #[test]
-    fn test_roundtrip_count_resources_numeric_index() {
-        // Create Terraform state with count-based resources
-        // Note: Current implementation imports all instances under the same key,
-        // so only the last instance is kept. This tests that the index_key is
-        // properly captured when present.
+    fn test_import_rejects_count_resources_numeric_index() {
+        // Multiple instances must not overwrite each other under type.name.
         let tf_state = serde_json::json!({
             "version": 4,
             "terraform_version": "1.0.0",
@@ -2265,22 +2461,12 @@ output "vpc_id" {
             "outputs": {}
         });
 
-        let imported = ProvisioningState::import_from_terraform(&tf_state).unwrap();
-
-        // Current impl keeps only one resource per type.name (last instance wins)
-        assert_eq!(imported.resource_count(), 1);
-
-        // Verify index was captured (last instance has index 2)
-        let resource = imported
-            .get_resource(&ResourceId::new("aws_instance", "web"))
-            .unwrap();
-        assert!(matches!(resource.index, Some(ResourceIndex::Number(2))));
-        assert_eq!(resource.cloud_id, "i-003");
+        assert!(ProvisioningState::import_from_terraform(&tf_state).is_err());
     }
 
     #[test]
-    fn test_roundtrip_count_single_instance_index() {
-        // Test single instance with numeric index
+    fn test_import_rejects_count_single_instance_index() {
+        // Even a single indexed instance requires an address the state cannot represent.
         let tf_state = serde_json::json!({
             "version": 4,
             "terraform_version": "1.0.0",
@@ -2304,21 +2490,12 @@ output "vpc_id" {
             "outputs": {}
         });
 
-        let imported = ProvisioningState::import_from_terraform(&tf_state).unwrap();
-
-        let resource = imported
-            .get_resource(&ResourceId::new("aws_instance", "single"))
-            .unwrap();
-        assert!(matches!(resource.index, Some(ResourceIndex::Number(0))));
-        assert_eq!(resource.cloud_id, "i-single");
+        assert!(ProvisioningState::import_from_terraform(&tf_state).is_err());
     }
 
     #[test]
-    fn test_roundtrip_for_each_resources_string_key() {
-        // Create Terraform state with for_each-based resources
-        // Note: Current implementation imports all instances under the same key,
-        // so only the last instance is kept. This tests that the string index_key is
-        // properly captured when present.
+    fn test_import_rejects_for_each_resources_string_key() {
+        // for_each keys cannot be silently collapsed into one type.name address.
         let tf_state = serde_json::json!({
             "version": 4,
             "terraform_version": "1.0.0",
@@ -2347,22 +2524,12 @@ output "vpc_id" {
             "outputs": {}
         });
 
-        let imported = ProvisioningState::import_from_terraform(&tf_state).unwrap();
-
-        // Current impl keeps only last instance (bob overwrites alice)
-        assert_eq!(imported.resource_count(), 1);
-
-        // Verify string key index was captured (last instance is "bob")
-        let resource = imported
-            .get_resource(&ResourceId::new("aws_iam_user", "users"))
-            .unwrap();
-        assert!(matches!(resource.index, Some(ResourceIndex::Key(ref k)) if k == "bob"));
-        assert_eq!(resource.cloud_id, "bob");
+        assert!(ProvisioningState::import_from_terraform(&tf_state).is_err());
     }
 
     #[test]
-    fn test_roundtrip_for_each_single_instance_string_key() {
-        // Test single instance with string key
+    fn test_import_rejects_for_each_single_instance_string_key() {
+        // A single for_each key still requires unsupported addressing.
         let tf_state = serde_json::json!({
             "version": 4,
             "terraform_version": "1.0.0",
@@ -2386,13 +2553,7 @@ output "vpc_id" {
             "outputs": {}
         });
 
-        let imported = ProvisioningState::import_from_terraform(&tf_state).unwrap();
-
-        let resource = imported
-            .get_resource(&ResourceId::new("aws_iam_user", "admin"))
-            .unwrap();
-        assert!(matches!(resource.index, Some(ResourceIndex::Key(ref k)) if k == "superadmin"));
-        assert_eq!(resource.cloud_id, "admin-user");
+        assert!(ProvisioningState::import_from_terraform(&tf_state).is_err());
     }
 
     #[test]

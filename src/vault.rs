@@ -63,7 +63,7 @@ impl Vault {
     /// Decrypt content
     pub fn decrypt(&self, content: &str) -> Result<String> {
         let lines: Vec<&str> = content.lines().collect();
-        if lines.is_empty() || !lines[0].starts_with("$RUSTIBLE_VAULT") {
+        if lines.first().copied() != Some(VAULT_HEADER) {
             return Err(Error::Vault("Invalid vault format".into()));
         }
 
@@ -81,9 +81,15 @@ impl Vault {
         let salt =
             SaltString::from_b64(salt_str).map_err(|_| Error::Vault("Invalid salt".into()))?;
 
-        let nonce_start = salt_end + 1;
-        let nonce = GenericArray::from_slice(&encrypted[nonce_start..nonce_start + 12]);
-        let ciphertext = &encrypted[nonce_start + 12..];
+        let payload = &encrypted[salt_end + 1..];
+        // AES-GCM requires a 12-byte nonce and at least a 16-byte authentication tag.
+        if payload.len() < 12 + 16 {
+            return Err(Error::Vault(
+                "Invalid vault format: truncated payload".into(),
+            ));
+        }
+        let (nonce_bytes, ciphertext) = payload.split_at(12);
+        let nonce = GenericArray::from_slice(nonce_bytes);
 
         let key = self.derive_key(&salt)?;
         let cipher = Aes256Gcm::new(&key);
@@ -127,6 +133,48 @@ impl std::fmt::Debug for Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_diligence_vault_rejects_truncated_envelopes_without_panicking() {
+        let vault = Vault::new("test-password");
+        for payload_len in 0..28 {
+            let mut payload = b"c2FsdHNhbHQ\n".to_vec();
+            payload.extend(std::iter::repeat_n(0, payload_len));
+            let content = format!("{}\n{}", VAULT_HEADER, BASE64.encode(payload));
+            assert!(
+                vault.decrypt(&content).is_err(),
+                "payload length {payload_len}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_diligence_vault_rejects_unsupported_headers() {
+        let vault = Vault::new("test-password");
+        let encrypted = vault.encrypt("harmless test data").unwrap();
+        for header in [
+            "$RUSTIBLE_VAULT;2.0;AES256",
+            "$RUSTIBLE_VAULT;1.0;OTHER",
+            "$RUSTIBLE_VAULT_SUFFIX;1.0;AES256",
+        ] {
+            let content = encrypted.replacen(VAULT_HEADER, header, 1);
+            assert!(vault.decrypt(&content).is_err(), "header {header}");
+        }
+    }
+
+    #[test]
+    fn test_diligence_vault_rejects_invalid_envelopes() {
+        let vault = Vault::new("test-password");
+        for content in [
+            String::new(),
+            VAULT_HEADER.to_string(),
+            format!("{VAULT_HEADER}\nnot-base64!"),
+            format!("{VAULT_HEADER}\n{}", BASE64.encode(b"no separator")),
+            format!("{VAULT_HEADER}\n{}", BASE64.encode(b"!\n")),
+        ] {
+            assert!(vault.decrypt(&content).is_err());
+        }
+    }
 
     #[test]
     fn test_vault_encryption_decryption() {

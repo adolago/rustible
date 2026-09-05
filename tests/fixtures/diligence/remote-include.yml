@@ -1,0 +1,4 @@
+- hosts: remote.invalid
+  gather_facts: false
+  tasks:
+    - include_tasks: included-remote.yml

@@ -1,0 +1,4 @@
+- name: included-remote
+  file:
+    path: __SCRATCH__/remote-controller-sentinel
+    state: touch

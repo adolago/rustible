@@ -32,11 +32,29 @@ impl ShellModule {
     }
 
     /// Get shell executable and flag for local execution
-    fn get_shell(&self, params: &ModuleParams) -> ModuleResult<(String, String)> {
+    fn get_shell(&self, params: &ModuleParams) -> ModuleResult<(Vec<String>, String)> {
         // Get shell executable
         let executable = params
             .get_string("executable")?
             .unwrap_or_else(|| "/bin/sh".to_string());
+
+        validate_command_args(&executable)?;
+        let parts = shell_words::split(&executable).map_err(|error| {
+            ModuleError::InvalidParameter(format!("Invalid executable string: {}", error))
+        })?;
+        if parts.is_empty() || parts[0].is_empty() {
+            return Err(ModuleError::InvalidParameter(
+                "executable must contain a nonempty program".to_string(),
+            ));
+        }
+        if parts
+            .iter()
+            .any(|part| matches!(part.as_str(), "-c" | "/c" | "/C"))
+        {
+            return Err(ModuleError::InvalidParameter(
+                "executable cannot contain command flags (-c, /c) as they are managed by the module".to_string(),
+            ));
+        }
 
         // Different shells have different syntax for running commands
         let flag = if executable.ends_with("fish") {
@@ -47,11 +65,12 @@ impl ShellModule {
             "-c".to_string()
         };
 
-        Ok((executable, flag))
+        Ok((parts, flag))
     }
 
     /// Build the full shell command for remote execution
     fn build_shell_command(&self, cmd: &str, params: &ModuleParams) -> ModuleResult<String> {
+        let (parts, _) = self.get_shell(params)?;
         let executable = params
             .get_string("executable")?
             .unwrap_or_else(|| "/bin/sh".to_string());
@@ -73,10 +92,6 @@ impl ShellModule {
             // Split executable into command and arguments to safely escape them
             // This prevents argument injection if executable contains spaces or other metacharacters
             // that were somehow missed by validation, and correctly handles arguments like "python -u"
-            let parts = shell_words::split(&executable).map_err(|e| {
-                ModuleError::InvalidParameter(format!("Invalid executable string: {}", e))
-            })?;
-
             let safe_exec = parts
                 .iter()
                 .map(|p| shell_escape(p))
@@ -137,12 +152,20 @@ impl ShellModule {
     fn check_creates_removes_local(
         &self,
         params: &ModuleParams,
+        context: &ModuleContext,
     ) -> ModuleResult<Option<ModuleOutput>> {
+        let work_dir = params
+            .get_string("chdir")?
+            .or_else(|| context.work_dir.clone());
+        let guard_path = |path: &str| match &work_dir {
+            Some(directory) => Path::new(directory).join(path),
+            None => Path::new(path).to_path_buf(),
+        };
         // Check 'creates' - skip if file exists
         if let Some(creates) = params.get_string("creates")? {
             // Validate the path for security
             validate_path_param(&creates, "creates")?;
-            if Path::new(&creates).exists() {
+            if guard_path(&creates).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' exists",
                     creates
@@ -154,7 +177,7 @@ impl ShellModule {
         if let Some(removes) = params.get_string("removes")? {
             // Validate the path for security
             validate_path_param(&removes, "removes")?;
-            if !Path::new(&removes).exists() {
+            if !guard_path(&removes).exists() {
                 return Ok(Some(ModuleOutput::ok(format!(
                     "Skipped, '{}' does not exist",
                     removes
@@ -206,6 +229,36 @@ impl ShellModule {
         Ok(None)
     }
 
+    /// Construct the local process without spawning it.
+    fn build_command(
+        &self,
+        params: &ModuleParams,
+        context: &ModuleContext,
+        cmd: &str,
+    ) -> ModuleResult<Command> {
+        let (shell, flag) = self.get_shell(params)?;
+        let mut command = Command::new(&shell[0]);
+        command.args(&shell[1..]);
+        command.arg(&flag).arg(cmd);
+
+        if let Some(chdir) = params.get_string("chdir")? {
+            command.current_dir(&chdir);
+        } else if let Some(ref work_dir) = context.work_dir {
+            command.current_dir(work_dir);
+        }
+
+        if let Some(serde_json::Value::Object(env)) = params.get("env") {
+            for (key, value) in env {
+                validate_env_var_name(key)?;
+                if let serde_json::Value::String(v) = value {
+                    command.env(key, v);
+                }
+            }
+        }
+
+        Ok(command)
+    }
+
     /// Execute shell command locally using std::process::Command
     fn execute_local(
         &self,
@@ -213,11 +266,12 @@ impl ShellModule {
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
         // Check creates/removes conditions
-        if let Some(output) = self.check_creates_removes_local(params)? {
+        if let Some(output) = self.check_creates_removes_local(params, context)? {
             return Ok(output);
         }
 
         let cmd = self.get_cmd_param(params)?;
+        let mut command = self.build_command(params, context, &cmd)?;
 
         // In check mode, return what would happen
         if context.check_mode {
@@ -225,29 +279,6 @@ impl ShellModule {
                 ModuleOutput::changed(format!("Would execute shell command: {}", cmd))
                     .with_command_output(Some(String::new()), Some(String::new()), Some(0)),
             );
-        }
-
-        let (shell, flag) = self.get_shell(params)?;
-
-        let mut command = Command::new(&shell);
-        command.arg(&flag).arg(&cmd);
-
-        // Set working directory
-        if let Some(chdir) = params.get_string("chdir")? {
-            command.current_dir(&chdir);
-        } else if let Some(ref work_dir) = context.work_dir {
-            command.current_dir(work_dir);
-        }
-
-        // Set environment variables (with validation)
-        if let Some(serde_json::Value::Object(env)) = params.get("env") {
-            for (key, value) in env {
-                // Validate environment variable name for security
-                validate_env_var_name(key)?;
-                if let serde_json::Value::String(v) = value {
-                    command.env(key, v);
-                }
-            }
         }
 
         // Handle stdin
@@ -441,26 +472,8 @@ impl Module for ShellModule {
             return Err(ModuleError::MissingParameter("cmd".to_string()));
         }
 
-        // Validate executable parameter for security to prevent injection
-        if let Some(executable) = params.get_string("executable")? {
-            validate_command_args(&executable)?;
-
-            // Prevent command execution hijacking via argument injection
-            // If executable contains "-c" (Posix) or "/c" (Windows), it might be used to
-            // execute an arbitrary command instead of the intended one, as we append
-            // our own -c flag.
-            let parts = shell_words::split(&executable).map_err(|e| {
-                ModuleError::InvalidParameter(format!("Invalid executable string: {}", e))
-            })?;
-
-            for part in parts {
-                if part == "-c" || part == "/c" || part == "/C" {
-                    return Err(ModuleError::InvalidParameter(
-                        "executable cannot contain command flags (-c, /c) as they are managed by the module".to_string(),
-                    ));
-                }
-            }
-        }
+        // Use the same parsing and managed-flag validation as both builders.
+        self.get_shell(params)?;
 
         Ok(())
     }
@@ -478,6 +491,10 @@ impl Module for ShellModule {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "shell_contract_tests.rs"]
+mod contract_tests;
 
 #[cfg(test)]
 mod tests {

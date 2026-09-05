@@ -487,7 +487,9 @@ impl RecoveryManager {
             context_id
         );
 
-        for action in plan.actions.iter().rev() {
+        // The planner already orders undo actions, including reversing changes
+        // of equal priority. Reversing again restores intermediate file states.
+        for action in &plan.actions {
             debug!("Executing rollback action: {:?}", action);
             manager.execute_rollback_action(action).await?;
         }

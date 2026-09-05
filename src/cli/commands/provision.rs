@@ -128,39 +128,39 @@ pub struct ApplyArgs {
     #[arg(long)]
     pub no_lock: bool,
 
-    /// Apply a previously saved plan file instead of generating a new one
+    /// Unsupported: applying a previously saved plan file
     #[arg(long)]
     pub plan: Option<PathBuf>,
 
-    /// Resume a previously interrupted apply from checkpoint
+    /// Unsupported: resuming a previously interrupted apply from checkpoint
     #[arg(long)]
     pub resume: bool,
 
-    /// Validate provider lockfile (fail if not frozen)
+    /// Unsupported: enforcing a frozen provider lockfile
     #[arg(long)]
     pub frozen: bool,
 
-    /// Encrypt state at rest
+    /// Unsupported: encrypting provisioning state at rest
     #[arg(long)]
     pub encrypt_state: bool,
 
-    /// Maximum number of resources that can be destroyed (blast radius)
+    /// Unsupported: limiting the number of resources destroyed
     #[arg(long)]
     pub max_destroy_count: Option<usize>,
 
-    /// Maximum percentage of resources that can be destroyed
+    /// Unsupported: limiting the percentage of resources destroyed
     #[arg(long)]
     pub max_destroy_pct: Option<f64>,
 
-    /// Number of resources to apply in canary phase
+    /// Unsupported: applying a canary resource count
     #[arg(long)]
     pub canary_count: Option<usize>,
 
-    /// Percentage of resources to apply in canary phase
+    /// Unsupported: applying a canary resource percentage
     #[arg(long)]
     pub canary_pct: Option<f64>,
 
-    /// Path to admission policy file (YAML/JSON)
+    /// Unsupported: enforcing an admission policy file (YAML/JSON)
     #[arg(long)]
     pub policy_file: Option<PathBuf>,
 }
@@ -527,6 +527,24 @@ impl ApplyArgs {
     /// Execute the apply command
     #[cfg(feature = "provisioning")]
     pub async fn execute(&self, ctx: &mut CommandContext) -> Result<i32> {
+        for (requested, option) in [
+            (self.plan.is_some(), "--plan"),
+            (self.resume, "--resume"),
+            (self.frozen, "--frozen"),
+            (self.encrypt_state, "--encrypt-state"),
+            (self.max_destroy_count.is_some(), "--max-destroy-count"),
+            (self.max_destroy_pct.is_some(), "--max-destroy-pct"),
+            (self.canary_count.is_some(), "--canary-count"),
+            (self.canary_pct.is_some(), "--canary-pct"),
+            (self.policy_file.is_some(), "--policy-file"),
+        ] {
+            if requested {
+                anyhow::bail!(
+                    "{} is not supported by provisioning apply; no changes were made",
+                    option
+                );
+            }
+        }
         ctx.output.init_progress();
         ctx.output.banner("INFRASTRUCTURE APPLY");
 
@@ -1317,6 +1335,65 @@ mod tests {
     struct TestApplyCli {
         #[command(flatten)]
         args: ApplyArgs,
+    }
+
+    #[cfg(feature = "provisioning")]
+    #[tokio::test]
+    async fn test_diligence_unsupported_apply_options_fail_before_config_access() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing_config = dir.path().join("missing.yml");
+        let cli = crate::cli::Cli::try_parse_from(["rustible", "provision", "apply"]).unwrap();
+        let mut ctx = CommandContext::new(&cli, crate::config::Config::default());
+        let mut ignored = Vec::new();
+        for options in [
+            vec!["--plan", "reviewed.json"],
+            vec!["--resume"],
+            vec!["--frozen"],
+            vec!["--encrypt-state"],
+            vec!["--max-destroy-count", "0"],
+            vec!["--max-destroy-pct", "0"],
+            vec!["--canary-count", "1"],
+            vec!["--canary-pct", "10"],
+            vec!["--policy-file", "policy.yml"],
+        ] {
+            let mut arguments = vec!["test", "--config-file", missing_config.to_str().unwrap()];
+            arguments.extend(options.iter().copied());
+            let args = TestApplyCli::try_parse_from(arguments).unwrap().args;
+            let error = args.execute(&mut ctx).await.err().map(|e| e.to_string());
+            if !error.is_some_and(|message| {
+                message.contains(options[0]) && message.contains("not supported")
+            }) {
+                ignored.push(options[0]);
+            }
+        }
+        assert!(
+            ignored.is_empty(),
+            "safety options were ignored: {ignored:?}"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(all(feature = "provisioning", unix))]
+    #[tokio::test]
+    async fn test_diligence_empty_apply_without_unsupported_options_succeeds() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("infrastructure.yml");
+        std::fs::write(&config_path, "resources: {}\n").unwrap();
+        let cli = crate::cli::Cli::try_parse_from(["rustible", "provision", "apply"]).unwrap();
+        let mut context = CommandContext::new(&cli, crate::config::Config::default());
+        let args = TestApplyCli::try_parse_from([
+            "test",
+            "--config-file",
+            config_path.to_str().unwrap(),
+            "--auto-approve",
+        ])
+        .unwrap()
+        .args;
+        assert_eq!(args.execute(&mut context).await.unwrap(), 0);
+        assert!(directory
+            .path()
+            .join(".rustible/provisioning.state.json")
+            .exists());
     }
 
     #[derive(Parser, Debug)]

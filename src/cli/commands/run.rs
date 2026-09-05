@@ -579,7 +579,7 @@ impl RunArgs {
 
         // Load playbook using executor's Playbook parser
         ctx.output.info("Loading playbook...");
-        let playbook = match Playbook::load(&self.playbook) {
+        let mut playbook = match Playbook::load(&self.playbook) {
             Ok(pb) => pb,
             Err(e) => {
                 ctx.output
@@ -605,35 +605,23 @@ impl RunArgs {
 
         // Get inventory path and load inventory
         let inventory_path = ctx.inventory().cloned();
-        let runtime = if let Some(inv_path) = &inventory_path {
-            if inv_path.exists() {
-                match Inventory::load(inv_path) {
-                    Ok(inventory) => {
-                        ctx.output
-                            .debug(&format!("Loaded inventory from: {}", inv_path.display()));
-                        RuntimeContext::from_inventory(&inventory)
-                    }
-                    Err(e) => {
-                        ctx.output
-                            .warning(&format!("Failed to load inventory: {}", e));
-                        RuntimeContext::new()
-                    }
+        let inventory = if let Some(inv_path) = &inventory_path {
+            match Inventory::load(inv_path) {
+                Ok(inventory) => inventory,
+                Err(error) => {
+                    ctx.output
+                        .error(&format!("Failed to load inventory: {error}"));
+                    return Ok(1);
                 }
-            } else {
-                ctx.output
-                    .warning(&format!("Inventory file not found: {}", inv_path.display()));
-                RuntimeContext::new()
             }
         } else {
-            ctx.output
-                .warning("No inventory specified, using localhost");
-            ctx.output
-                .hint("Use -i <inventory_file> to specify an inventory");
-            // Create runtime with localhost only
-            let mut runtime = RuntimeContext::new();
-            runtime.add_host("localhost".to_string(), Some("all"));
-            runtime
+            let mut inventory = Inventory::new();
+            let mut host = rustible::inventory::Host::new("localhost");
+            host.connection.connection = rustible::inventory::host::ConnectionType::Local;
+            inventory.add_host(host)?;
+            inventory
         };
+        let runtime = RuntimeContext::from_inventory(&inventory);
 
         // Validate limit pattern if specified
         if let Some(ref limit) = ctx.limit {
@@ -641,6 +629,31 @@ impl RunArgs {
                 ctx.output.error(&e);
                 return Ok(1);
             }
+        }
+
+        // Resolve play patterns and --limit with the same inventory matcher.
+        let limited_hosts: Option<std::collections::HashSet<String>> = ctx
+            .limit
+            .as_ref()
+            .map(|limit| {
+                inventory
+                    .get_hosts_for_pattern(limit)
+                    .map(|hosts| hosts.into_iter().map(|host| host.name.clone()).collect())
+            })
+            .transpose()?;
+        for play in &mut playbook.plays {
+            let mut hosts: Vec<String> = inventory
+                .get_hosts_for_pattern(&play.hosts)?
+                .into_iter()
+                .filter(|host| {
+                    limited_hosts
+                        .as_ref()
+                        .is_none_or(|limited| limited.contains(&host.name))
+                })
+                .map(|host| host.name.clone())
+                .collect();
+            hosts.sort();
+            play.hosts = hosts.join(",");
         }
 
         // Parse extra vars and convert to serde_json::Value
@@ -651,7 +664,6 @@ impl RunArgs {
                 extra_vars.insert(k, json_value);
             }
         }
-        ctx.output.debug(&format!("Extra vars: {:?}", extra_vars));
 
         // Plan mode - use legacy show_plan for now as per issue #48:
         // "Plan mode is implemented on top of executor or clearly separated as non-executing"
@@ -726,7 +738,7 @@ impl RunArgs {
             if std::io::stdin().is_terminal() {
                 Some(
                     dialoguer::Password::with_theme(&ColorfulTheme::default())
-                        .with_prompt("🔐 BECOME password")
+                        .with_prompt("🔒 BECOME password")
                         .interact()?,
                 )
             } else {
@@ -762,7 +774,11 @@ impl RunArgs {
         };
 
         // Create executor with runtime context
-        let mut executor = Executor::with_runtime(executor_config, runtime);
+        let mut executor = Executor::with_runtime(executor_config, runtime).with_task_selection(
+            self.tags.clone(),
+            self.skip_tags.clone(),
+            self.start_at_task.clone(),
+        );
 
         // Wire up RecoveryManager when auto_rollback or checkpoint_dir is set
         if self.auto_rollback || self.checkpoint_dir.is_some() {
@@ -2407,7 +2423,8 @@ impl RunArgs {
 
             // Check for regex pattern
             if let Some(regex_str) = pattern.strip_prefix('~') {
-                if regex::Regex::new(regex_str).is_err() {
+                // Optimize: Use cached get_regex instead of recompiling
+                if rustible::utils::get_regex(regex_str).is_err() {
                     return Err(format!("Invalid regex pattern in limit: {}", regex_str));
                 }
             }

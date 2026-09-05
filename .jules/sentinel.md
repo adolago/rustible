@@ -103,3 +103,30 @@
 **Vulnerability:** A refactoring error in `validate_command_args` introduced a logic flaw where input containing any unsafe character would bypass the dangerous pattern check and incorrectly be considered valid, enabling potential command injection.
 **Learning:** Security validation functions must be thoroughly tested, especially when refactoring for performance optimizations (like adding fast-paths). Boolean logic errors in early returns can completely neutralize subsequent security checks.
 **Prevention:** Always maintain comprehensive unit tests covering both positive (safe) and negative (malicious) inputs for security validation routines. Ensure fast-path logic correctly falls through to more exhaustive checks when necessary.
+## 2026-06-21 - Insecure Temporary File Creation in Vault Edit/Create
+**Vulnerability:** The `VaultAction::Edit` and `VaultAction::Create` subcommands used `std::env::temp_dir().join(format!(".rustible_vault_{}", std::process::id()))` to store plaintext secrets temporarily. This predictable naming convention makes it vulnerable to local file exposure or Time-of-Check to Time-of-Use (TOCTOU) attacks.
+**Learning:** `std::env::temp_dir` with predictable file names is dangerous for sensitive contents like unencrypted passwords or secrets.
+**Prevention:** Use the `tempfile` crate (e.g., `tempfile::Builder::new().tempfile()`) to generate secure, atomic temporary files with random names. For external tools, `.into_temp_path()` drops the lock but ensures the file is automatically removed.
+
+## 2025-06-25 - Predictable temporary file vulnerability in Vault command
+**Vulnerability:** The vault edit and create commands used `std::env::temp_dir()` combined with `std::process::id()` to create a predictable temporary file path. This could allow a local attacker to guess the file name and intercept or modify sensitive unencrypted data.
+**Learning:** Using predictable paths for temporary files that hold sensitive data is a security risk, especially on shared systems where `/tmp` is accessible to multiple users.
+**Prevention:** Always use secure temporary file creation utilities like `tempfile::Builder::new().tempfile()` which ensure unique names and atomic creation with secure default permissions.
+## 2025-06-25 - Predictable Temporary File Vulnerability in Vault
+**Vulnerability:** The vault command created temporary files for editing decrypted content using predictable filenames (`.rustible_vault_<pid>`) in the system's shared temporary directory (`std::env::temp_dir()`).
+**Learning:** This exposes sensitive plaintext data to other local users and creates symlink vulnerability risks, as local attackers could predict the file path and redirect it. Explicit `fs::remove_file` cleanup calls are also brittle as they are skipped during panics.
+**Prevention:** Always use secure temporary file creation APIs like `tempfile::Builder::new().tempfile()` which generate unpredictable names with correct restricted permissions and provide automatic cleanup upon dropping. Use `.into_temp_path()` to ensure the file handles are dropped to avoid locking issues in external editors.
+
+## 2026-06-27 - Insecure File Creation (TOCTOU) for Temporary Private Key
+**Vulnerability:** In `src/api/kernel.rs`, a temporary private key file was created using `std::fs::write` followed by `std::fs::set_permissions`. This allowed for a Time-of-Check to Time-of-Use (TOCTOU) vulnerability where the file was temporarily written to disk with default (potentially world-readable) permissions before being restricted.
+**Learning:** Convenience functions like `fs::write` combined with subsequent permission changes are not atomic and introduce a race condition.
+**Prevention:** Use `crate::utils::fs::secure_write_file` (or `std::fs::OpenOptionsExt::mode`) to set permissions *at creation time* atomically.
+
+## 2025-07-05 - Command Injection in Podman Connection Module
+**Vulnerability:** The `PodmanConnection` module constructed shell commands (like `mkdir`, `chmod`, `chown`, `cat`, `test`, and `stat`) by interpolating unescaped file paths and ownership strings directly into the command string. If a malicious path (e.g., containing `;` or `&`) was provided, it could result in arbitrary command execution on the host where `podman exec` is running.
+**Learning:** File paths and user-provided configuration values must always be treated as untrusted input when constructing shell commands, even in contextually "safe" modules like file transfer or connection handlers.
+**Prevention:** Always use `crate::utils::shell_escape` for any variable interpolated into a string that will be executed as a shell command.
+## 2026-03-05 - Command Injection in AWS SSM Parameters
+**Vulnerability:** The AWS SSM connection module used the `{:?}` Debug formatter to construct a shorthand JSON array for the `--parameters` argument (`commands=[{:?}]`). Debug formatting only adds double quotes and does not perform proper JSON escaping (e.g., for unicode or internal quotes).
+**Learning:** Relying on `{:?}` for any form of structured serialization (like JSON parameters for CLI tools) is brittle and can lead to command injection or parsing errors.
+**Prevention:** Always use a proper serialization library like `serde_json` to encode parameters that require structured formatting (e.g., JSON) before passing them as arguments to external commands.

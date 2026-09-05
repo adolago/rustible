@@ -1,0 +1,10 @@
+- name: Until false must exhaust
+  hosts: selected
+  gather_facts: false
+  tasks:
+    - name: retry-until-false
+      debug:
+        msg: retry-attempt
+      until: false
+      retries: 1
+      delay: 0

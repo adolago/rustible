@@ -67,20 +67,21 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Download baseline (if exists)
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         id: baseline-cache
         with:
           path: .criterion-baseline
-          key: benchmark-baseline-${{ matrix.suite.id }}-${{ github.base_ref || 'main' }}
+          key: benchmark-baseline-${{ matrix.suite.id }}-${{ inputs.baseline_name || 'main' }}-${{ github.sha }}
           restore-keys: |
-            benchmark-baseline-${{ matrix.suite.id }}-main
+            benchmark-baseline-${{ matrix.suite.id }}-${{ inputs.baseline_name || 'main' }}-
+            benchmark-baseline-${{ matrix.suite.id }}-main-
 
       - name: Restore baseline
-        if: steps.baseline-cache.outputs.cache-hit == 'true'
+        if: steps.baseline-cache.outputs.cache-matched-key != ''
         run: |
           if [ -d ".criterion-baseline" ]; then
             mkdir -p target/criterion
-            cp -r .criterion-baseline/* target/criterion/ || true
+            cp -a .criterion-baseline/. target/criterion/
             echo "Baseline restored"
           fi
 
@@ -130,18 +131,18 @@ jobs:
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Save baseline (main branch only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      - name: Save successful baseline
+        if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.save_baseline)
         run: |
           mkdir -p .criterion-baseline
-          cp -r target/criterion/* .criterion-baseline/ || true
+          cp -a target/criterion/. .criterion-baseline/
 
       - name: Cache new baseline
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.save_baseline)
         uses: actions/cache/save@v4
         with:
           path: .criterion-baseline
-          key: benchmark-baseline-${{ matrix.suite.id }}-main-${{ github.sha }}
+          key: benchmark-baseline-${{ matrix.suite.id }}-${{ inputs.baseline_name || 'main' }}-${{ github.sha }}
 
       - name: Upload benchmark results
         if: always()

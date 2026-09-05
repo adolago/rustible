@@ -520,13 +520,9 @@ impl AsyncTaskManager {
 
         loop {
             // Check if job is finished
-            if let Some(info) = self.get_job_status(jid).await {
-                if info.finished {
-                    return Some(info);
-                }
-            } else {
-                // Job not found
-                return None;
+            let info = self.get_job_status(jid).await?;
+            if info.finished {
+                return Some(info);
             }
 
             // Check max wait time

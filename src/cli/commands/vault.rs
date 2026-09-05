@@ -358,7 +358,7 @@ fn get_password(password_file: Option<&PathBuf>, ctx: &CommandContext) -> Result
     ctx.output.flush();
 
     let password = dialoguer::Password::with_theme(&ColorfulTheme::default())
-        .with_prompt("🔐 Vault password")
+        .with_prompt("🔒 Vault password")
         .interact()?;
 
     Ok(SecretString::new(password))
@@ -376,8 +376,8 @@ fn get_password_with_confirm(
     ctx.output.flush();
 
     let password = dialoguer::Password::with_theme(&ColorfulTheme::default())
-        .with_prompt("🔐 New Vault password")
-        .with_confirmation("🔐 Confirm Vault password", "Passwords do not match")
+        .with_prompt("🔒 New Vault password")
+        .with_confirmation("🔒 Confirm Vault password", "Passwords do not match")
         .interact()?;
 
     Ok(SecretString::new(password))
@@ -489,17 +489,18 @@ impl VaultArgs {
                     content.into_bytes()
                 };
 
-                // Create temporary file securely
+                // Create temporary file
                 let temp_file = tempfile::Builder::new()
                     .prefix(".rustible_vault_")
-                    .tempfile()?
+                    .tempfile()
+                    .context("Failed to create temporary file")?
                     .into_temp_path();
 
                 fs::write(&temp_file, &plaintext)?;
 
                 // Open editor
                 let status = std::process::Command::new(&args.editor)
-                    .arg(&temp_file)
+                    .arg(&*temp_file)
                     .status()
                     .with_context(|| format!("Failed to open editor: {}", args.editor))?;
 
@@ -536,17 +537,18 @@ impl VaultArgs {
                 let password = get_password_with_confirm(args.vault_password_file.as_ref(), ctx)?;
                 let engine = VaultEngine::new(password);
 
-                // Create temporary file securely
+                // Create temporary file
                 let temp_file = tempfile::Builder::new()
                     .prefix(".rustible_vault_")
-                    .tempfile()?
+                    .tempfile()
+                    .context("Failed to create temporary file")?
                     .into_temp_path();
 
                 fs::write(&temp_file, "")?;
 
                 // Open editor
                 let status = std::process::Command::new(&args.editor)
-                    .arg(&temp_file)
+                    .arg(&*temp_file)
                     .status()
                     .with_context(|| format!("Failed to open editor: {}", args.editor))?;
 
@@ -634,8 +636,8 @@ impl VaultArgs {
                     s.as_bytes().to_vec()
                 } else if std::io::stdin().is_terminal() {
                     let input = dialoguer::Password::with_theme(&ColorfulTheme::default())
-                        .with_prompt("📝 Enter text to encrypt (hidden)")
-                        .with_confirmation("🔐 Confirm text to encrypt", "Inputs do not match")
+                        .with_prompt("🔒 Enter text to encrypt (hidden)")
+                        .with_confirmation("🔒 Confirm text to encrypt", "Inputs do not match")
                         .interact()?;
                     input.as_bytes().to_vec()
                 } else {
@@ -672,7 +674,7 @@ impl VaultArgs {
                 } else if std::io::stdin().is_terminal() {
                     println!(
                         "{}",
-                        "📝 Enter encrypted string (press Enter twice to finish):".bold()
+                        "🔐 Enter encrypted string (press Enter twice to finish):".bold()
                     );
                     let mut lines = Vec::new();
                     let stdin = io::stdin();

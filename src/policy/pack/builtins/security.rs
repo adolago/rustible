@@ -3,7 +3,7 @@
 //! Rules:
 //! - `no-shell` -- deny the `shell` module
 //! - `no-raw`   -- deny the `raw` module
-//! - `require-become-explicit` -- require explicit `become` declarations
+//! - `require-become-explicit` -- unsupported; evaluation fails explicitly
 
 use crate::policy::pack::manifest::{PackCategory, PolicyPackManifest};
 
@@ -12,7 +12,8 @@ pub fn manifest() -> PolicyPackManifest {
     PolicyPackManifest {
         name: "security-baseline".into(),
         version: "1.0.0".into(),
-        description: "Security baseline rules: deny dangerous modules and require explicit privilege escalation".into(),
+        description: "Module restrictions plus an unavailable explicit privilege escalation check"
+            .into(),
         category: PackCategory::Security,
         rules: vec![
             "no-shell".into(),

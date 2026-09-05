@@ -703,6 +703,7 @@ impl<'de> Deserialize<'de> for Task {
             "ignore_unreachable",
             "become",
             "become_user",
+            "connection",
             "delegate_to",
             "delegate_facts",
             "run_once",
@@ -807,10 +808,13 @@ impl<'de> Deserialize<'de> for Task {
             .and_then(|v| serde_json::from_value::<LoopControl>(v.clone()).ok());
 
         // Parse vars
-        let vars = obj
+        let mut vars = obj
             .get("vars")
             .and_then(|v| serde_json::from_value::<Variables>(v.clone()).ok())
             .unwrap_or_default();
+        if let Some(connection) = obj.get("connection") {
+            vars.set("ansible_connection", connection.clone());
+        }
 
         // Parse environment
         let environment = obj

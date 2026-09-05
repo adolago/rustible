@@ -318,6 +318,19 @@ impl UnarchiveModule {
     }
 
     /// Extract a tar archive (optionally gzip-compressed)
+    fn reject_marker_entry(path: &Path) -> ModuleResult<()> {
+        use std::path::Component;
+        let mut components = path.components().filter(|part| *part != Component::CurDir);
+        if components.next() == Some(Component::Normal(std::ffi::OsStr::new(".unarchive_marker")))
+            && components.next().is_none()
+        {
+            return Err(ModuleError::InvalidParameter(
+                "Archive entry collides with reserved extraction metadata".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn extract_tar(
         src: &Path,
         dest: &Path,
@@ -345,6 +358,7 @@ impl UnarchiveModule {
             for entry in archive.entries()? {
                 let mut entry = entry?;
                 let entry_path = entry.path()?.into_owned();
+                Self::reject_marker_entry(&entry_path)?;
 
                 // Security check: Prevent path traversal
                 if !Self::validate_entry_path(&entry_path) {
@@ -394,6 +408,7 @@ impl UnarchiveModule {
             for entry in archive.entries()? {
                 let mut entry = entry?;
                 let entry_path = entry.path()?.into_owned();
+                Self::reject_marker_entry(&entry_path)?;
 
                 // Security check: Prevent path traversal
                 if !Self::validate_entry_path(&entry_path) {
@@ -444,7 +459,79 @@ impl UnarchiveModule {
         })
     }
 
-    /// Extract a zip archive
+    /// Resolve archive-created directories relative to an open root, never
+    /// following symlinks in member-controlled path components.
+    #[cfg(unix)]
+    fn open_zip_directory(root: &File, relative: &Path) -> ModuleResult<File> {
+        use nix::fcntl::{openat, OFlag};
+        use nix::sys::stat::{mkdirat, Mode};
+        let mut directory = root.try_clone()?;
+        for component in relative.components() {
+            let name = match component {
+                std::path::Component::CurDir => continue,
+                std::path::Component::Normal(name) => name,
+                _ => {
+                    return Err(ModuleError::InvalidParameter(
+                        "Unsafe ZIP entry path".into(),
+                    ))
+                }
+            };
+            let flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+            let next = match openat(&directory, name, flags, Mode::empty()) {
+                Ok(next) => next,
+                Err(nix::errno::Errno::ENOENT) => {
+                    match mkdirat(&directory, name, Mode::from_bits_truncate(0o755)) {
+                        Ok(()) | Err(nix::errno::Errno::EEXIST) => {}
+                        Err(error) => return Err(std::io::Error::from(error).into()),
+                    }
+                    openat(&directory, name, flags, Mode::empty()).map_err(std::io::Error::from)?
+                }
+                Err(error) => return Err(std::io::Error::from(error).into()),
+            };
+            directory = File::from(next);
+        }
+        Ok(directory)
+    }
+
+    #[cfg(unix)]
+    fn write_zip_member(
+        root: &File,
+        path: &Path,
+        input: &mut impl Read,
+        mode: Option<u32>,
+    ) -> ModuleResult<()> {
+        use nix::fcntl::{openat, renameat, OFlag};
+        use nix::sys::stat::Mode;
+        use nix::unistd::{unlinkat, UnlinkatFlags};
+        use std::os::unix::fs::PermissionsExt;
+        let parent = Self::open_zip_directory(root, path.parent().unwrap_or(Path::new("")))?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| ModuleError::InvalidParameter("ZIP file has no name".into()))?;
+        let temporary = format!(".rustible-extract-{}", uuid::Uuid::new_v4());
+        let descriptor = openat(
+            &parent,
+            temporary.as_str(),
+            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+            Mode::from_bits_truncate(0o600),
+        )
+        .map_err(std::io::Error::from)?;
+        let mut output = File::from(descriptor);
+        let result = (|| -> ModuleResult<()> {
+            std::io::copy(input, &mut output)?;
+            output.set_permissions(fs::Permissions::from_mode(mode.unwrap_or(0o644) & 0o7777))?;
+            // Replace the directory entry, not a possibly linked existing inode.
+            renameat(&parent, temporary.as_str(), &parent, name).map_err(std::io::Error::from)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = unlinkat(&parent, temporary.as_str(), UnlinkatFlags::NoRemoveDir);
+        }
+        result
+    }
+
+    /// Extract a zip archive using descriptor-relative file operations.
+    #[cfg(unix)]
     fn extract_zip(
         src: &Path,
         dest: &Path,
@@ -465,6 +552,7 @@ impl UnarchiveModule {
         if !dest.exists() {
             fs::create_dir_all(dest)?;
         }
+        let root = File::open(dest)?;
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).map_err(|e| {
@@ -475,6 +563,7 @@ impl UnarchiveModule {
                 Some(p) => p.to_owned(),
                 None => continue, // Skip entries with invalid paths
             };
+            Self::reject_marker_entry(&entry_path)?;
 
             let entry_path_str = entry_path.to_string_lossy();
 
@@ -514,26 +603,11 @@ impl UnarchiveModule {
             }
 
             if file.is_dir() {
-                fs::create_dir_all(&target_path)?;
+                Self::open_zip_directory(&root, &entry_path)?;
             } else {
-                // Create parent directories
-                if let Some(parent) = target_path.parent() {
-                    if !parent.exists() {
-                        fs::create_dir_all(parent)?;
-                    }
-                }
-
-                let mut outfile = File::create(&target_path)?;
-                std::io::copy(&mut file, &mut outfile)?;
-
+                let mode = file.unix_mode();
+                Self::write_zip_member(&root, &entry_path, &mut file, mode)?;
                 total_size += file.size();
-
-                // Set permissions on Unix
-                #[cfg(unix)]
-                if let Some(mode) = file.unix_mode() {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&target_path, fs::Permissions::from_mode(mode))?;
-                }
             }
 
             extracted_count += 1;
@@ -544,6 +618,19 @@ impl UnarchiveModule {
             skipped_count,
             total_size,
         })
+    }
+
+    #[cfg(not(unix))]
+    fn extract_zip(
+        _: &Path,
+        _: &Path,
+        _: &[String],
+        _: &[String],
+        _: bool,
+    ) -> ModuleResult<ExtractionStats> {
+        Err(ModuleError::Unsupported(
+            "Secure ZIP extraction is not implemented on this platform".into(),
+        ))
     }
 
     /// Create a marker file to track extraction state
@@ -557,14 +644,19 @@ impl UnarchiveModule {
                 .map(|d| d.as_secs())
                 .unwrap_or(0)
         );
-        fs::write(marker_path, content)?;
+        use std::io::Write;
+        let mut marker = tempfile::NamedTempFile::new_in(dest)?;
+        marker.write_all(content.as_bytes())?;
+        marker
+            .persist(marker_path)
+            .map_err(|error| ModuleError::Io(error.error))?;
         Ok(())
     }
 
     /// Check if archive was already extracted (idempotency)
     fn check_marker(dest: &Path, archive_checksum: &str) -> bool {
         let marker_path = dest.join(".unarchive_marker");
-        if !marker_path.exists() {
+        if !fs::symlink_metadata(&marker_path).is_ok_and(|metadata| metadata.is_file()) {
             return false;
         }
 

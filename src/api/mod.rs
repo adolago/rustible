@@ -40,6 +40,7 @@ pub mod awx;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderValue, Method};
 use axum::Router;
 use tokio::net::TcpListener;
@@ -183,7 +184,9 @@ impl ApiServer {
 
     /// Build the router with all routes.
     pub fn router(&self) -> Router {
-        let mut app = Router::new().merge(routes::api_routes(self.state.clone()));
+        let mut app = Router::new()
+            .merge(routes::api_routes(self.state.clone()))
+            .layer(DefaultBodyLimit::max(self.config.max_body_size));
 
         // Add CORS layer if enabled
         if self.config.enable_cors && !self.config.allowed_origins.is_empty() {

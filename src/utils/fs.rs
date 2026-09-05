@@ -23,7 +23,7 @@ pub fn secure_write_file(
     mode: Option<u32>,
 ) -> std::io::Result<()> {
     let mut options = OpenOptions::new();
-    options.write(true).truncate(true);
+    options.write(true).truncate(mode.is_none());
 
     if create {
         options.create(true);
@@ -38,11 +38,25 @@ pub fn secure_write_file(
     }
 
     let mut file = options.open(path)?;
+
+    // Existing files keep their old mode when opened. Restrict that same inode
+    // before replacement bytes are visible; opening must not truncate it first.
+    #[cfg(unix)]
+    if let Some(m) = mode {
+        use std::os::unix::fs::PermissionsExt;
+        // Only remove access while old/partial contents remain. Grant new access
+        // and special bits after the complete replacement has been written.
+        let restricted = m & file.metadata()?.permissions().mode() & 0o777;
+        file.set_permissions(std::fs::Permissions::from_mode(restricted))?;
+    }
+    if mode.is_some() && file.metadata()?.is_file() {
+        file.set_len(0)?;
+    }
     file.write_all(content.as_bytes())?;
 
     // On Unix, OpenOptions.mode() only applies when a NEW file is created.
     // If the file already existed, we must explicitly set permissions to ensure they match.
-    // If it was just created, this is redundant but harmless (and ensures consistency).
+    // Restore special mode bits that the operating system may clear on write.
     #[cfg(unix)]
     if let Some(m) = mode {
         use std::os::unix::fs::PermissionsExt;

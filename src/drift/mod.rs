@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::connection::{CommandResult, Connection};
+use crate::utils::shell_escape;
 
 pub mod history;
 
@@ -496,26 +497,21 @@ impl DriftDetector {
             .as_ref()
             .ok_or("No connection available for drift detection")?;
 
+        // sha256sum treats a lone '-' as stdin even after '--'.
+        let path_arg = shell_escape(if path == "-" { "./-" } else { path });
+
         let result = conn
             .execute(
                 &format!(
-                    "stat -c '%a %U %G' {} 2>/dev/null && sha256sum {} 2>/dev/null",
-                    path, path
+                    "stat -c '%a %U %G' -- {} 2>/dev/null && sha256sum -- {} 2>/dev/null",
+                    path_arg, path_arg
                 ),
                 None,
             )
             .await?;
 
         if !result.success {
-            return Ok(Some(DriftItem::new(
-                host,
-                DriftType::FileContent {
-                    path: path.to_string(),
-                },
-                DriftSeverity::High,
-                expected.clone(),
-                serde_json::json!({"exists": false}),
-            )));
+            return Err("File inspection failed; file existence and contents are unknown".into());
         }
 
         let (actual_mode, actual_owner, actual_group, actual_checksum) =
@@ -524,46 +520,51 @@ impl DriftDetector {
         let mut diffs = serde_json::Map::new();
 
         if let Some(exp_checksum) = expected.get("checksum").and_then(|v| v.as_str()) {
-            if let Some(ref actual) = actual_checksum {
-                if actual != exp_checksum {
-                    diffs.insert(
-                        "checksum".to_string(),
-                        serde_json::json!({"expected": exp_checksum, "actual": actual}),
-                    );
-                }
+            let actual = actual_checksum
+                .as_ref()
+                .ok_or("File checksum was not observed")?;
+            if actual != exp_checksum {
+                diffs.insert(
+                    "checksum".to_string(),
+                    serde_json::json!({"expected": exp_checksum, "actual": actual}),
+                );
             }
         }
 
         if let Some(exp_owner) = expected.get("owner").and_then(|v| v.as_str()) {
-            if let Some(ref actual) = actual_owner {
-                if actual != exp_owner {
-                    diffs.insert(
-                        "owner".to_string(),
-                        serde_json::json!({"expected": exp_owner, "actual": actual}),
-                    );
-                }
+            let actual = actual_owner.as_ref().ok_or("File owner was not observed")?;
+            if actual != exp_owner {
+                diffs.insert(
+                    "owner".to_string(),
+                    serde_json::json!({"expected": exp_owner, "actual": actual}),
+                );
             }
         }
 
         if let Some(exp_group) = expected.get("group").and_then(|v| v.as_str()) {
-            if let Some(ref actual) = actual_group {
-                if actual != exp_group {
-                    diffs.insert(
-                        "group".to_string(),
-                        serde_json::json!({"expected": exp_group, "actual": actual}),
-                    );
-                }
+            let actual = actual_group.as_ref().ok_or("File group was not observed")?;
+            if actual != exp_group {
+                diffs.insert(
+                    "group".to_string(),
+                    serde_json::json!({"expected": exp_group, "actual": actual}),
+                );
             }
         }
 
         if let Some(exp_mode) = expected.get("mode").and_then(|v| v.as_str()) {
-            if let Some(ref actual) = actual_mode {
-                if actual != exp_mode {
-                    diffs.insert(
-                        "mode".to_string(),
-                        serde_json::json!({"expected": exp_mode, "actual": actual}),
-                    );
-                }
+            let actual = actual_mode.as_ref().ok_or("File mode was not observed")?;
+            let parse_mode = |mode: &str| {
+                u32::from_str_radix(mode, 8)
+                    .ok()
+                    .filter(|value| *value <= 0o7777)
+            };
+            let actual_value = parse_mode(actual).ok_or("Observed file mode is invalid")?;
+            let expected_value = parse_mode(exp_mode).ok_or("Expected file mode is invalid")?;
+            if actual_value != expected_value {
+                diffs.insert(
+                    "mode".to_string(),
+                    serde_json::json!({"expected": exp_mode, "actual": actual}),
+                );
             }
         }
 
@@ -607,11 +608,13 @@ impl DriftDetector {
             .as_ref()
             .ok_or("No connection available for drift detection")?;
 
+        let name_arg = shell_escape(name);
+
         let result = conn
             .execute(
                 &format!(
-                    "dpkg-query -W -f='${{Status}} ${{Version}}' {} 2>/dev/null || rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' {} 2>/dev/null",
-                    name, name
+                    "dpkg-query -W -f='${{Status}} ${{Version}}' -- {} 2>/dev/null || rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' -- {} 2>/dev/null",
+                    name_arg, name_arg
                 ),
                 None,
             )
@@ -622,7 +625,7 @@ impl DriftDetector {
             .and_then(|v| v.as_str())
             .unwrap_or("present");
 
-        let (is_installed, actual_version) = parse_package_state(&result);
+        let (is_installed, actual_version) = parse_package_state(&result)?;
 
         match expected_state {
             "absent" => {
@@ -692,17 +695,22 @@ impl DriftDetector {
             .as_ref()
             .ok_or("No connection available for drift detection")?;
 
+        let name_arg = shell_escape(name);
+
         let result = conn
             .execute(
                 &format!(
-                    "systemctl is-active {} 2>/dev/null; echo '---'; systemctl is-enabled {} 2>/dev/null",
-                    name, name
+                    "systemctl is-active -- {} 2>/dev/null; echo '---'; systemctl is-enabled -- {} 2>/dev/null",
+                    name_arg, name_arg
                 ),
                 None,
             )
             .await?;
 
-        let (actual_active, actual_enabled) = parse_service_state(&result.stdout);
+        // is-enabled legitimately exits nonzero for disabled units. Require
+        // recognized observations instead of equating any failure with false.
+        let (actual_active, actual_enabled) = parse_service_state(&result.stdout)
+            .ok_or("Service active/enabled state was not observed unambiguously")?;
 
         let mut diffs = serde_json::Map::new();
 
@@ -814,28 +822,32 @@ fn parse_file_state(
 ///
 /// dpkg format: `install ok installed <version>`
 /// rpm format: `<version>-<release>` (or error message if not installed)
-fn parse_package_state(result: &CommandResult) -> (bool, Option<String>) {
+fn parse_package_state(result: &CommandResult) -> Result<(bool, Option<String>), &'static str> {
     if !result.success {
-        return (false, None);
+        return Err("Package inspection failed; absence is not established");
     }
 
     let stdout = result.stdout.trim();
 
     // dpkg-query format: "install ok installed <version>"
-    if stdout.contains("install ok installed") {
-        let version = stdout
-            .strip_prefix("install ok installed ")
-            .map(|v| v.trim().to_string());
-        return (true, version);
+    if let Some(version) = stdout.strip_prefix("install ok installed ") {
+        if version.is_empty() || version.chars().any(char::is_whitespace) {
+            return Err("Installed package version was not observed unambiguously");
+        }
+        return Ok((true, Some(version.to_string())));
     }
 
     // rpm format: just the version string, or "package <name> is not installed"
-    if stdout.contains("is not installed") || stdout.is_empty() {
-        return (false, None);
+    if stdout.starts_with("package ") && stdout.ends_with(" is not installed") {
+        return Ok((false, None));
     }
 
-    // Assume rpm version output
-    (true, Some(stdout.to_string()))
+    // RPM's requested version is one nonempty field; diagnostics or incomplete
+    // dpkg status output are not observations of an installed version.
+    if stdout.is_empty() || stdout.chars().any(char::is_whitespace) {
+        return Err("Package state was not observed unambiguously");
+    }
+    Ok((true, Some(stdout.to_string())))
 }
 
 /// Parse systemctl output to determine active and enabled states.
@@ -846,14 +858,19 @@ fn parse_package_state(result: &CommandResult) -> (bool, Option<String>) {
 /// ---
 /// enabled
 /// ```
-fn parse_service_state(output: &str) -> (bool, bool) {
-    let parts: Vec<&str> = output.split("---").collect();
-
-    let active = parts.first().map(|s| s.trim() == "active").unwrap_or(false);
-
-    let enabled = parts.get(1).map(|s| s.trim() == "enabled").unwrap_or(false);
-
-    (active, enabled)
+fn parse_service_state(output: &str) -> Option<(bool, bool)> {
+    let (active, enabled) = output.split_once("---")?;
+    let active = match active.trim() {
+        "active" => true,
+        "inactive" => false,
+        _ => return None,
+    };
+    let enabled = match enabled.trim() {
+        "enabled" | "enabled-runtime" => true,
+        "disabled" | "masked" | "masked-runtime" => false,
+        _ => return None,
+    };
+    Some((active, enabled))
 }
 
 impl Default for DriftDetector {
@@ -876,12 +893,14 @@ mod tests {
     /// A mock connection that returns preconfigured responses for testing.
     struct MockConnection {
         responses: Mutex<Vec<CommandResult>>,
+        commands: Mutex<Vec<String>>,
     }
 
     impl MockConnection {
         fn new(responses: Vec<CommandResult>) -> Self {
             Self {
                 responses: Mutex::new(responses),
+                commands: Mutex::new(Vec::new()),
             }
         }
     }
@@ -898,9 +917,10 @@ mod tests {
 
         async fn execute(
             &self,
-            _command: &str,
+            command: &str,
             _options: Option<ExecuteOptions>,
         ) -> ConnectionResult<CommandResult> {
+            self.commands.lock().unwrap().push(command.to_string());
             let mut responses = self.responses.lock().unwrap();
             if responses.is_empty() {
                 Ok(CommandResult::failure(
@@ -956,6 +976,91 @@ mod tests {
         async fn close(&self) -> ConnectionResult<()> {
             Ok(())
         }
+    }
+
+    async fn recorded_inspection_command(category: &str, name: &str, stdout: &str) -> String {
+        let connection = Arc::new(MockConnection::new(vec![CommandResult::success(
+            stdout.to_string(),
+            String::new(),
+        )]));
+        let detector = DriftDetector::with_connection(DriftConfig::default(), connection.clone());
+        let desired = serde_json::json!({(category): {(name): {}}});
+        let report = detector.detect_drift("fixture", &desired).await.unwrap();
+        assert!(!report.has_drift(), "fixture response must be recognizable");
+        let commands = connection.commands.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        commands[0].clone()
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_file_command_arguments() {
+        let mut mismatches = Vec::new();
+        for (name, argument) in [
+            ("/etc/hosts", "/etc/hosts"),
+            (
+                "/var/lib/app settings/config",
+                "'/var/lib/app settings/config'",
+            ),
+            ("/var/lib/team's/config", r"'/var/lib/team'\''s/config'"),
+            ("-notes.txt", "-notes.txt"),
+            ("-", "./-"),
+        ] {
+            let actual = recorded_inspection_command(
+                "files",
+                name,
+                "644 fixture fixture\n0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef fixture\n",
+            )
+            .await;
+            let expected = format!(
+                "stat -c '%a %U %G' -- {argument} 2>/dev/null && sha256sum -- {argument} 2>/dev/null"
+            );
+            if actual != expected {
+                mismatches.push((name, actual, expected));
+            }
+        }
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_package_command_arguments() {
+        let mut mismatches = Vec::new();
+        for (name, argument) in [
+            ("nginx", "nginx"),
+            ("example package", "'example package'"),
+            ("team's-package", r"'team'\''s-package'"),
+            ("-example", "-example"),
+        ] {
+            let actual =
+                recorded_inspection_command("packages", name, "install ok installed 1.0\n").await;
+            let expected = format!(
+                "dpkg-query -W -f='${{Status}} ${{Version}}' -- {argument} 2>/dev/null || rpm -q --qf '%{{VERSION}}-%{{RELEASE}}' -- {argument} 2>/dev/null"
+            );
+            if actual != expected {
+                mismatches.push((name, actual, expected));
+            }
+        }
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_service_command_arguments() {
+        let mut mismatches = Vec::new();
+        for (name, argument) in [
+            ("nginx.service", "nginx.service"),
+            ("example service", "'example service'"),
+            ("team's.service", r"'team'\''s.service'"),
+            ("-example.service", "-example.service"),
+        ] {
+            let actual =
+                recorded_inspection_command("services", name, "active\n---\nenabled\n").await;
+            let expected = format!(
+                "systemctl is-active -- {argument} 2>/dev/null; echo '---'; systemctl is-enabled -- {argument} 2>/dev/null"
+            );
+            if actual != expected {
+                mismatches.push((name, actual, expected));
+            }
+        }
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
     }
 
     #[test]
@@ -1024,6 +1129,150 @@ mod tests {
 
     // --- Parsing tests ---
 
+    #[tokio::test]
+    async fn test_diligence_drift_incomplete_file_observation_is_unknown() {
+        for stdout in ["", "644 root root\n", "invalid root root\nabc123 fixture\n"] {
+            let detector = DriftDetector::with_connection(
+                DriftConfig::comprehensive(),
+                Arc::new(MockConnection::new(vec![CommandResult::success(
+                    stdout.to_string(),
+                    String::new(),
+                )])),
+            );
+            let report = detector
+                .detect_drift(
+                    "synthetic-host",
+                    &serde_json::json!({
+                        "files": {"fixture": {"mode": "644", "owner": "root", "checksum": "abc123"}}
+                    }),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                report.total_count, 1,
+                "missing observation reported clean: {stdout:?}"
+            );
+            assert!(matches!(
+                report.drifts[0].drift_type,
+                DriftType::Unknown { .. }
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_file_mode_normalizes_octal() {
+        let detector = DriftDetector::with_connection(
+            DriftConfig::comprehensive(),
+            Arc::new(MockConnection::new(vec![CommandResult::success(
+                "644 root root\nabc123 fixture\n".to_string(),
+                String::new(),
+            )])),
+        );
+        let report = detector
+            .detect_drift(
+                "synthetic-host",
+                &serde_json::json!({
+                    "files": {"fixture": {"mode": "0644"}}
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !report.has_drift(),
+            "equivalent octal modes must compare equal"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_unknown_service_is_never_clean() {
+        for stdout in [
+            "",
+            "---",
+            "unknown\n---\ndisabled",
+            "inactive\n---\nnot-found",
+            "inactive\n---\ndisabled\nextra",
+        ] {
+            let detector = DriftDetector::with_connection(
+                DriftConfig::comprehensive(),
+                Arc::new(MockConnection::new(vec![CommandResult::failure(
+                    1,
+                    stdout.to_string(),
+                    "synthetic inspection failure".to_string(),
+                )])),
+            );
+            let report = detector
+                .detect_drift(
+                    "synthetic-host",
+                    &serde_json::json!({
+                        "services": {"fixture": {"state": "stopped", "enabled": false}}
+                    }),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                report.total_count, 1,
+                "unknown service reported clean: {stdout:?}"
+            );
+            assert!(matches!(
+                report.drifts[0].drift_type,
+                DriftType::Unknown { .. }
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_disabled_service_exit_status_is_supported() {
+        let detector = DriftDetector::with_connection(
+            DriftConfig::comprehensive(),
+            Arc::new(MockConnection::new(vec![CommandResult::failure(
+                1,
+                "inactive\n---\ndisabled\n".to_string(),
+                String::new(),
+            )])),
+        );
+        let report = detector
+            .detect_drift(
+                "synthetic-host",
+                &serde_json::json!({
+                    "services": {"fixture": {"state": "stopped", "enabled": false}}
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !report.has_drift(),
+            "systemctl disabled legitimately exits nonzero"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_diligence_drift_unobserved_package_absence_is_unknown() {
+        for result in [
+            CommandResult::failure(127, String::new(), "query command unavailable".to_string()),
+            CommandResult::success(String::new(), String::new()),
+            CommandResult::success("install ok installed".to_string(), String::new()),
+        ] {
+            let detector = DriftDetector::with_connection(
+                DriftConfig::comprehensive(),
+                Arc::new(MockConnection::new(vec![result])),
+            );
+            let report = detector
+                .detect_drift(
+                    "synthetic-host",
+                    &serde_json::json!({
+                        "packages": {"fixture": {"state": "absent"}}
+                    }),
+                )
+                .await
+                .unwrap();
+            assert_eq!(report.total_count, 1);
+            assert!(matches!(
+                report.drifts[0].drift_type,
+                DriftType::Unknown { .. }
+            ));
+        }
+    }
+
     #[test]
     fn test_parse_file_state_full() {
         let output = "644 root www-data\nabc123  /etc/nginx/nginx.conf\n";
@@ -1059,7 +1308,7 @@ mod tests {
             "install ok installed 1.18.0-6ubuntu1".to_string(),
             String::new(),
         );
-        let (installed, version) = parse_package_state(&result);
+        let (installed, version) = parse_package_state(&result).unwrap();
         assert!(installed);
         assert_eq!(version.as_deref(), Some("1.18.0-6ubuntu1"));
     }
@@ -1067,15 +1316,13 @@ mod tests {
     #[test]
     fn test_parse_package_state_not_installed() {
         let result = CommandResult::failure(1, String::new(), "not found".to_string());
-        let (installed, version) = parse_package_state(&result);
-        assert!(!installed);
-        assert_eq!(version, None);
+        assert!(parse_package_state(&result).is_err());
     }
 
     #[test]
     fn test_parse_package_state_rpm() {
         let result = CommandResult::success("1.18.0-2.el8".to_string(), String::new());
-        let (installed, version) = parse_package_state(&result);
+        let (installed, version) = parse_package_state(&result).unwrap();
         assert!(installed);
         assert_eq!(version.as_deref(), Some("1.18.0-2.el8"));
     }
@@ -1084,14 +1331,14 @@ mod tests {
     fn test_parse_package_state_rpm_not_installed() {
         let result =
             CommandResult::success("package nginx is not installed".to_string(), String::new());
-        let (installed, _) = parse_package_state(&result);
+        let (installed, _) = parse_package_state(&result).unwrap();
         assert!(!installed);
     }
 
     #[test]
     fn test_parse_service_state_active_enabled() {
         let output = "active\n---\nenabled\n";
-        let (active, enabled) = parse_service_state(output);
+        let (active, enabled) = parse_service_state(output).unwrap();
         assert!(active);
         assert!(enabled);
     }
@@ -1099,7 +1346,7 @@ mod tests {
     #[test]
     fn test_parse_service_state_inactive_disabled() {
         let output = "inactive\n---\ndisabled\n";
-        let (active, enabled) = parse_service_state(output);
+        let (active, enabled) = parse_service_state(output).unwrap();
         assert!(!active);
         assert!(!enabled);
     }
@@ -1107,7 +1354,7 @@ mod tests {
     #[test]
     fn test_parse_service_state_active_disabled() {
         let output = "active\n---\ndisabled\n";
-        let (active, enabled) = parse_service_state(output);
+        let (active, enabled) = parse_service_state(output).unwrap();
         assert!(active);
         assert!(!enabled);
     }
@@ -1129,7 +1376,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_detect_drift_file_missing() {
+    async fn test_detect_drift_failed_file_inspection_is_unknown() {
         let conn = Arc::new(MockConnection::new(vec![CommandResult::failure(
             1,
             String::new(),
@@ -1143,7 +1390,11 @@ mod tests {
 
         let report = detector.detect_drift("host1", &state).await.unwrap();
         assert!(report.has_drift());
-        assert_eq!(report.high_count, 1);
+        assert_eq!(report.low_count, 1);
+        assert!(matches!(
+            report.drifts[0].drift_type,
+            DriftType::Unknown { .. }
+        ));
     }
 
     #[tokio::test]
@@ -1180,7 +1431,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_detect_drift_package_missing() {
+    async fn test_detect_drift_failed_package_inspection_is_unknown() {
         let conn = Arc::new(MockConnection::new(vec![CommandResult::failure(
             1,
             String::new(),
@@ -1201,7 +1452,11 @@ mod tests {
 
         let report = detector.detect_drift("host1", &state).await.unwrap();
         assert!(report.has_drift());
-        assert_eq!(report.high_count, 1);
+        assert_eq!(report.low_count, 1);
+        assert!(matches!(
+            report.drifts[0].drift_type,
+            DriftType::Unknown { .. }
+        ));
     }
 
     #[tokio::test]

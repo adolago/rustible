@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::manifest::PolicyPackManifest;
-use crate::policy::RuleSeverity;
+use crate::policy::{PolicyError, PolicyResult, RuleSeverity};
 
 /// A loaded policy pack ready for evaluation.
 #[derive(Debug, Clone)]
@@ -42,7 +42,7 @@ pub enum RuleCheck {
     MaxTasks(usize),
     /// Require that every task has a `name` field.
     RequireName,
-    /// A custom check identified by a string key (for extensibility).
+    /// A declared check without an implementation; evaluation reports failure.
     Custom(String),
 }
 
@@ -96,8 +96,8 @@ impl PackLoader {
             },
             "require-become-explicit" => PackRule {
                 name: "require-become-explicit".into(),
-                description: "Require explicit become declaration".into(),
-                severity: RuleSeverity::Warning,
+                description: "Unsupported: explicit become declaration check".into(),
+                severity: RuleSeverity::Error,
                 check: RuleCheck::Custom("require-become-explicit".into()),
             },
             "require-tags" => PackRule {
@@ -120,26 +120,26 @@ impl PackLoader {
             },
             "max-forks" => PackRule {
                 name: "max-forks".into(),
-                description: "Warn when forks exceed a safe limit".into(),
-                severity: RuleSeverity::Warning,
+                description: "Unsupported: fork limit check".into(),
+                severity: RuleSeverity::Error,
                 check: RuleCheck::Custom("max-forks".into()),
             },
             "require-limit" => PackRule {
                 name: "require-limit".into(),
-                description: "Require a limit pattern for production".into(),
-                severity: RuleSeverity::Warning,
+                description: "Unsupported: production limit check".into(),
+                severity: RuleSeverity::Error,
                 check: RuleCheck::Custom("require-limit".into()),
             },
             "deny-localhost-in-prod" => PackRule {
                 name: "deny-localhost-in-prod".into(),
-                description: "Deny localhost as a target in production plays".into(),
+                description: "Unsupported: production localhost check".into(),
                 severity: RuleSeverity::Error,
                 check: RuleCheck::Custom("deny-localhost-in-prod".into()),
             },
             other => PackRule {
                 name: other.into(),
-                description: format!("Custom rule: {}", other),
-                severity: RuleSeverity::Info,
+                description: format!("Unsupported rule: {}", other),
+                severity: RuleSeverity::Error,
                 check: RuleCheck::Custom(other.into()),
             },
         }
@@ -154,16 +154,23 @@ impl PackRule {
     /// Evaluate this rule against the given playbook JSON, returning a list of
     /// violation messages (empty means the rule passed).
     pub fn evaluate(&self, input: &Value) -> Vec<String> {
-        match &self.check {
-            RuleCheck::ModuleBlacklist(modules) => eval_module_blacklist(modules, input),
+        self.evaluate_result(input)
+            .unwrap_or_else(|error| vec![error.to_string()])
+    }
+
+    /// Keep inspection failures separate from ordinary policy violations.
+    pub(super) fn evaluate_result(&self, input: &Value) -> PolicyResult<Vec<String>> {
+        let violations = match &self.check {
+            RuleCheck::ModuleBlacklist(modules) => return eval_module_blacklist(modules, input),
             RuleCheck::RequireTag(tag_field) => eval_require_tag(tag_field, input),
             RuleCheck::MaxTasks(max) => eval_max_tasks(*max, input),
             RuleCheck::RequireName => eval_require_name(input),
-            RuleCheck::Custom(_key) => {
-                // Custom checks are extensibility points; they pass by default.
-                Vec::new()
-            }
-        }
+            RuleCheck::Custom(key) => vec![format!(
+                "unsupported policy check '{}': no evaluator is implemented",
+                key
+            )],
+        };
+        Ok(violations)
     }
 }
 
@@ -184,25 +191,9 @@ fn tasks_from_play(play: &Value) -> Vec<&Value> {
         .unwrap_or_default()
 }
 
-fn eval_module_blacklist(modules: &[String], input: &Value) -> Vec<String> {
-    let mut violations = Vec::new();
-    for play in plays_from_input(input) {
-        for task in tasks_from_play(play) {
-            for module in modules {
-                if task.get(module.as_str()).is_some() {
-                    let task_name = task
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("<unnamed>");
-                    violations.push(format!(
-                        "task '{}' uses denied module '{}'",
-                        task_name, module
-                    ));
-                }
-            }
-        }
-    }
-    violations
+fn eval_module_blacklist(modules: &[String], input: &Value) -> PolicyResult<Vec<String>> {
+    let modules: Vec<_> = modules.iter().map(String::as_str).collect();
+    crate::policy::traversal::denied_modules(&modules, input).map_err(PolicyError::InvalidInput)
 }
 
 fn eval_require_tag(tag_field: &str, input: &Value) -> Vec<String> {

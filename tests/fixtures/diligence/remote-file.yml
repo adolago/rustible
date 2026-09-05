@@ -1,0 +1,8 @@
+- name: Remote must never write controller
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: remote-sentinel
+      file:
+        path: "__SCRATCH__/remote-controller-sentinel"
+        state: touch

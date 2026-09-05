@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use chrono::{DateTime, Utc};
@@ -162,6 +161,21 @@ pub async fn execute_playbook(
     user: AuthenticatedUser,
     Json(req): Json<PlaybookExecuteRequest>,
 ) -> ApiResult<Json<PlaybookExecuteResponse>> {
+    // These selectors do not reach this API's executor path yet. Refuse the
+    // requested restriction before resolving files or creating a background job.
+    for (requested, option) in [
+        (req.limit.is_some(), "limit"),
+        (!req.tags.is_empty(), "tags"),
+        (!req.skip_tags.is_empty(), "skip_tags"),
+        (req.start_at_task.is_some(), "start_at_task"),
+    ] {
+        if requested {
+            return Err(ApiError::ValidationError(format!(
+                "API execution restriction '{option}' is unsupported; no job was created"
+            )));
+        }
+    }
+
     // Validate playbook exists
     let playbook_path = find_playbook(&state.config.playbook_paths, &req.playbook)?;
 
@@ -358,12 +372,8 @@ fn find_playbook(search_paths: &[String], playbook: &str) -> ApiResult<String> {
                 }
             }
         }
-        if playbook_path.exists() {
-            return Err(ApiError::Forbidden(format!(
-                "Access denied to playbook outside search paths: {}",
-                playbook
-            )));
-        }
+        // Do not inspect an absolute path outside every configured root. Its
+        // existence must not change the response for an inaccessible playbook.
         return Err(ApiError::NotFound(format!(
             "Playbook not found or access denied: {}",
             playbook
@@ -658,19 +668,21 @@ pub async fn get_job_output_internal(
     Ok(job.full_output())
 }
 
-/// Cancel a job.
+/// Report unsupported cancellation without claiming execution has stopped.
 pub async fn cancel_job(
     State(state): State<Arc<AppState>>,
     _user: AuthenticatedUser,
     AxumPath(job_id): AxumPath<Uuid>,
-) -> ApiResult<impl IntoResponse> {
-    if state.cancel_job(job_id) {
-        Ok((
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "message": "Job cancelled",
-                "job_id": job_id
-            })),
+) -> ApiResult<Json<serde_json::Value>> {
+    let job = state
+        .get_job(job_id)
+        .ok_or_else(|| ApiError::NotFound(format!("Job not found: {}", job_id)))?;
+    if matches!(
+        job.status,
+        JobStatus::Pending | JobStatus::Running | JobStatus::ActionRequired
+    ) {
+        Err(ApiError::ValidationError(
+            "Job cancellation is unsupported; execution was not stopped".to_string(),
         ))
     } else {
         Err(ApiError::Conflict("Job cannot be cancelled".to_string()))
@@ -966,7 +978,7 @@ mod tests {
 
         // Test absolute path outside search path
         let result = find_playbook(&search_paths, secret_file.to_str().unwrap());
-        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+        assert!(matches!(result, Err(ApiError::NotFound(_))));
     }
 
     #[test]

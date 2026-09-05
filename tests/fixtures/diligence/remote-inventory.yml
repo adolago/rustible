@@ -1,0 +1,6 @@
+all:
+  hosts:
+    remote.invalid:
+      ansible_connection: ssh
+      ansible_host: 192.0.2.1
+      ansible_port: 1

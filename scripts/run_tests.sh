@@ -102,12 +102,12 @@ print_step() {
 
 print_success() {
     echo -e "${GREEN}✓ $1${NC}"
-    ((PASSED_TESTS++))
+    PASSED_TESTS=$((PASSED_TESTS + 1))
 }
 
 print_failure() {
     echo -e "${RED}✗ $1${NC}"
-    ((FAILED_TESTS++))
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 }
 
 print_skip() {
@@ -288,8 +288,8 @@ if ! $RUN_QUICK; then
     run_test_category "Vault tests" \
         "cargo test --test vault_tests -- $TEST_ARGS"
 
-    run_test_category "Error tests" \
-        "cargo test --test error_tests -- $TEST_ARGS"
+    run_test_category "Comprehensive executor tests" \
+        "cargo test --test executor_comprehensive_tests -- $TEST_ARGS"
 
     run_test_category "CLI tests" \
         "cargo test --test cli_tests -- $TEST_ARGS"
@@ -336,8 +336,8 @@ fi
 if $RUN_BENCH; then
     print_header "Phase 7: Benchmarks"
 
-    run_test_category "Execution benchmarks" \
-        "cargo bench --bench execution_benchmark"
+    run_test_category "Strategy benchmarks" \
+        "cargo bench --bench strategy_benchmark"
 
     run_test_category "Performance benchmarks" \
         "cargo bench --bench performance_benchmark"

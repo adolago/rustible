@@ -317,7 +317,11 @@ impl WatchCondition {
                 value.as_str().map(|s| s.contains(substr)).unwrap_or(false)
             }
             WatchCondition::Matches(pattern) => {
-                if let (Some(s), Ok(re)) = (value.as_str(), regex::Regex::new(pattern)) {
+                // Optimize: Use get_regex to fetch a cached compiled regex, avoiding recompilation on every evaluation
+                if let (Some(s), Ok(re)) = (
+                    value.as_str(),
+                    crate::utils::regex_cache::get_regex(pattern),
+                ) {
                     re.is_match(s)
                 } else {
                     false
@@ -556,7 +560,8 @@ impl VariableInspector {
         pattern: &str,
         vars: &HashMap<String, JsonValue>,
     ) -> Vec<InspectionResult> {
-        let regex = match regex::Regex::new(pattern) {
+        // Optimize: Use get_regex to fetch a cached compiled regex, avoiding recompilation during variable searches
+        let regex = match crate::utils::regex_cache::get_regex(pattern) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };

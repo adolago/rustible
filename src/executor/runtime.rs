@@ -390,11 +390,20 @@ impl RuntimeContext {
                 ctx.add_host(host_name.clone(), None);
             }
 
-            // Set host variables
-            for (key, value) in &host.vars {
+            // Preserve effective group/host values before transport defaults.
+            let host_vars = inventory.get_host_vars(host);
+            for (key, value) in &host_vars {
                 if let Ok(json_value) = serde_json::to_value(value) {
                     ctx.set_host_var(&host_name, key.clone(), json_value);
                 }
+            }
+
+            if !host_vars.contains_key("ansible_connection") {
+                ctx.set_host_var(
+                    &host_name,
+                    "ansible_connection".to_string(),
+                    serde_json::json!(host.connection.connection.to_string()),
+                );
             }
 
             // Also set connection-related ansible variables
@@ -498,6 +507,34 @@ impl RuntimeContext {
     pub fn clear_play_vars(&mut self) {
         self.play_vars.clear();
         self.task_vars.clear();
+    }
+
+    /// Resolve transport only from authored configuration. Remote facts and
+    /// registered module output must never authorize controller-local execution.
+    pub fn configured_connection(&self, host: &str) -> Option<String> {
+        let mut value = self.global_vars.get("ansible_connection");
+        for group in self.groups.values() {
+            if group.hosts.iter().any(|name| name == host) {
+                value = group.vars.get("ansible_connection").or(value);
+            }
+        }
+        if let Some(data) = self.host_data.get(host) {
+            value = data.vars.get("ansible_connection").or(value);
+        }
+        value = self.play_vars.get("ansible_connection").or(value);
+        for scope in &self.block_vars_stack {
+            value = scope.get("ansible_connection").or(value);
+        }
+        value = self.task_vars.get("ansible_connection").or(value);
+        value = self.extra_vars.get("ansible_connection").or(value);
+        // An invalid explicit value is still explicit; it must not trigger the
+        // implicit-localhost default.
+        value.map(|value| {
+            value
+                .as_str()
+                .unwrap_or("__invalid_transport__")
+                .to_string()
+        })
     }
 
     /// Get a variable by name, respecting precedence
@@ -725,24 +762,29 @@ impl RuntimeContext {
         &self.all_hosts
     }
 
-    /// Get hosts in a group
+    /// Get hosts in a group, visiting each group once even for directly added cycles.
     pub fn get_group_hosts(&self, group: &str) -> Option<Vec<String>> {
-        self.groups.get(group).map(|g| {
-            let mut hosts = g.hosts.clone();
-
-            // Include hosts from child groups
-            for child in &g.children {
-                if let Some(child_hosts) = self.get_group_hosts(child) {
-                    for h in child_hosts {
-                        if !hosts.contains(&h) {
-                            hosts.push(h);
-                        }
-                    }
+        self.groups.get(group)?;
+        let mut hosts = Vec::new();
+        let mut seen_hosts = std::collections::HashSet::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut pending = vec![group];
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name) {
+                continue;
+            }
+            let Some(current) = self.groups.get(name) else {
+                continue;
+            };
+            for host in &current.hosts {
+                if seen_hosts.insert(host.as_str()) {
+                    hosts.push(host.clone());
                 }
             }
-
-            hosts
-        })
+            // Reverse the stack insertion to preserve depth-first child order.
+            pending.extend(current.children.iter().rev().map(String::as_str));
+        }
+        Some(hosts)
     }
 
     /// Set a fact for a host

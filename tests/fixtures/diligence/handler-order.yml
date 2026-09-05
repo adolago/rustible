@@ -1,0 +1,16 @@
+- name: Handler definition order
+  hosts: selected
+  gather_facts: false
+  tasks:
+    - name: notify-ordered-handlers
+      debug:
+        msg: changed-marker
+      changed_when: true
+      notify: [z-first-handler, a-second-handler]
+  handlers:
+    - name: z-first-handler
+      debug:
+        msg: first
+    - name: a-second-handler
+      debug:
+        msg: second

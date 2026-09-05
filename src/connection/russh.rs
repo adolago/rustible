@@ -22,6 +22,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, trace, warn};
 
 use crate::security::BecomeValidator;
+use crate::utils::shell_escape;
 
 /// Threshold for using streaming uploads (1MB)
 const STREAM_THRESHOLD: u64 = 1024 * 1024;
@@ -628,6 +629,7 @@ impl Handler for ClientHandler {
     async fn server_channel_open_agent_forward(
         &mut self,
         channel: russh::Channel<russh::client::Msg>,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         if !self.forward_agent {
@@ -635,6 +637,7 @@ impl Handler for ClientHandler {
             return Ok(());
         }
 
+        reply.accept().await;
         debug!(host = %self.host, "Server opened agent forwarding channel, starting proxy");
 
         // Spawn a task to proxy agent protocol between the channel and local agent
@@ -788,7 +791,7 @@ impl RusshConnection {
 
         // Add working directory
         if let Some(cwd) = &options.cwd {
-            parts.push(format!("cd {} && ", cwd));
+            parts.push(format!("cd -- {} && ", shell_escape(cwd)));
         }
 
         // Handle privilege escalation
@@ -839,6 +842,12 @@ impl RusshConnection {
         // Prepend environment variables as exports
         if !options.env.is_empty() {
             for (key, value) in &options.env {
+                BecomeValidator::new().validate_env_name(key).map_err(|e| {
+                    ConnectionError::InvalidConfig(format!(
+                        "Invalid environment variable name: {}",
+                        e
+                    ))
+                })?;
                 // Use export to set environment variables
                 // Escape the value to handle special characters
                 let escaped_value = value.replace('\'', "'\\''");
@@ -4038,6 +4047,94 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_diligence_review_cwd_is_not_a_cd_option() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let directory = temp_dir.path().join("-P");
+        std::fs::create_dir(&directory).unwrap();
+        let options = ExecuteOptions::new().with_cwd("-P");
+        let command = RusshConnection::build_command("pwd", &options).unwrap();
+        let output = std::process::Command::new("sh")
+            .current_dir(temp_dir.path())
+            .arg("-c")
+            .arg(command)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim_end(),
+            directory.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn test_diligence_command_preserves_literal_cwd() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let directory = temp_dir.path().join("a directory's $(printf literal);name");
+        std::fs::create_dir(&directory).unwrap();
+        let options = ExecuteOptions::new().with_cwd(directory.to_string_lossy());
+        let command = RusshConnection::build_command("pwd", &options).unwrap();
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim_end(),
+            directory.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn test_diligence_command_rejects_invalid_environment_names() {
+        for name in [
+            "",
+            "1INVALID",
+            "BAD-NAME",
+            "BAD NAME",
+            "NAME;printf harmless",
+            "NAME\nOTHER",
+            "NAME=VALUE",
+        ] {
+            let options = ExecuteOptions::new().with_env(name, "harmless value");
+            assert!(
+                matches!(
+                    RusshConnection::build_command_with_env("true", &options),
+                    Err(ConnectionError::InvalidConfig(_))
+                ),
+                "environment name {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_diligence_command_preserves_environment_values() {
+        let value = "space 'quote' $(printf literal)\nnext line";
+        for name in ["DILIGENCE_VALUE", "_DILIGENCE_VALUE_2"] {
+            let options = ExecuteOptions::new().with_env(name, value);
+            let command = RusshConnection::build_command_with_env(
+                &format!("printf '%s' \"${name}\""),
+                &options,
+            )
+            .unwrap();
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .output()
+                .unwrap();
+
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), value);
+        }
+    }
+
+    #[test]
     fn test_russh_connection_builder() {
         let builder = RusshConnectionBuilder::new("example.com")
             .port(2222)
@@ -4061,7 +4158,7 @@ mod tests {
     fn test_build_command_with_cwd() {
         let options = ExecuteOptions::new().with_cwd("/tmp");
         let cmd = RusshConnection::build_command("echo hello", &options).unwrap();
-        assert_eq!(cmd, "cd /tmp && echo hello");
+        assert_eq!(cmd, "cd -- /tmp && echo hello");
     }
 
     #[test]
@@ -4077,7 +4174,7 @@ mod tests {
             .with_cwd("/var/log")
             .with_escalation(None);
         let cmd = RusshConnection::build_command("cat syslog", &options).unwrap();
-        assert_eq!(cmd, "cd /var/log && sudo -u root -- cat syslog");
+        assert_eq!(cmd, "cd -- /var/log && sudo -u root -- cat syslog");
     }
 
     #[test]

@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -202,6 +203,12 @@ pub struct ProvisioningExecutor {
     /// Current state
     state: RwLock<ProvisioningState>,
 
+    /// Whether the cached state came from a persisted backend value.
+    state_exists: AtomicBool,
+
+    /// Only the most recently generated plan may mutate this executor's state.
+    plan_binding: RwLock<Option<PlanBinding>>,
+
     /// State backend
     state_backend: Arc<dyn StateBackend>,
 
@@ -218,6 +225,11 @@ pub struct ProvisioningExecutor {
     resolver_context: RwLock<ResolverContext>,
 }
 
+struct PlanBinding {
+    plan_id: String,
+    state: Option<Value>,
+}
+
 impl ProvisioningExecutor {
     /// Create a new provisioning executor
     pub async fn new(config: InfrastructureConfig) -> ProvisioningResult<Self> {
@@ -229,6 +241,11 @@ impl ProvisioningExecutor {
         config: InfrastructureConfig,
         executor_config: ExecutorConfig,
     ) -> ProvisioningResult<Self> {
+        if executor_config.parallelism == 0 {
+            return Err(ProvisioningError::ValidationError(
+                "parallelism must be greater than zero".to_string(),
+            ));
+        }
         // Resolve backend and load state
         let state_backend: Arc<dyn StateBackend> =
             if let Some(ref backend_config) = executor_config.state_backend {
@@ -237,7 +254,9 @@ impl ProvisioningExecutor {
                 Arc::new(LocalBackend::new(executor_config.state_path.clone()))
             };
 
-        let state = state_backend.load().await?.unwrap_or_default();
+        let loaded = state_backend.load().await?;
+        let state_exists = loaded.is_some();
+        let state = loaded.unwrap_or_default();
 
         let lock_manager = if executor_config.lock_state {
             state_backend.lock_backend().map(|backend| {
@@ -280,6 +299,8 @@ impl ProvisioningExecutor {
             provider_registry,
             resource_registry,
             state: RwLock::new(state),
+            state_exists: AtomicBool::new(state_exists),
+            plan_binding: RwLock::new(None),
             state_backend,
             lock_manager,
             semaphore,
@@ -315,24 +336,70 @@ impl ProvisioningExecutor {
     }
 
     async fn save_state(&self) -> ProvisioningResult<()> {
-        let mut state = self.state.write();
-        state.prepare_for_save();
-        self.state_backend.save(&state).await
+        let snapshot = {
+            let mut state = self.state.write();
+            state.prepare_for_save();
+            state.clone()
+        };
+        self.state_backend.save(&snapshot).await?;
+        self.state_exists.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn plan_state_snapshot(&self, state: &ProvisioningState) -> ProvisioningResult<Option<Value>> {
+        // A new, empty in-memory state stands for an absent backend. Once state
+        // has content or save metadata, absence must not silently match it.
+        if !self.state_exists.load(Ordering::SeqCst)
+            && state.serial == 0
+            && state.resources.is_empty()
+            && state.outputs.is_empty()
+            && state.providers.is_empty()
+            && state.history.is_empty()
+            && state.checksum.is_none()
+        {
+            Ok(None)
+        } else {
+            Ok(Some(serde_json::to_value(state)?))
+        }
+    }
+
+    fn validated_targets(&self, destroying: bool) -> ProvisioningResult<Vec<ResourceId>> {
+        let state = self.state.read();
+        let configured = self.config.resource_addresses();
+        self.executor_config
+            .targets
+            .iter()
+            .map(|target| {
+                let id = ResourceId::from_address(target).ok_or_else(|| {
+                    ProvisioningError::ValidationError(format!(
+                        "Invalid target '{target}': expected a nonempty resource_type.name",
+                    ))
+                })?;
+                if state.get_resource(&id).is_none() && (destroying || !configured.contains(&id)) {
+                    return Err(ProvisioningError::ValidationError(format!(
+                        "Unknown target '{target}'; refusing to broaden the operation",
+                    )));
+                }
+                Ok(id)
+            })
+            .collect()
     }
 
     /// Generate an execution plan
     pub async fn plan(&self) -> ProvisioningResult<ExecutionPlan> {
         info!("Generating execution plan...");
+        // Validate the entire target list before refresh can mutate saved state.
+        let targets = self.validated_targets(false)?;
 
         // Optionally refresh state first
         if self.executor_config.refresh_before_plan {
             self.refresh().await?;
         }
 
-        // Resolve configuration with partial resolution allowed (for planning)
-        let resolved = self.resolve_config_for_plan()?;
-
         let state = self.state.read().clone();
+        let expected_state = self.plan_state_snapshot(&state)?;
+        // Resolve and bind exactly the same state snapshot used by the builder.
+        let resolved = self.resolve_config_for_plan(&state)?;
         let mut builder = PlanBuilder::new(state);
 
         // Add resolved resources from config, respecting resolution order
@@ -354,16 +421,7 @@ impl ProvisioningExecutor {
             }
         }
 
-        // Add targets if specified
-        if !self.executor_config.targets.is_empty() {
-            let targets: Vec<ResourceId> = self
-                .executor_config
-                .targets
-                .iter()
-                .filter_map(|t| ResourceId::from_address(t))
-                .collect();
-            builder = builder.with_targets(targets);
-        }
+        builder = builder.with_targets(targets);
 
         let mut plan = builder.build()?;
 
@@ -382,14 +440,20 @@ impl ProvisioningExecutor {
             plan.to_destroy.len()
         );
 
+        *self.plan_binding.write() = Some(PlanBinding {
+            plan_id: plan.plan_id.clone(),
+            state: expected_state,
+        });
         Ok(plan)
     }
 
     /// Resolve configuration for planning (allows partial resolution)
-    fn resolve_config_for_plan(&self) -> ProvisioningResult<ResolvedConfig> {
-        let state = self.state.read().clone();
+    fn resolve_config_for_plan(
+        &self,
+        state: &ProvisioningState,
+    ) -> ProvisioningResult<ResolvedConfig> {
         let resolver = TemplateResolver::new().with_partial_resolution();
-        resolver.resolve_config(&self.config, &state)
+        resolver.resolve_config(&self.config, state)
     }
 
     /// Resolve all template references in configuration (strict mode for apply)
@@ -455,20 +519,13 @@ impl ProvisioningExecutor {
     /// Generate a destroy plan
     pub async fn plan_destroy(&self) -> ProvisioningResult<ExecutionPlan> {
         info!("Generating destroy plan...");
+        let targets = self.validated_targets(true)?;
 
         let state = self.state.read().clone();
+        let expected_state = self.plan_state_snapshot(&state)?;
         let mut builder = PlanBuilder::new(state).destroy();
 
-        // Add targets if specified
-        if !self.executor_config.targets.is_empty() {
-            let targets: Vec<ResourceId> = self
-                .executor_config
-                .targets
-                .iter()
-                .filter_map(|t| ResourceId::from_address(t))
-                .collect();
-            builder = builder.with_targets(targets);
-        }
+        builder = builder.with_targets(targets);
 
         let plan = builder.build()?;
 
@@ -477,15 +534,41 @@ impl ProvisioningExecutor {
             plan.to_destroy.len()
         );
 
+        *self.plan_binding.write() = Some(PlanBinding {
+            plan_id: plan.plan_id.clone(),
+            state: expected_state,
+        });
         Ok(plan)
     }
 
-    /// Apply an execution plan
+    /// Apply the latest plan generated by this executor, rejecting changed state.
     pub async fn apply(&self, plan: &ExecutionPlan) -> ProvisioningResult<ApplyResult> {
         self.with_state_lock("apply", async {
+            // Another writer may have saved after this executor was constructed.
+            // Any configured lock is held before reload and validation.
+            let loaded = self.state_backend.load().await?;
+            let actual_state = loaded.as_ref().map(serde_json::to_value).transpose()?;
+            self.state_exists.store(loaded.is_some(), Ordering::SeqCst);
+            let state = loaded.unwrap_or_default();
+            let context = ResolverContext::from_config_and_state(&self.config, &state);
+            *self.state.write() = state;
+            *self.resolver_context.write() = context;
+
             if !plan.has_changes() {
                 info!("No changes to apply");
                 return Ok(ApplyResult::new());
+            }
+
+            {
+                let binding = self.plan_binding.read();
+                let valid = binding.as_ref().is_some_and(|binding| {
+                    binding.plan_id == plan.plan_id && binding.state == actual_state
+                });
+                if !valid {
+                    return Err(ProvisioningError::ValidationError(
+                        "Plan is stale or was not generated by this executor; regenerate the plan before applying".into(),
+                    ));
+                }
             }
 
             // Backup state if configured
@@ -497,13 +580,6 @@ impl ProvisioningExecutor {
                     .parent()
                     .unwrap_or(Path::new("."));
                 state.backup(backup_dir.join("backups")).await?;
-            }
-
-            // Initialize resolver context from current state
-            {
-                let state = self.state.read().clone();
-                let new_ctx = ResolverContext::from_config_and_state(&self.config, &state);
-                *self.resolver_context.write() = new_ctx;
             }
 
             let mut result = ApplyResult::new();
@@ -567,6 +643,21 @@ impl ProvisioningExecutor {
                             _ => {}
                         }
 
+                        // A later pending or failed operation must not hide
+                        // already confirmed progress from the state backend.
+                        // Stop before the next resource call if saving fails.
+                        if resource_result.success
+                            && matches!(
+                                action.change_type,
+                                ChangeType::Create
+                                    | ChangeType::Update
+                                    | ChangeType::Replace
+                                    | ChangeType::Destroy
+                            )
+                        {
+                            self.save_state().await?;
+                        }
+
                         // Collect outputs
                         for (key, value) in resource_result.outputs {
                             result.outputs.insert(key, value);
@@ -589,9 +680,6 @@ impl ProvisioningExecutor {
                     }
                 }
             }
-
-            // Save state
-            self.save_state().await?;
 
             Ok(result)
         })
@@ -731,13 +819,14 @@ impl ProvisioningExecutor {
         result: &ResourceResult,
     ) -> ProvisioningResult<()> {
         let config = self.get_resource_config(&action.resource_id)?;
-        let resource_state = ResourceState::new(
+        let mut resource_state = ResourceState::new(
             action.resource_id.clone(),
             result.cloud_id.as_deref().unwrap_or(""),
             &action.provider,
             config,
             result.attributes.clone(),
         );
+        resource_state.dependencies = action.depends_on.clone();
 
         self.state.write().add_resource(resource_state);
         Ok(())
@@ -754,6 +843,7 @@ impl ProvisioningExecutor {
 
         if let Some(resource) = state.get_resource_mut(&action.resource_id) {
             resource.config = config;
+            resource.dependencies = action.depends_on.clone();
             resource.update_attributes(result.attributes.clone());
             if let Some(ref cloud_id) = result.cloud_id {
                 resource.cloud_id = cloud_id.clone();
@@ -827,9 +917,11 @@ impl ProvisioningExecutor {
             }
 
             // Update state with refreshed resources
-            let mut state = self.state.write();
-            for resource in updated_resources {
-                state.add_resource(resource);
+            {
+                let mut state = self.state.write();
+                for resource in updated_resources {
+                    state.add_resource(resource);
+                }
             }
 
             self.save_state().await?;
@@ -939,9 +1031,142 @@ impl std::fmt::Debug for ProvisioningExecutor {
 }
 
 #[cfg(test)]
+#[path = "executor_state_reload_tests.rs"]
+mod state_reload_tests;
+
+#[cfg(test)]
 mod tests {
     use super::super::config::InfrastructureConfig;
     use super::*;
+
+    #[tokio::test]
+    async fn test_diligence_zero_parallelism_is_rejected_before_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let result = ProvisioningExecutor::with_config(
+            InfrastructureConfig::new(),
+            ExecutorConfig {
+                state_path: directory.path().join("state.json"),
+                parallelism: 0,
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(ProvisioningError::ValidationError(message))
+            if message.contains("parallelism"))
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn test_diligence_empty_refresh_completes() {
+        const CHILD: &str = "RUSTIBLE_DILIGENCE_REFRESH_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let dir = tempfile::tempdir().unwrap();
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let state_path = dir.path().join("state.json");
+                let executor = ProvisioningExecutor::with_config(
+                    InfrastructureConfig::new(),
+                    ExecutorConfig {
+                        state_path: state_path.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+                executor.refresh().await.unwrap();
+                assert!(state_path.exists());
+                assert!(!state_path.with_extension("state.lock").exists());
+            });
+            return;
+        }
+        // A synchronous RwLock deadlock also blocks Tokio's timeout future.
+        // Use a separate process so this regression cannot hang the test runner.
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "provisioning::executor::tests::test_diligence_empty_refresh_completes",
+            ])
+            .env(CHILD, "1")
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "refresh subprocess failed: {status}");
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("empty refresh deadlocked");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_invalid_destroy_targets_fail_closed() {
+        for targets in [
+            vec!["typo"],
+            vec!["aws_vpc.main", "typo"],
+            vec!["aws_vpc.missing"],
+            vec![".main"],
+            vec!["aws_vpc."],
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let executor = ProvisioningExecutor::with_config(
+                InfrastructureConfig::new(),
+                ExecutorConfig {
+                    state_path: dir.path().join("state.json"),
+                    refresh_before_plan: false,
+                    targets: targets.iter().map(|s| s.to_string()).collect(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            executor.state.write().add_resource(ResourceState::new(
+                ResourceId::new("aws_vpc", "main"),
+                "synthetic-vpc",
+                "aws",
+                serde_json::json!({}),
+                serde_json::json!({}),
+            ));
+            assert!(
+                executor.plan_destroy().await.is_err(),
+                "targets: {targets:?}"
+            );
+            assert!(executor.plan().await.is_err(), "targets: {targets:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_valid_destroy_target_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let executor = ProvisioningExecutor::with_config(
+            InfrastructureConfig::new(),
+            ExecutorConfig {
+                state_path: dir.path().join("state.json"),
+                targets: vec!["aws_vpc.main".to_string()],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        for name in ["main", "other"] {
+            executor.state.write().add_resource(ResourceState::new(
+                ResourceId::new("aws_vpc", name),
+                format!("synthetic-{name}"),
+                "aws",
+                serde_json::json!({}),
+                serde_json::json!({}),
+            ));
+        }
+        let plan = executor.plan_destroy().await.unwrap();
+        assert_eq!(plan.to_destroy.len(), 1);
+        assert_eq!(plan.to_destroy[0].address(), "aws_vpc.main");
+    }
 
     #[test]
     fn test_apply_result() {

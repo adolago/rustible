@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use regex::Regex;
+use crate::utils::regex_cache::get_regex;
 use tokio::runtime::Handle;
 
 use crate::connection::{Connection, ExecuteOptions};
@@ -702,7 +702,7 @@ fn validate_policies(params: &ModuleParams) -> ModuleResult<PreflightResult> {
         if val != "-1" {
             // Slurm time formats: minutes, minutes:seconds, hours:minutes:seconds,
             // days-hours, days-hours:minutes, days-hours:minutes:seconds
-            let wall_re = Regex::new(r"^\d+(-\d+:\d+(:\d+)?)?$").expect("invalid regex");
+            let wall_re = get_regex(r"^\d+(-\d+:\d+(:\d+)?)?$").expect("invalid regex");
             if !wall_re.is_match(val) {
                 errors.push(format!(
                     "max_wall must match time format (e.g. '60', '7-00:00:00') or '-1' for unlimited, got '{}'",

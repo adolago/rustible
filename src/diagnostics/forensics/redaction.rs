@@ -52,10 +52,10 @@ impl Redactor {
         for rule in rules {
             match &rule.pattern {
                 RedactionPattern::Regex(pattern) => {
-                    if let Ok(re) = regex::Regex::new(pattern) {
+                    if let Ok(re) = crate::utils::get_regex(pattern) {
                         result = re
                             .replace_all(&result, rule.replacement.as_str())
-                            .to_string();
+                            .into_owned();
                     }
                 }
                 RedactionPattern::Literal(literal) => {

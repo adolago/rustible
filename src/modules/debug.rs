@@ -45,11 +45,7 @@ impl DebugModule {
                 let mut current = root;
                 for part in &parts[1..] {
                     if let Value::Object(obj) = current {
-                        if let Some(val) = obj.get(*part) {
-                            current = val;
-                        } else {
-                            return None;
-                        }
+                        current = obj.get(*part)?;
                     } else {
                         return None;
                     }
@@ -62,11 +58,7 @@ impl DebugModule {
                 let mut current = root;
                 for part in &parts[1..] {
                     if let Value::Object(obj) = current {
-                        if let Some(val) = obj.get(*part) {
-                            current = val;
-                        } else {
-                            return None;
-                        }
+                        current = obj.get(*part)?;
                     } else {
                         return None;
                     }

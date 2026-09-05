@@ -1,0 +1,9 @@
+- hosts: remote.invalid
+  gather_facts: false
+  tasks:
+    - name: remote-guard
+      command: /bin/true
+      ignore_errors: true
+      until: false
+      retries: 0
+      delay: 0

@@ -230,9 +230,19 @@ impl Connection for LocalConnection {
         // and then chmodded, leaving a window of exposure.
         #[cfg(unix)]
         if let Some(mode) = options.mode {
-            use std::os::unix::fs::OpenOptionsExt;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+            // Open the source before opening or truncating the destination.
+            let mut src_file = fs::File::open(local_path).map_err(|e| {
+                ConnectionError::TransferFailed(format!(
+                    "Failed to open source {}: {}",
+                    local_path.display(),
+                    e
+                ))
+            })?;
+
             let mut open_options = fs::OpenOptions::new();
-            open_options.write(true).create(true).truncate(true);
+            open_options.write(true).create(true).truncate(false);
             open_options.mode(mode);
 
             // Open destination file with correct mode
@@ -244,11 +254,33 @@ impl Connection for LocalConnection {
                 ))
             })?;
 
-            // Open source file
-            let mut src_file = fs::File::open(local_path).map_err(|e| {
+            // Only restrict access while old or partial contents remain. New
+            // permissions and special bits are granted after the complete write.
+            let restricted = mode
+                & dest_file
+                    .metadata()
+                    .map_err(|e| {
+                        ConnectionError::TransferFailed(format!(
+                            "Failed to inspect destination permissions: {}",
+                            e
+                        ))
+                    })?
+                    .permissions()
+                    .mode()
+                & 0o777;
+            dest_file
+                .set_permissions(fs::Permissions::from_mode(restricted))
+                .map_err(|e| {
+                    ConnectionError::TransferFailed(format!(
+                        "Failed to set permissions on {}: {}",
+                        remote_path.display(),
+                        e
+                    ))
+                })?;
+            dest_file.set_len(0).map_err(|e| {
                 ConnectionError::TransferFailed(format!(
-                    "Failed to open source {}: {}",
-                    local_path.display(),
+                    "Failed to truncate destination {}: {}",
+                    remote_path.display(),
                     e
                 ))
             })?;
@@ -261,6 +293,17 @@ impl Connection for LocalConnection {
                     e
                 ))
             })?;
+
+            // Writes can clear setuid/setgid bits; restore the requested final mode.
+            dest_file
+                .set_permissions(fs::Permissions::from_mode(mode))
+                .map_err(|e| {
+                    ConnectionError::TransferFailed(format!(
+                        "Failed to set final permissions on {}: {}",
+                        remote_path.display(),
+                        e
+                    ))
+                })?;
         } else {
             // Fallback for non-Unix or when mode is not specified (preserves source perms via fs::copy)
             fs::copy(local_path, remote_path).map_err(|e| {
@@ -339,10 +382,13 @@ impl Connection for LocalConnection {
         #[cfg(unix)]
         {
             use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
             let mut open_options = fs::OpenOptions::new();
-            open_options.write(true).create(true).truncate(true);
+            open_options
+                .write(true)
+                .create(true)
+                .truncate(options.mode.is_none());
 
             if let Some(mode) = options.mode {
                 open_options.mode(mode);
@@ -357,6 +403,37 @@ impl Connection for LocalConnection {
                 ))
             })?;
 
+            // Apply requested permissions to existing files before writing data.
+            if let Some(mode) = options.mode {
+                let restricted = mode
+                    & file
+                        .metadata()
+                        .map_err(|e| {
+                            ConnectionError::TransferFailed(format!(
+                                "Failed to inspect destination permissions: {}",
+                                e
+                            ))
+                        })?
+                        .permissions()
+                        .mode()
+                    & 0o777;
+                file.set_permissions(fs::Permissions::from_mode(restricted))
+                    .map_err(|e| {
+                        ConnectionError::TransferFailed(format!(
+                            "Failed to set permissions on {}: {}",
+                            remote_path.display(),
+                            e
+                        ))
+                    })?;
+                file.set_len(0).map_err(|e| {
+                    ConnectionError::TransferFailed(format!(
+                        "Failed to truncate destination {}: {}",
+                        remote_path.display(),
+                        e
+                    ))
+                })?;
+            }
+
             file.write_all(content).map_err(|e| {
                 ConnectionError::TransferFailed(format!(
                     "Failed to write to {}: {}",
@@ -364,6 +441,18 @@ impl Connection for LocalConnection {
                     e
                 ))
             })?;
+
+            // Writes can clear setuid/setgid bits; restore the requested final mode.
+            if let Some(mode) = options.mode {
+                file.set_permissions(fs::Permissions::from_mode(mode))
+                    .map_err(|e| {
+                        ConnectionError::TransferFailed(format!(
+                            "Failed to set final permissions on {}: {}",
+                            remote_path.display(),
+                            e
+                        ))
+                    })?;
+            }
         }
 
         #[cfg(not(unix))]
@@ -547,6 +636,196 @@ pub async fn execute_local_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_diligence_upload_never_grants_mode_before_failed_write() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let conn = LocalConnection::new();
+        let scratch = tempfile::tempdir().unwrap();
+        let source = scratch.path().join("source");
+        fs::write(&source, b"harmless replacement").unwrap();
+        let mut observed = Vec::new();
+        for content_upload in [false, true] {
+            for (old_mode, requested_mode) in [(0o600, 0o644), (0o755, 0o4755)] {
+                let destination = scratch
+                    .path()
+                    .join(format!("fifo-{content_upload}-{requested_mode}"));
+                nix::unistd::mkfifo(
+                    &destination,
+                    nix::sys::stat::Mode::from_bits_truncate(old_mode),
+                )
+                .unwrap();
+                fs::set_permissions(&destination, fs::Permissions::from_mode(old_mode)).unwrap();
+                // Opening a reader prevents the writer open from blocking. Explicit
+                // mode uploads reject FIFO truncation, before any bytes are written.
+                let _reader = fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(nix::libc::O_NONBLOCK)
+                    .open(&destination)
+                    .unwrap();
+                let options = Some(TransferOptions::new().with_mode(requested_mode));
+                let result = if content_upload {
+                    conn.upload_content(b"harmless replacement", &destination, options)
+                        .await
+                } else {
+                    conn.upload(&source, &destination, options).await
+                };
+                observed.push((
+                    result.is_err(),
+                    fs::metadata(&destination).unwrap().permissions().mode() & 0o7777,
+                    old_mode,
+                ));
+            }
+        }
+        for (failed, mode, old_mode) in observed {
+            assert!(failed);
+            assert_eq!(
+                mode, old_mode,
+                "upload must not grant access or special bits before writing succeeds"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_review_upload_content_to_null_without_mode() {
+        LocalConnection::new()
+            .upload_content(b"harmless content", Path::new("/dev/null"), None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_diligence_review_upload_retains_special_mode_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let conn = LocalConnection::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source = temp_dir.path().join("source");
+        fs::write(&source, b"harmless replacement").unwrap();
+        for content_upload in [false, true] {
+            for mode in [0o4600, 0o2600, 0o1600] {
+                let destination = temp_dir
+                    .path()
+                    .join(format!("special-{content_upload}-{mode}"));
+                let options = Some(TransferOptions::new().with_mode(mode));
+                if content_upload {
+                    conn.upload_content(b"harmless replacement", &destination, options)
+                        .await
+                        .unwrap();
+                } else {
+                    conn.upload(&source, &destination, options).await.unwrap();
+                }
+                assert_eq!(
+                    fs::metadata(destination).unwrap().permissions().mode() & 0o7777,
+                    mode
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_upload_applies_mode_to_existing_and_new_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let conn = LocalConnection::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source = temp_dir.path().join("source");
+        fs::write(&source, b"harmless replacement").unwrap();
+
+        for existed in [false, true] {
+            for mode in [0o600, 0o640] {
+                let destination = temp_dir.path().join(format!("file-{existed}-{mode}"));
+                if existed {
+                    fs::write(&destination, b"old content").unwrap();
+                    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644)).unwrap();
+                }
+
+                conn.upload(
+                    &source,
+                    &destination,
+                    Some(TransferOptions::new().with_mode(mode)),
+                )
+                .await
+                .unwrap();
+
+                assert_eq!(
+                    fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
+                    mode
+                );
+                assert_eq!(fs::read(&destination).unwrap(), b"harmless replacement");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_upload_content_applies_mode_to_existing_and_new_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let conn = LocalConnection::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        for existed in [false, true] {
+            for mode in [0o600, 0o640] {
+                let destination = temp_dir.path().join(format!("content-{existed}-{mode}"));
+                if existed {
+                    fs::write(&destination, b"old content").unwrap();
+                    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644)).unwrap();
+                }
+
+                conn.upload_content(
+                    b"harmless replacement",
+                    &destination,
+                    Some(TransferOptions::new().with_mode(mode)),
+                )
+                .await
+                .unwrap();
+
+                assert_eq!(
+                    fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
+                    mode
+                );
+                assert_eq!(fs::read(&destination).unwrap(), b"harmless replacement");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diligence_missing_source_does_not_truncate_destination() {
+        let conn = LocalConnection::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("destination");
+        fs::write(&destination, b"keep existing content").unwrap();
+
+        let result = conn
+            .upload(
+                &temp_dir.path().join("missing"),
+                &destination,
+                Some(TransferOptions::new().with_mode(0o600)),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&destination).unwrap(), b"keep existing content");
+    }
+
+    #[tokio::test]
+    async fn test_diligence_upload_content_without_mode_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let conn = LocalConnection::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("destination");
+        fs::write(&destination, b"old content").unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o640)).unwrap();
+
+        conn.upload_content(b"replacement", &destination, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs::metadata(destination).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+    }
 
     #[test]
     fn test_build_command_rejects_invalid_user() {

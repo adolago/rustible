@@ -149,19 +149,59 @@ impl TaskResult {
         stdout: Option<String>,
         stderr: Option<String>,
     ) -> RegisteredResult {
-        RegisteredResult {
-            changed: self.changed,
-            failed: self.status == TaskStatus::Failed,
-            skipped: self.status == TaskStatus::Skipped,
-            rc: None,
-            stdout: stdout.clone(),
-            stdout_lines: stdout.map(|s| s.lines().map(String::from).collect()),
-            stderr: stderr.clone(),
-            stderr_lines: stderr.map(|s| s.lines().map(String::from).collect()),
-            msg: self.msg.clone(),
-            results: None,
-            data: IndexMap::new(),
+        let mut registered: RegisteredResult = self
+            .result
+            .clone()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        if let Some(JsonValue::Object(data)) = &self.result {
+            registered.data = data
+                .iter()
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        "changed"
+                            | "failed"
+                            | "skipped"
+                            | "rc"
+                            | "stdout"
+                            | "stdout_lines"
+                            | "stderr"
+                            | "stderr_lines"
+                            | "msg"
+                            | "results"
+                    )
+                })
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            registered.rc = data
+                .get("rc")
+                .and_then(JsonValue::as_i64)
+                .and_then(|n| i32::try_from(n).ok());
+            registered.stdout = data
+                .get("stdout")
+                .and_then(JsonValue::as_str)
+                .map(String::from);
+            registered.stderr = data
+                .get("stderr")
+                .and_then(JsonValue::as_str)
+                .map(String::from);
         }
+        registered.changed = self.changed;
+        registered.failed = matches!(self.status, TaskStatus::Failed | TaskStatus::Unreachable);
+        registered.skipped = self.status == TaskStatus::Skipped;
+        registered.stdout = stdout.or(registered.stdout);
+        registered.stderr = stderr.or(registered.stderr);
+        registered.stdout_lines = registered
+            .stdout
+            .as_ref()
+            .map(|s| s.lines().map(String::from).collect());
+        registered.stderr_lines = registered
+            .stderr
+            .as_ref()
+            .map(|s| s.lines().map(String::from).collect());
+        registered.msg = self.msg.clone();
+        registered
     }
 }
 
@@ -350,7 +390,7 @@ impl From<crate::playbook::Task> for Task {
         let args = if let Some(obj) = pt.module.args.as_object() {
             obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         } else {
-            IndexMap::new()
+            IndexMap::from([("_raw_params".to_string(), pt.module.args.clone())])
         };
 
         // Convert when condition
@@ -433,7 +473,7 @@ impl From<crate::playbook::Task> for Task {
             retries: pt.retries,
             delay: pt.delay,
             until: pt.until,
-            vars: IndexMap::new(),
+            vars: pt.vars.as_map().clone(),
         }
     }
 }
@@ -518,30 +558,39 @@ impl Task {
         }
 
         // Handle delegation - create appropriate context for execution and fact storage
-        let (execution_ctx, fact_storage_ctx) = if let Some(ref delegate_host) = self.delegate_to {
-            debug!("Delegating task to host: {}", delegate_host);
+        let (mut execution_ctx, fact_storage_ctx) =
+            if let Some(ref delegate_host) = self.delegate_to {
+                debug!("Delegating task to host: {}", delegate_host);
 
-            // Create execution context for the delegate host (where task actually runs)
-            let mut delegate_ctx = ctx.clone();
-            delegate_ctx.host = delegate_host.clone();
+                // Create execution context for the delegate host (where task actually runs)
+                let mut delegate_ctx = ctx.clone();
+                delegate_ctx.host = delegate_host.clone();
+                if delegate_host != &ctx.host {
+                    delegate_ctx.connection = None;
+                }
 
-            // Create fact storage context based on delegate_facts setting
-            // If delegate_facts is true, store on delegate host; otherwise on original host
-            let fact_ctx = if self.delegate_facts.unwrap_or(false) {
-                // Facts go to delegate host
-                let mut fact_ctx = ctx.clone();
-                fact_ctx.host = delegate_host.clone();
-                fact_ctx
+                // Create fact storage context based on delegate_facts setting
+                // If delegate_facts is true, store on delegate host; otherwise on original host
+                let fact_ctx = if self.delegate_facts.unwrap_or(false) {
+                    // Facts go to delegate host
+                    let mut fact_ctx = ctx.clone();
+                    fact_ctx.host = delegate_host.clone();
+                    fact_ctx
+                } else {
+                    // Facts go to original host (default behavior)
+                    ctx.clone()
+                };
+
+                (delegate_ctx, fact_ctx)
             } else {
-                // Facts go to original host (default behavior)
-                ctx.clone()
+                // No delegation - both execution and facts use the same context
+                (ctx.clone(), ctx.clone())
             };
 
-            (delegate_ctx, fact_ctx)
-        } else {
-            // No delegation - both execution and facts use the same context
-            (ctx.clone(), ctx.clone())
-        };
+        execution_ctx.r#become |= self.r#become;
+        if let Some(user) = &self.become_user {
+            execution_ctx.r#become_user = user.clone();
+        }
 
         // Handle loops - for set_fact, use fact_storage_ctx; for others, use execution_ctx
         if let Some(ref loop_source) = self.loop_items {
@@ -615,6 +664,13 @@ impl Task {
             .await?
         };
 
+        if result.status == TaskStatus::Unreachable {
+            if let Some(name) = &self.register {
+                self.register_result(name, &result, ctx, runtime).await?;
+            }
+            return Ok(result);
+        }
+
         // Extract and store ansible_facts from module results
         // Many modules (like gather_facts, setup, etc.) return facts in their result
         if let Some(ref result_data) = result.result {
@@ -631,6 +687,12 @@ impl Task {
                     }
                 }
             }
+        }
+
+        // Conditions must see this attempt's result, not a stale previous registration.
+        if let Some(ref register_name) = self.register {
+            self.register_result(register_name, &result, ctx, runtime)
+                .await?;
         }
 
         // Apply changed_when override - use execution context for condition evaluation
@@ -650,10 +712,14 @@ impl Task {
         }
 
         // Notify handlers if task changed
-        if result.changed && result.status != TaskStatus::Failed {
+        if result.changed && !matches!(result.status, TaskStatus::Failed | TaskStatus::Unreachable)
+        {
             for handler_name in &self.notify {
                 let mut notified = notified.lock().await;
-                notified.insert(handler_name.clone());
+                notified.insert(
+                    serde_json::to_string(&(&ctx.host, handler_name))
+                        .expect("notification tuple is serializable"),
+                );
                 debug!("Notified handler: {}", handler_name);
             }
         }
@@ -683,42 +749,21 @@ impl Task {
         notified: &Arc<Mutex<std::collections::HashSet<String>>>,
         parallelization_manager: &Arc<ParallelizationManager>,
         module_registry: &Arc<ModuleRegistry>,
-        batch_processor: &Arc<crate::executor::batch_processor::BatchProcessor>,
-        pipelining: bool,
+        _batch_processor: &Arc<crate::executor::batch_processor::BatchProcessor>,
+        _pipelining: bool,
     ) -> ExecutorResult<TaskResult> {
         let total_items = items.len();
         debug!("Executing loop with {} items", total_items);
 
-        // Attempt batch optimization when pipelining is enabled
-        if pipelining {
-            use crate::executor::batch_processor::BatchAnalysis;
-            let analysis = batch_processor.analyze_loop(&self.module, &self.args, items);
-            if let BatchAnalysis::Batchable(strategy) = analysis {
-                debug!(
-                    "Loop eligible for batching with strategy {:?}, {} items",
-                    strategy,
-                    items.len()
-                );
-                return self
-                    .execute_batched_loop(
-                        items,
-                        strategy,
-                        batch_processor,
-                        ctx,
-                        runtime,
-                        handlers,
-                        notified,
-                        parallelization_manager,
-                        module_registry,
-                    )
-                    .await;
-            }
-        }
+        // Execute every item independently. The former batch path rewrote command
+        // arguments and fabricated per-item outcomes; re-enable only after semantic
+        // equivalence (including conditions, transport and failures) is verified.
 
         // Pre-allocate with known capacity
         let mut loop_results = Vec::with_capacity(total_items);
         let mut any_changed = false;
         let mut any_failed = false;
+        let mut any_unreachable = false;
 
         // Extract loop_control options - avoid repeated Option access in loop
         let loop_control = self.loop_control.as_ref();
@@ -820,9 +865,10 @@ impl Task {
             if result.changed {
                 any_changed = true;
             }
-            if result.status == TaskStatus::Failed {
+            if matches!(result.status, TaskStatus::Failed | TaskStatus::Unreachable) {
                 any_failed = true;
-                if !self.ignore_errors {
+                any_unreachable |= result.status == TaskStatus::Unreachable;
+                if any_unreachable || !self.ignore_errors {
                     // Stop on first failure unless ignore_errors
                     loop_results.push(result.to_registered(None, None));
                     break;
@@ -844,7 +890,9 @@ impl Task {
         }
 
         // Create combined result
-        let status = if any_failed && !self.ignore_errors {
+        let status = if any_unreachable {
+            TaskStatus::Unreachable
+        } else if any_failed && !self.ignore_errors {
             TaskStatus::Failed
         } else if any_changed {
             TaskStatus::Changed
@@ -863,6 +911,7 @@ impl Task {
         // Register combined result if needed
         if let Some(ref register_name) = self.register {
             let mut registered = RegisteredResult::ok(any_changed);
+            registered.failed = any_unreachable || (any_failed && !self.ignore_errors);
             registered.results = Some(loop_results);
 
             let mut rt = runtime.write().await;
@@ -873,211 +922,14 @@ impl Task {
         if any_changed && !any_failed {
             for handler_name in &self.notify {
                 let mut n = notified.lock().await;
-                n.insert(handler_name.clone());
+                n.insert(
+                    serde_json::to_string(&(&ctx.host, handler_name))
+                        .expect("notification tuple is serializable"),
+                );
             }
         }
 
         Ok(result)
-    }
-
-    /// Execute a batched loop using the BatchProcessor.
-    ///
-    /// Instead of executing one module call per loop item, this coalesces
-    /// items into a single operation (e.g., `apt install nginx vim htop`
-    /// instead of 3 separate `apt install` calls).
-    async fn execute_batched_loop(
-        &self,
-        items: &[JsonValue],
-        strategy: crate::executor::batch_processor::BatchStrategy,
-        batch_processor: &Arc<crate::executor::batch_processor::BatchProcessor>,
-        ctx: &ExecutionContext,
-        runtime: &Arc<RwLock<RuntimeContext>>,
-        handlers: &Arc<RwLock<HashMap<String, Handler>>>,
-        notified: &Arc<Mutex<std::collections::HashSet<String>>>,
-        parallelization_manager: &Arc<ParallelizationManager>,
-        module_registry: &Arc<ModuleRegistry>,
-    ) -> ExecutorResult<TaskResult> {
-        use crate::executor::batch_processor::BatchStrategy;
-
-        let batched_op = batch_processor
-            .create_batch(&self.module, &self.args, items, &self.loop_var, strategy)
-            .map_err(|e| ExecutorError::RuntimeError(format!("Failed to create batch: {}", e)))?;
-
-        debug!(
-            "Executing batched loop: {} items coalesced into single {} call",
-            batched_op.items.len(),
-            batched_op.module
-        );
-
-        // For ParallelTransfer, fall back to sequential per-item execution
-        // since file transfers can't be truly coalesced into one call
-        if matches!(batched_op.strategy, BatchStrategy::ParallelTransfer) {
-            // Set each loop var and execute individually but with connection reuse
-            // (the connection reuse already happens at the SSH layer)
-            let mut loop_results = Vec::with_capacity(items.len());
-            let mut any_changed = false;
-            let mut any_failed = false;
-
-            for (index, item) in items.iter().enumerate() {
-                {
-                    let mut rt = runtime.write().await;
-                    rt.set_task_var(self.loop_var.clone(), item.clone());
-                    rt.set_task_var(
-                        "ansible_loop".to_string(),
-                        serde_json::json!({
-                            "index": index + 1,
-                            "index0": index,
-                            "first": index == 0,
-                            "last": index == items.len() - 1,
-                            "length": items.len(),
-                        }),
-                    );
-                }
-
-                let result = self
-                    .execute_module(
-                        ctx,
-                        runtime,
-                        handlers,
-                        notified,
-                        parallelization_manager,
-                        module_registry,
-                    )
-                    .await?;
-
-                if result.changed {
-                    any_changed = true;
-                }
-                if result.status == TaskStatus::Failed {
-                    any_failed = true;
-                    if !self.ignore_errors {
-                        loop_results.push(result.to_registered(None, None));
-                        break;
-                    }
-                }
-                loop_results.push(result.to_registered(None, None));
-            }
-
-            {
-                let mut rt = runtime.write().await;
-                rt.remove_task_vars(&[&self.loop_var, "ansible_loop"]);
-            }
-
-            let status = if any_failed && !self.ignore_errors {
-                TaskStatus::Failed
-            } else if any_changed {
-                TaskStatus::Changed
-            } else {
-                TaskStatus::Ok
-            };
-
-            let result = TaskResult {
-                status,
-                changed: any_changed,
-                msg: Some(format!(
-                    "Completed {} loop iterations (parallel transfer)",
-                    loop_results.len()
-                )),
-                result: Some(serde_json::to_value(&loop_results).unwrap_or(JsonValue::Null)),
-                diff: None,
-            };
-
-            if let Some(ref register_name) = self.register {
-                let mut registered = RegisteredResult::ok(any_changed);
-                registered.results = Some(loop_results);
-                let mut rt = runtime.write().await;
-                rt.register_result(&ctx.host, register_name.clone(), registered);
-            }
-
-            if any_changed && !any_failed {
-                for handler_name in &self.notify {
-                    let mut n = notified.lock().await;
-                    n.insert(handler_name.clone());
-                }
-            }
-
-            return Ok(result);
-        }
-
-        // For PackageList, CommandPipeline, and Generic strategies:
-        // Create a temporary task with the batched args and execute once
-        let batched_task = Task {
-            name: self.name.clone(),
-            module: batched_op.module.clone(),
-            args: batched_op.args.clone(),
-            when: None,
-            notify: Vec::new(),
-            register: None,
-            loop_items: None,
-            loop_var: self.loop_var.clone(),
-            loop_control: None,
-            ignore_errors: self.ignore_errors,
-            changed_when: self.changed_when.clone(),
-            failed_when: self.failed_when.clone(),
-            delegate_to: None,
-            delegate_facts: None,
-            run_once: false,
-            tags: Vec::new(),
-            r#become: self.r#become,
-            become_user: self.become_user.clone(),
-            block_id: None,
-            block_role: BlockRole::Normal,
-            retries: None,
-            delay: None,
-            until: None,
-            vars: IndexMap::new(),
-        };
-
-        let result = batched_task
-            .execute_module(
-                ctx,
-                runtime,
-                handlers,
-                notified,
-                parallelization_manager,
-                module_registry,
-            )
-            .await?;
-
-        // Synthesize per-item results from the single batched result
-        let per_item_results: Vec<RegisteredResult> = items
-            .iter()
-            .map(|item| {
-                let mut reg = result.to_registered(None, None);
-                reg.data.insert("item".to_string(), item.clone());
-                reg
-            })
-            .collect();
-
-        let final_result = TaskResult {
-            status: result.status,
-            changed: result.changed,
-            msg: Some(format!(
-                "Batched {} items into single {} call",
-                items.len(),
-                batched_op.module,
-            )),
-            result: Some(serde_json::to_value(&per_item_results).unwrap_or(JsonValue::Null)),
-            diff: result.diff,
-        };
-
-        // Register combined result if needed
-        if let Some(ref register_name) = self.register {
-            let mut registered = RegisteredResult::ok(result.changed);
-            registered.results = Some(per_item_results);
-            let mut rt = runtime.write().await;
-            rt.register_result(&ctx.host, register_name.clone(), registered);
-        }
-
-        // Notify handlers if task changed
-        if result.changed && result.status != TaskStatus::Failed {
-            for handler_name in &self.notify {
-                let mut n = notified.lock().await;
-                n.insert(handler_name.clone());
-            }
-        }
-
-        Ok(final_result)
     }
 
     /// Execute task with until/retries/delay retry logic
@@ -1117,6 +969,10 @@ impl Task {
                     module_registry,
                 )
                 .await?;
+
+            if result.status == TaskStatus::Unreachable {
+                return Ok(result);
+            }
 
             // Extract and store ansible_facts from module results during retries
             if let Some(ref result_data) = result.result {
@@ -1195,7 +1051,7 @@ impl Task {
         // Template the arguments
         let args = self.template_args(ctx, runtime).await?;
 
-        debug!("Module: {}, Args: {:?}", self.module, args);
+        debug!("Module: {}", self.module);
 
         // Enforce parallelization constraints based on module hint
         // Get the module's parallelization hint from the shared registry (avoids rebuilding)
@@ -1214,31 +1070,16 @@ impl Task {
             .acquire(hint, &ctx.host, &self.module)
             .await;
 
-        // Execute based on module type
-        let result = match self.module.as_str() {
+        let module_name = self
+            .module
+            .strip_prefix("ansible.builtin.")
+            .unwrap_or(&self.module);
+        match module_name {
             "debug" => self.execute_debug(&args, ctx).await,
             "set_fact" => self.execute_set_fact(&args, ctx, runtime).await,
-            "command" | "shell" => self.execute_command(&args, ctx, runtime).await,
-            "copy" => {
-                self.execute_copy(&args, ctx, runtime, module_registry)
-                    .await
-            }
-            "file" => self.execute_file(&args, ctx, module_registry).await,
-            "template" => {
-                self.execute_template(&args, ctx, runtime, module_registry)
-                    .await
-            }
-            "package" | "apt" | "yum" | "dnf" => self.execute_package(&args, ctx).await,
-            "service" | "systemd" => self.execute_service(&args, ctx).await,
-            "user" => self.execute_user(&args, ctx).await,
-            "group" => self.execute_group(&args, ctx).await,
-            "lineinfile" => self.execute_lineinfile(&args, ctx).await,
-            "blockinfile" => self.execute_blockinfile(&args, ctx).await,
-            "stat" => self.execute_stat(&args, ctx).await,
             "fail" => self.execute_fail(&args).await,
             "assert" => self.execute_assert(&args, ctx, runtime).await,
             "pause" => self.execute_pause(&args).await,
-            "wait_for" => self.execute_wait_for(&args, ctx).await,
             "include_vars" => self.execute_include_vars(&args, ctx, runtime).await,
             "include_tasks" | "import_tasks" => {
                 self.execute_include_tasks(
@@ -1253,92 +1094,139 @@ impl Task {
                 .await
             }
             "meta" => self.execute_meta(&args).await,
-            "gather_facts" | "setup" => self.execute_gather_facts(&args, ctx).await,
             _ => {
-                // Python fallback for unknown modules
-                // Check if we can find the module in Ansible's module library
-                let mut executor = crate::modules::PythonModuleExecutor::new();
-
-                if let Some(module_path) = executor.find_module(&self.module) {
-                    debug!(
-                        "Found Ansible module {} at {} - Python fallback available",
-                        self.module,
-                        module_path.display()
-                    );
-
-                    // In check mode, report that we would execute
-                    if ctx.check_mode {
-                        return Ok(TaskResult::ok().with_msg(format!(
-                            "Check mode - would execute Python module: {}",
-                            self.module
-                        )));
-                    }
-
-                    // Execute via Python if connection is available
-                    if let Some(ref connection) = ctx.connection {
-                        // Convert args to ModuleParams-compatible format
-                        let module_params: std::collections::HashMap<String, serde_json::Value> =
-                            args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-
-                        match executor
-                            .execute(
-                                connection.as_ref(),
-                                &self.module,
-                                &module_params,
-                                &ctx.python_interpreter,
-                            )
-                            .await
-                        {
-                            Ok(output) => {
-                                let msg = output.msg.clone();
-                                let mut result = if output.changed {
-                                    TaskResult::changed()
-                                } else {
-                                    TaskResult::ok()
-                                };
-                                result.msg = Some(msg);
-                                if !output.data.is_empty() {
-                                    result.result = Some(
-                                        serde_json::to_value(&output.data).unwrap_or_default(),
-                                    );
-                                }
-                                Ok(result)
-                            }
-                            Err(e) => Err(ExecutorError::RuntimeError(format!(
-                                "Python module {} failed: {}",
-                                self.module, e
-                            ))),
-                        }
-                    } else {
-                        // No connection available - simulate for localhost or log warning
-                        if ctx.host == "localhost" || ctx.host == "127.0.0.1" {
-                            warn!(
-                                "Python module {} would need local execution (not implemented)",
-                                self.module
-                            );
-                        } else {
-                            warn!(
-                                "Python module {} requires connection to {} (not available)",
-                                self.module, ctx.host
-                            );
-                        }
-                        Ok(TaskResult::changed().with_msg(format!(
-                            "Executed Python module: {} (simulated - no connection)",
-                            self.module
-                        )))
-                    }
-                } else {
-                    // Module not found anywhere
-                    Err(ExecutorError::ModuleNotFound(format!(
-                        "Module '{}' not found. Not a native module and not found in Ansible module paths. \
-                        Ensure Ansible is installed or set ANSIBLE_LIBRARY environment variable.",
-                        self.module
-                    )))
-                }
+                self.execute_native(module_name, &args, ctx, runtime, module_registry)
+                    .await
             }
-        };
+        }
+    }
 
-        result
+    /// Native modules may run locally only for an explicitly local inventory target.
+    /// A missing or unsupported remote connection must never become a local fallback.
+    async fn execute_native(
+        &self,
+        module_name: &str,
+        args: &IndexMap<String, JsonValue>,
+        ctx: &ExecutionContext,
+        runtime: &Arc<RwLock<RuntimeContext>>,
+        registry: &Arc<ModuleRegistry>,
+    ) -> ExecutorResult<TaskResult> {
+        let (vars, connection_kind) = {
+            let runtime = runtime.read().await;
+            (
+                runtime.get_merged_vars(&ctx.host),
+                self.vars
+                    .get("ansible_connection")
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .unwrap_or("__invalid_transport__")
+                            .to_string()
+                    })
+                    .or_else(|| runtime.configured_connection(&ctx.host)),
+            )
+        };
+        let local = connection_kind.as_deref() == Some("local")
+            || (connection_kind.is_none()
+                && ctx.connection.is_none()
+                && matches!(ctx.host.as_str(), "localhost" | "127.0.0.1" | "::1"));
+        if local && module_name == "get_url" {
+            return Ok(TaskResult::failed(
+                "Local get_url destination writes are not implemented; refusing execution",
+            ));
+        }
+        if !local && ctx.connection.is_none() {
+            return Ok(TaskResult::unreachable(
+                "Remote execution requires an established connection; local fallback is disabled",
+            ));
+        }
+        // These implementations have a reviewed transport path. Classification alone
+        // is not sufficient: several filesystem modules ignore ModuleContext.connection.
+        if !local
+            && !matches!(
+                module_name,
+                "command" | "shell" | "copy" | "template" | "gather_facts" | "setup"
+            )
+        {
+            return Ok(TaskResult::failed(format!(
+                "Module '{module_name}' does not have a verified remote transport"
+            )));
+        }
+        if ctx.r#become && (local || !matches!(module_name, "command" | "shell")) {
+            return Ok(TaskResult::failed(
+                "Privilege escalation is not verified for this module; refusing execution",
+            ));
+        }
+        if module_name == "gather_facts" || module_name == "setup" {
+            return self.execute_gather_facts(args, ctx).await;
+        }
+        if !registry.contains(module_name) {
+            return Ok(TaskResult::failed(format!(
+                "Module '{module_name}' is unavailable; Python fallback is not implemented"
+            )));
+        }
+        let mut facts = std::collections::HashMap::new();
+        if local {
+            facts.insert(
+                "os_family".to_string(),
+                JsonValue::String(if cfg!(windows) { "Windows" } else { "Unix" }.to_string()),
+            );
+        } else if let Some(value) = vars
+            .get("ansible_os_family")
+            .or_else(|| vars.get("os_family"))
+        {
+            facts.insert("os_family".to_string(), value.clone());
+        }
+        let module_ctx = crate::modules::ModuleContext {
+            check_mode: ctx.check_mode,
+            diff_mode: ctx.diff_mode,
+            verbosity: ctx.verbosity,
+            vars: vars.into_iter().collect(),
+            facts,
+            work_dir: None,
+            r#become: ctx.r#become,
+            become_method: Some(ctx.r#become_method.clone()),
+            become_user: Some(ctx.r#become_user.clone()),
+            become_password: ctx.become_password.clone(),
+            connection: if local { None } else { ctx.connection.clone() },
+        };
+        let params = args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let registry = Arc::clone(registry);
+        let module_name = module_name.to_string();
+        // Native modules use synchronous APIs, including connection bridges. Keep
+        // those calls off the async scheduler to avoid blocking unrelated hosts.
+        let output = tokio::task::spawn_blocking(move || {
+            registry.execute(&module_name, &params, &module_ctx)
+        })
+        .await
+        .map_err(|e| ExecutorError::RuntimeError(format!("Native module worker failed: {e}")))?;
+        match output {
+            Ok(output) => {
+                let result = output.to_result_json();
+                let status = match output.status {
+                    crate::modules::ModuleStatus::Failed => TaskStatus::Failed,
+                    crate::modules::ModuleStatus::Skipped => TaskStatus::Skipped,
+                    _ if output.changed => TaskStatus::Changed,
+                    _ => TaskStatus::Ok,
+                };
+                Ok(TaskResult {
+                    status,
+                    changed: output.changed,
+                    msg: Some(output.msg),
+                    result: Some(result),
+                    diff: output.diff.map(|d| TaskDiff {
+                        before: Some(d.before),
+                        after: Some(d.after),
+                        before_header: None,
+                        after_header: None,
+                    }),
+                })
+            }
+            Err(crate::modules::ModuleError::CommandFailed { code, message }) => {
+                Ok(TaskResult::failed(message).with_result(serde_json::json!({"rc": code})))
+            }
+            Err(error) => Ok(TaskResult::failed(error.to_string())),
+        }
     }
 
     /// Template arguments using variables
@@ -1361,7 +1249,7 @@ impl Task {
     }
 
     /// Evaluate a when condition
-    async fn evaluate_condition(
+    pub(crate) async fn evaluate_condition(
         &self,
         condition: &str,
         ctx: &ExecutionContext,
@@ -1385,11 +1273,13 @@ impl Task {
         if let Some(ref condition) = self.changed_when {
             let should_be_changed = self.evaluate_condition(condition, ctx, runtime).await?;
             result.changed = should_be_changed;
-            result.status = if should_be_changed {
-                TaskStatus::Changed
-            } else {
-                TaskStatus::Ok
-            };
+            if matches!(result.status, TaskStatus::Ok | TaskStatus::Changed) {
+                result.status = if should_be_changed {
+                    TaskStatus::Changed
+                } else {
+                    TaskStatus::Ok
+                };
+            }
         }
         Ok(result)
     }
@@ -1403,6 +1293,13 @@ impl Task {
     ) -> ExecutorResult<TaskResult> {
         if let Some(ref condition) = self.failed_when {
             let should_fail = self.evaluate_condition(condition, ctx, runtime).await?;
+            if !should_fail && result.status == TaskStatus::Failed {
+                result.status = if result.changed {
+                    TaskStatus::Changed
+                } else {
+                    TaskStatus::Ok
+                };
+            }
             if should_fail {
                 result.status = TaskStatus::Failed;
                 result.msg = Some(format!(
@@ -1571,424 +1468,6 @@ impl Task {
         Ok(TaskResult::ok().with_msg(message))
     }
 
-    async fn execute_command(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-        _runtime: &Arc<RwLock<RuntimeContext>>,
-    ) -> ExecutorResult<TaskResult> {
-        let cmd = args
-            .get("cmd")
-            .or_else(|| args.get("_raw_params"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ExecutorError::RuntimeError("command module requires 'cmd' argument".into())
-            })?;
-
-        if ctx.check_mode {
-            return Ok(TaskResult::skipped("Check mode - command not executed"));
-        }
-
-        debug!("Would execute command: {}", cmd);
-
-        // In a real implementation, this would actually run the command
-        // For now, simulate successful execution
-        let result = RegisteredResult {
-            changed: true,
-            rc: Some(0),
-            stdout: Some(String::new()),
-            stderr: Some(String::new()),
-            ..Default::default()
-        };
-
-        Ok(TaskResult::changed()
-            .with_msg(format!("Command executed: {}", cmd))
-            .with_result(result.to_json()))
-    }
-
-    async fn execute_copy(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-        runtime: &Arc<RwLock<RuntimeContext>>,
-        module_registry: &Arc<ModuleRegistry>,
-    ) -> ExecutorResult<TaskResult> {
-        // Convert args to ModuleParams
-        let params: std::collections::HashMap<String, serde_json::Value> =
-            args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-
-        // Get all variables from runtime for potential content template substitution
-        let vars = {
-            let rt = runtime.read().await;
-            rt.get_merged_vars(&ctx.host)
-        };
-
-        // If content contains template variables, use the template module's rendering
-        if let Some(serde_json::Value::String(content)) = params.get("content") {
-            if content.contains("{{") || content.contains("{%") {
-                // Use template module for content with variables
-                let template_params = params.clone();
-                let module_ctx = crate::modules::ModuleContext {
-                    check_mode: ctx.check_mode,
-                    diff_mode: ctx.diff_mode,
-                    verbosity: ctx.verbosity,
-                    vars: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                    facts: std::collections::HashMap::new(),
-                    work_dir: None,
-                    r#become: ctx.r#become,
-                    become_method: if ctx.r#become {
-                        Some(ctx.r#become_method.clone())
-                    } else {
-                        None
-                    },
-                    become_user: if ctx.r#become {
-                        Some(ctx.r#become_user.clone())
-                    } else {
-                        None
-                    },
-                    become_password: ctx.become_password.clone(),
-                    connection: ctx.connection.clone(),
-                };
-
-                let module = module_registry.get("template").ok_or_else(|| {
-                    ExecutorError::ModuleNotFound("template module not found in registry".into())
-                })?;
-
-                return match module.execute(&template_params, &module_ctx) {
-                    Ok(output) => {
-                        let mut result = if output.changed {
-                            TaskResult::changed()
-                        } else {
-                            TaskResult::ok()
-                        };
-                        result.msg = Some(output.msg);
-                        if !output.data.is_empty() {
-                            result.result =
-                                Some(serde_json::to_value(&output.data).unwrap_or_default());
-                        }
-                        Ok(result)
-                    }
-                    Err(e) => Ok(TaskResult::failed(format!(
-                        "template (for copy with content) failed: {}",
-                        e
-                    ))),
-                };
-            }
-        }
-
-        // Create module context from execution context
-        let module_ctx = crate::modules::ModuleContext {
-            check_mode: ctx.check_mode,
-            diff_mode: ctx.diff_mode,
-            verbosity: ctx.verbosity,
-            vars: std::collections::HashMap::new(),
-            facts: std::collections::HashMap::new(),
-            work_dir: None,
-            r#become: ctx.r#become,
-            become_method: if ctx.r#become {
-                Some(ctx.r#become_method.clone())
-            } else {
-                None
-            },
-            become_user: if ctx.r#become {
-                Some(ctx.r#become_user.clone())
-            } else {
-                None
-            },
-            become_password: ctx.become_password.clone(),
-            connection: ctx.connection.clone(),
-        };
-
-        // Get the copy module from shared registry and execute
-        let module = module_registry.get("copy").ok_or_else(|| {
-            ExecutorError::ModuleNotFound("copy module not found in registry".into())
-        })?;
-
-        match module.execute(&params, &module_ctx) {
-            Ok(output) => {
-                let mut result = if output.changed {
-                    TaskResult::changed()
-                } else {
-                    TaskResult::ok()
-                };
-                result.msg = Some(output.msg);
-                if !output.data.is_empty() {
-                    result.result = Some(serde_json::to_value(&output.data).unwrap_or_default());
-                }
-                Ok(result)
-            }
-            Err(e) => Ok(TaskResult::failed(format!("copy module failed: {}", e))),
-        }
-    }
-
-    async fn execute_file(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-        module_registry: &Arc<ModuleRegistry>,
-    ) -> ExecutorResult<TaskResult> {
-        // Convert args to ModuleParams
-        let params: std::collections::HashMap<String, serde_json::Value> =
-            args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-
-        // Create module context from execution context
-        let module_ctx = crate::modules::ModuleContext {
-            check_mode: ctx.check_mode,
-            diff_mode: ctx.diff_mode,
-            verbosity: ctx.verbosity,
-            vars: std::collections::HashMap::new(),
-            facts: std::collections::HashMap::new(),
-            work_dir: None,
-            r#become: ctx.r#become,
-            become_method: if ctx.r#become {
-                Some(ctx.r#become_method.clone())
-            } else {
-                None
-            },
-            become_user: if ctx.r#become {
-                Some(ctx.r#become_user.clone())
-            } else {
-                None
-            },
-            become_password: ctx.become_password.clone(),
-            connection: ctx.connection.clone(),
-        };
-
-        // Get the file module from shared registry and execute
-        let module = module_registry.get("file").ok_or_else(|| {
-            ExecutorError::ModuleNotFound("file module not found in registry".into())
-        })?;
-
-        match module.execute(&params, &module_ctx) {
-            Ok(output) => {
-                let mut result = if output.changed {
-                    TaskResult::changed()
-                } else {
-                    TaskResult::ok()
-                };
-                result.msg = Some(output.msg);
-                if !output.data.is_empty() {
-                    result.result = Some(serde_json::to_value(&output.data).unwrap_or_default());
-                }
-                Ok(result)
-            }
-            Err(e) => Ok(TaskResult::failed(format!("file module failed: {}", e))),
-        }
-    }
-
-    async fn execute_template(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-        runtime: &Arc<RwLock<RuntimeContext>>,
-        module_registry: &Arc<ModuleRegistry>,
-    ) -> ExecutorResult<TaskResult> {
-        // Convert args to ModuleParams
-        let params: std::collections::HashMap<String, serde_json::Value> =
-            args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-
-        // Get all variables from runtime for template substitution
-        let vars = {
-            let rt = runtime.read().await;
-            rt.get_merged_vars(&ctx.host)
-        };
-
-        // Create module context from execution context with variables
-        let module_ctx = crate::modules::ModuleContext {
-            check_mode: ctx.check_mode,
-            diff_mode: ctx.diff_mode,
-            verbosity: ctx.verbosity,
-            vars: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-            facts: std::collections::HashMap::new(),
-            work_dir: None,
-            r#become: ctx.r#become,
-            become_method: if ctx.r#become {
-                Some(ctx.r#become_method.clone())
-            } else {
-                None
-            },
-            become_user: if ctx.r#become {
-                Some(ctx.r#become_user.clone())
-            } else {
-                None
-            },
-            become_password: ctx.become_password.clone(),
-            connection: ctx.connection.clone(),
-        };
-
-        // Get the template module from shared registry and execute
-        let module = module_registry.get("template").ok_or_else(|| {
-            ExecutorError::ModuleNotFound("template module not found in registry".into())
-        })?;
-
-        match module.execute(&params, &module_ctx) {
-            Ok(output) => {
-                let mut result = if output.changed {
-                    TaskResult::changed()
-                } else {
-                    TaskResult::ok()
-                };
-                result.msg = Some(output.msg);
-                if !output.data.is_empty() {
-                    result.result = Some(serde_json::to_value(&output.data).unwrap_or_default());
-                }
-                Ok(result)
-            }
-            Err(e) => Ok(TaskResult::failed(format!("template module failed: {}", e))),
-        }
-    }
-
-    async fn execute_package(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-    ) -> ExecutorResult<TaskResult> {
-        let name = args.get("name").ok_or_else(|| {
-            ExecutorError::RuntimeError("package module requires 'name' argument".into())
-        })?;
-
-        let state = args
-            .get("state")
-            .and_then(|v| v.as_str())
-            .unwrap_or("present");
-
-        if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg(format!(
-                "Check mode - would ensure package {:?} is {}",
-                name, state
-            )));
-        }
-
-        debug!("Would ensure package {:?} is {}", name, state);
-        Ok(TaskResult::changed().with_msg(format!("Package {:?} state: {}", name, state)))
-    }
-
-    async fn execute_service(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-    ) -> ExecutorResult<TaskResult> {
-        let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-            ExecutorError::RuntimeError("service module requires 'name' argument".into())
-        })?;
-
-        let state = args.get("state").and_then(|v| v.as_str());
-        let enabled = args.get("enabled").and_then(|v| v.as_bool());
-
-        if ctx.check_mode {
-            return Ok(
-                TaskResult::ok().with_msg(format!("Check mode - would manage service {}", name))
-            );
-        }
-
-        debug!(
-            "Would manage service: {} (state: {:?}, enabled: {:?})",
-            name, state, enabled
-        );
-        Ok(TaskResult::changed().with_msg(format!("Service {} managed", name)))
-    }
-
-    async fn execute_user(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-    ) -> ExecutorResult<TaskResult> {
-        let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-            ExecutorError::RuntimeError("user module requires 'name' argument".into())
-        })?;
-
-        if ctx.check_mode {
-            return Ok(
-                TaskResult::ok().with_msg(format!("Check mode - would manage user {}", name))
-            );
-        }
-
-        debug!("Would manage user: {}", name);
-        Ok(TaskResult::changed().with_msg(format!("User {} managed", name)))
-    }
-
-    async fn execute_group(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-    ) -> ExecutorResult<TaskResult> {
-        let name = args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-            ExecutorError::RuntimeError("group module requires 'name' argument".into())
-        })?;
-
-        if ctx.check_mode {
-            return Ok(
-                TaskResult::ok().with_msg(format!("Check mode - would manage group {}", name))
-            );
-        }
-
-        debug!("Would manage group: {}", name);
-        Ok(TaskResult::changed().with_msg(format!("Group {} managed", name)))
-    }
-
-    async fn execute_lineinfile(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-    ) -> ExecutorResult<TaskResult> {
-        let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
-            ExecutorError::RuntimeError("lineinfile requires 'path' argument".into())
-        })?;
-
-        if ctx.check_mode {
-            return Ok(TaskResult::ok().with_msg(format!("Check mode - would modify {}", path)));
-        }
-
-        debug!("Would modify line in: {}", path);
-        Ok(TaskResult::changed().with_msg(format!("Modified {}", path)))
-    }
-
-    async fn execute_blockinfile(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-    ) -> ExecutorResult<TaskResult> {
-        let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
-            ExecutorError::RuntimeError("blockinfile requires 'path' argument".into())
-        })?;
-
-        if ctx.check_mode {
-            return Ok(
-                TaskResult::ok().with_msg(format!("Check mode - would modify block in {}", path))
-            );
-        }
-
-        debug!("Would modify block in: {}", path);
-        Ok(TaskResult::changed().with_msg(format!("Modified block in {}", path)))
-    }
-
-    async fn execute_stat(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        _ctx: &ExecutionContext,
-    ) -> ExecutorResult<TaskResult> {
-        let path = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ExecutorError::RuntimeError("stat requires 'path' argument".into()))?;
-
-        debug!("Would stat: {}", path);
-
-        // Return simulated stat result
-        let stat_result = serde_json::json!({
-            "exists": true,
-            "path": path,
-            "isdir": false,
-            "isreg": true,
-            "mode": "0644",
-            "uid": 1000,
-            "gid": 1000,
-            "size": 1024,
-        });
-
-        Ok(TaskResult::ok().with_result(serde_json::json!({ "stat": stat_result })))
-    }
-
     async fn execute_fail(&self, args: &IndexMap<String, JsonValue>) -> ExecutorResult<TaskResult> {
         let msg = args
             .get("msg")
@@ -2051,25 +1530,6 @@ impl Task {
         }
 
         Ok(TaskResult::ok().with_msg(format!("Paused for {} seconds", seconds)))
-    }
-
-    async fn execute_wait_for(
-        &self,
-        args: &IndexMap<String, JsonValue>,
-        ctx: &ExecutionContext,
-    ) -> ExecutorResult<TaskResult> {
-        let host = args
-            .get("host")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&ctx.host);
-        let port = args.get("port").and_then(|v| v.as_u64());
-        let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(300);
-
-        if let Some(p) = port {
-            debug!("Would wait for {}:{} (timeout: {}s)", host, p, timeout);
-        }
-
-        Ok(TaskResult::ok().with_msg("Wait condition met"))
     }
 
     /// Validate that a path is safe and within the allowed base directory.
@@ -2427,6 +1887,7 @@ impl Task {
         let mut total_changed = false;
         let mut task_count = 0;
         let mut failed = false;
+        let mut unreachable = false;
 
         for playbook_task in playbook_tasks {
             // Convert to executor task
@@ -2453,13 +1914,18 @@ impl Task {
             if result.changed {
                 total_changed = true;
             }
-            if result.status == TaskStatus::Failed {
+            if matches!(result.status, TaskStatus::Failed | TaskStatus::Unreachable) {
+                unreachable |= result.status == TaskStatus::Unreachable;
                 failed = true;
                 break;
             }
         }
 
-        if failed {
+        if unreachable {
+            Ok(TaskResult::unreachable(
+                "Included task target is unreachable",
+            ))
+        } else if failed {
             Ok(TaskResult::failed(format!(
                 "Included {} tasks from {}, execution failed",
                 task_count, file
@@ -2483,26 +1949,10 @@ impl Task {
             .unwrap_or("noop");
 
         match action {
-            "flush_handlers" => {
-                debug!("Would flush handlers");
-                Ok(TaskResult::ok().with_msg("Handlers flushed"))
-            }
-            "refresh_inventory" => {
-                debug!("Would refresh inventory");
-                Ok(TaskResult::ok().with_msg("Inventory refreshed"))
-            }
             "noop" => Ok(TaskResult::ok()),
-            "end_play" => Ok(TaskResult::ok().with_msg("Play ended")),
-            "end_host" => Ok(TaskResult::ok().with_msg("Host ended")),
-            "clear_facts" => {
-                debug!("Would clear facts");
-                Ok(TaskResult::ok().with_msg("Facts cleared"))
-            }
-            "clear_host_errors" => Ok(TaskResult::ok().with_msg("Host errors cleared")),
-            _ => {
-                warn!("Unknown meta action: {}", action);
-                Ok(TaskResult::ok())
-            }
+            _ => Ok(TaskResult::failed(format!(
+                "Meta action '{action}' is not supported in this execution context"
+            ))),
         }
     }
 }
@@ -3235,6 +2685,142 @@ pub trait Module: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn diligence_task_transport_is_preserved_in_free_and_pinned_strategies() {
+        for strategy in [
+            crate::executor::ExecutionStrategy::Free,
+            crate::executor::ExecutionStrategy::HostPinned,
+        ] {
+            let mut runtime = RuntimeContext::new();
+            runtime.add_host("localhost".into(), None);
+            let config = crate::executor::ExecutorConfig {
+                strategy,
+                ..Default::default()
+            };
+            let executor = crate::executor::Executor::with_runtime(config, runtime);
+            let playbook = crate::executor::Playbook::parse("- hosts: localhost\n  gather_facts: false\n  tasks:\n    - command: /bin/true\n      connection: ssh\n", None).unwrap();
+            let results = executor.run_playbook(&playbook).await.unwrap();
+            assert!(results["localhost"].unreachable);
+        }
+    }
+
+    #[test]
+    fn diligence_included_task_conversion_preserves_transport_and_scalar_args() {
+        let task: crate::playbook::Task =
+            serde_yaml::from_str("name: transport\nconnection: ssh\ncommand: /bin/true\n").unwrap();
+        let task = Task::from(task);
+        assert_eq!(task.module, "command");
+        assert_eq!(task.vars["ansible_connection"], "ssh");
+        assert_eq!(task.args["_raw_params"], "/bin/true");
+    }
+
+    #[tokio::test]
+    async fn diligence_local_become_is_rejected_before_execution() {
+        let task = Task::new("identity", "command").arg("cmd", "/usr/bin/id -un");
+        let mut ctx = ExecutionContext::new("localhost");
+        ctx.r#become = true;
+        let result = task
+            .execute_native(
+                "command",
+                &task.args,
+                &ctx,
+                &Arc::new(RwLock::new(RuntimeContext::new())),
+                &Arc::new(ModuleRegistry::default()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, TaskStatus::Failed);
+        assert!(result.result.is_none());
+    }
+
+    #[tokio::test]
+    async fn diligence_remote_facts_cannot_authorize_local_execution() {
+        let task = Task::new("guard", "command").arg("cmd", "/bin/true");
+        let mut runtime = RuntimeContext::new();
+        runtime.set_host_var(
+            "remote.invalid",
+            "ansible_connection".into(),
+            serde_json::json!("ssh"),
+        );
+        runtime.set_host_fact(
+            "remote.invalid",
+            "ansible_connection".into(),
+            serde_json::json!("local"),
+        );
+        let result = task
+            .execute_native(
+                "command",
+                &task.args,
+                &ExecutionContext::new("remote.invalid"),
+                &Arc::new(RwLock::new(runtime)),
+                &Arc::new(ModuleRegistry::default()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, TaskStatus::Unreachable);
+    }
+
+    #[test]
+    fn diligence_register_preserves_payload_and_authoritative_status() {
+        let result = TaskResult::failed("expected").with_result(serde_json::json!({
+            "rc": 7, "stdout": "evidence\n", "stderr": "failure\n",
+            "stat": { "exists": false }, "failed": false, "changed": true
+        }));
+        let registered = result.to_registered(None, None);
+        assert!(registered.failed);
+        assert!(!registered.changed);
+        assert_eq!(registered.rc, Some(7));
+        assert_eq!(registered.stdout_lines, Some(vec!["evidence".into()]));
+        assert_eq!(registered.data["stat"]["exists"], false);
+        assert!(!registered.data.contains_key("failed"));
+    }
+
+    #[tokio::test]
+    async fn diligence_remote_file_guard_applies_even_with_a_connection() {
+        let scratch = tempfile::tempdir().unwrap();
+        let sentinel = scratch.path().join("must-not-exist");
+        let task = Task::new("guard", "file")
+            .arg("path", sentinel.to_str().unwrap())
+            .arg("state", "touch");
+        let ctx = ExecutionContext::new("remote.invalid")
+            .with_connection(Arc::new(crate::connection::local::LocalConnection::new()));
+        let runtime = Arc::new(RwLock::new(RuntimeContext::new()));
+        let result = task
+            .execute_native(
+                "file",
+                &task.args,
+                &ctx,
+                &runtime,
+                &Arc::new(ModuleRegistry::default()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, TaskStatus::Failed);
+        assert!(!sentinel.exists());
+    }
+
+    #[tokio::test]
+    async fn diligence_explicit_remote_localhost_never_falls_back() {
+        let task = Task::new("guard", "command").arg("cmd", "/bin/true");
+        let mut runtime = RuntimeContext::new();
+        runtime.set_host_var(
+            "localhost",
+            "ansible_connection".into(),
+            serde_json::json!("ssh"),
+        );
+        let result = task
+            .execute_native(
+                "command",
+                &task.args,
+                &ExecutionContext::new("localhost"),
+                &Arc::new(RwLock::new(runtime)),
+                &Arc::new(ModuleRegistry::default()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, TaskStatus::Unreachable);
+    }
 
     #[test]
     fn test_task_builder() {

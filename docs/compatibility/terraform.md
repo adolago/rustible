@@ -1,6 +1,6 @@
 # Terraform Integration Compatibility
 
-> **Last Updated:** 2026-02-05
+> **Last Updated:** 2026-09-04
 > **Rustible Version:** 0.1.x
 > **Status:** Experimental (Feature-gated)
 
@@ -11,6 +11,8 @@ This document tracks Rustible's Terraform-like provisioning capabilities and int
 ## Overview
 
 Rustible includes experimental Terraform-like provisioning capabilities, enabling infrastructure-as-code workflows alongside configuration management. This feature is enabled via the `provisioning` feature flag.
+
+This is not a production-ready Terraform replacement. Source implementations and unit tests do not establish working cloud workflows. The built-in AWS provider/resource registration is incomplete, and plan/apply still has unresolved state freshness, replacement, dependency-failure and recovery behavior. Do not use it to take over existing infrastructure state without a separately reviewed migration and disposable acceptance tests.
 
 ```bash
 # Build with provisioning support
@@ -28,20 +30,20 @@ Rustible can also import Terraform outputs via `vars_files` entries (local, HTTP
 
 | Capability | Terraform | Rustible | Status |
 |------------|-----------|----------|--------|
-| Plan mode preview | Yes | Yes | Stable |
-| State management | Yes | Yes | Stable |
-| Drift detection | Yes | Yes | Stable |
-| Remote state backends | Yes | Yes | Stable |
-| State locking | Yes | Yes | Stable |
-| Terraform state import | Yes | Yes | Stable |
-| Lockfiles | Yes | Planned | v1.0 |
-| Checkpoints/rollback | No | Planned | v1.0 |
+| Plan mode preview | Yes | Partial | Experimental; not an enforced saved-plan approval workflow |
+| State management | Yes | Partial | Experimental; stale-writer and recovery limitations remain |
+| Drift detection | Yes | Partial | Observed cloud deletion/change is not reliably reflected in plans |
+| Remote state backends | Yes | Implementations present | Live interoperability and lease safety not established |
+| State locking | Yes | Partial | Unix local exclusion tested; renewal and cancellation cleanup incomplete |
+| Terraform state import | Yes | Restricted | Root managed, single unindexed instances only; see migration limits |
+| Lockfiles | Yes | Helpers present | Provisioning frozen-mode enforcement is not implemented |
+| Checkpoints/rollback | Varies by workflow | Helpers present | Not integrated into ordinary provisioning apply |
 
 ---
 
 ## Plan Mode
 
-Rustible's plan mode provides Terraform-style execution previews:
+Configuration-management plan mode provides execution previews. This is separate from `rustible provision plan`; it does not establish Terraform planning parity. The following output is illustrative:
 
 ```bash
 rustible plan playbook.yml -i inventory.yml
@@ -73,9 +75,11 @@ Apply this plan? [y/N]
 
 ## AWS Resource Support
 
-Requires `--features aws` or `--features provisioning`.
+The provisioning CLI requires `--features provisioning`, which also enables `aws`. The `aws` feature alone enables cloud modules but not the provisioning CLI implementation.
 
-### Implemented Resources (18 total)
+### Resource Source Implementations (18 total)
+
+The following catalog counts implementation files, not verified working resource types. Built-in provider/resource registration is incomplete; no entry below should be read as an end-to-end cloud acceptance result. The table's "Implemented" label refers only to source implementation.
 
 | Resource Type | Terraform Equivalent | Status | Notes |
 |---------------|---------------------|--------|-------|
@@ -140,25 +144,25 @@ rustible state lock release <lock-id>
 
 | Backend | Status | Locking | Notes |
 |---------|--------|---------|-------|
-| Local | Stable | File-based | Default backend |
-| S3 | Stable | DynamoDB | Full AWS integration |
-| GCS | Stable | None | Google Cloud Storage |
-| Azure Blob | Stable | Lease-based | Azure Blob Storage |
-| Consul | Stable | Session-based | HashiCorp Consul KV |
-| HTTP | Stable | HTTP Lock/Unlock | Terraform Cloud compatible |
+| Local | Experimental | File-based | Cooperating Unix processes; upgrade all writers together |
+| S3 | Experimental | DynamoDB | Requires `aws`; live integration not established |
+| GCS | Experimental | None | Requires `gcp`; no backend locking |
+| Azure Blob | Experimental | Lease-based | Requires `azure`; automatic lease renewal is incomplete |
+| Consul | Experimental | Session-based | Session renewal and ownership fencing are incomplete |
+| HTTP | Experimental | HTTP Lock/Unlock | Generic HTTP protocol; Terraform Cloud interoperability unverified |
 
 ### State File Location
 
 ```
 ./.rustible/provisioning.state.json
-./.rustible/backend.json
+./.rustible/provisioning.backend.json
 ```
 
 ---
 
 ## Drift Detection
 
-Rustible supports drift detection to compare desired state against actual cloud resources:
+The separate configuration-management drift command inspects supported host resources. It does not establish complete cloud provisioning drift detection: provisioning refresh currently misses some deletion/drift cases. The following output is illustrative:
 
 ```bash
 rustible drift --playbook site.yml --inventory production.yml
@@ -189,11 +193,11 @@ Summary: 1 modified, 1 missing, 1 extra
 
 | Provider | Resources | Status | Notes |
 |----------|-----------|--------|-------|
-| AWS | 18 | Stable | Core EC2, S3, IAM, RDS, ELB, ASG |
+| AWS | 18 source implementations | Experimental | Built-in provider/resource registration incomplete |
 | Azure | 0 | Stub | Provisioning not yet implemented |
 | GCP | 0 | Stub | Provisioning not yet implemented |
-| Kubernetes | N/A | Stable | Module-based (not provisioning) |
-| Docker | N/A | Stable | Module-based (not provisioning) |
+| Kubernetes | N/A | Module implementations present | Not provisioning; live interoperability unverified |
+| Docker | N/A | Module implementations present | Not provisioning; live interoperability unverified |
 
 ### Provider SDK (Planned)
 
@@ -212,13 +216,13 @@ See [architecture/provider-ecosystem.md](../architecture/provider-ecosystem.md) 
 | Aspect | Terraform | Rustible |
 |--------|-----------|----------|
 | Primary use case | Infrastructure provisioning | Config management + provisioning |
-| Language | HCL | YAML (Ansible-compatible) |
+| Language | HCL | YAML; compatibility must be checked per workflow |
 | State tracking | Central to design | Optional feature |
-| Configuration drift | Full support | Supported |
-| Provider ecosystem | Extensive (1000+) | Growing (~18 AWS resources) |
+| Configuration drift | Supported workflows | Partial; provisioning deletion/drift handling incomplete |
+| Provider ecosystem | Broad provider ecosystem | Experimental; 18 AWS resource source implementations |
 | Execution model | Graph-based | Task-based with DAG support |
-| Secret management | External (Vault) | Built-in vault integration |
-| Learning curve | Moderate | Low (Ansible knowledge transfers) |
+| Secret management | Depends on configuration/backend | Built-in vault; provisioning local state is not encrypted |
+| Learning curve | Depends on workflow | Unvalidated; YAML similarity does not guarantee compatibility |
 
 ---
 
@@ -236,6 +240,20 @@ rustible state import-terraform --tfstate terraform.tfstate
 # - Outputs
 # - Lineage and serial numbers
 ```
+
+Import requires a build with `--features provisioning`. Default builds now reject `state import-terraform` before writing instead of using the lossy fallback converter. Ordinary state listing and other unrelated state commands remain available.
+
+Import is deliberately restricted to Terraform state version 4 with a serial, nonempty lineage, and root managed resources having exactly one unindexed instance. Module-qualified addresses, data resources, count/for_each instances, deposed instances and duplicate addresses are rejected before import returns state. Previous behavior silently collapsed distinct resources; it is not supported compatibility to preserve.
+
+Provider aliases/URLs, private provider metadata, complete dependency addressing and Terraform type roundtrips are not guaranteed. Preserve the original Terraform state and use Terraform/OpenTofu to manage unsupported state. Do not flatten addresses or omit resources just to make import succeed.
+
+### Safety-change migration notes
+
+- For every command, output **format** is a root option and must precede the subcommand: use `rustible --output json state list` or `rustible --output json run playbook.yml`. Previously `--output json` was advertised as global and could follow a subcommand; that placement now returns an argument error where no local file-output option exists. Local `--output PATH` options keep their names and positions. For example, `rustible --output json state import-terraform --tfstate terraform.tfstate --output imported.json` separates display format from destination path. The previous shared internal option name could panic instead of parsing an import destination.
+- Back up state before upgrading and upgrade every writer together. New saves use deterministic canonical checksums. The reader verifies original legacy checksums, but old binaries may reject newly saved files; do not alternate versions against the same state.
+- Local lock metadata uses persistent `.guard` files. Do not remove these while a process may use the state, or mix writers that ignore them. Corrupt lock metadata is no longer automatically removed. Non-Unix local locking fails explicitly pending a safe portable implementation.
+- Saved-plan apply, resume, frozen provider enforcement, state encryption, canary, blast-radius limits and admission-policy options are not implemented in the apply workflow. They must not be used as safety guarantees; unsupported requests are rejected rather than applied without protection.
+- Dependency lockfile integrity verifies regular local-file checksums in bounded chunks. Special files, roles, collections and remote resource types fail explicitly when their integrity cannot be verified; a previous unconditional success was not proof of integrity. Symlinks to regular files remain supported; this is not a file snapshot or protection against concurrent content changes.
 
 ### When to Use Rustible vs Terraform
 
@@ -283,8 +301,8 @@ Rustible can complement Terraform:
 
 | Version | Features |
 |---------|----------|
-| v0.1 | Plan mode, basic AWS resources |
-| v0.2 | ✅ Remote state backends, 18 AWS resources, drift detection, state locking |
+| Current alpha | Partial provisioning and state helpers; known correctness gaps above |
+| Proposed next milestone | Verified provider wiring, state safety, drift and recovery in disposable workflows |
 | v0.3 | Azure/GCP provisioning baseline |
 | v1.0 | Lockfiles, checkpoints, provider registry |
 

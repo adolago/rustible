@@ -1342,10 +1342,8 @@ impl ConsulBackend {
             request = request.header("X-Consul-Token", token);
         }
 
-        // Add session ID if we have one for CAS operations
-        if let Some(ref session_id) = *self.session_id.read() {
-            request = request.query(&[("acquire", session_id.as_str())]);
-        }
+        // Only the separate .lock key belongs to the ephemeral session. Binding
+        // persistent state to a Behavior=delete session deletes it on unlock.
 
         request
     }
@@ -2824,6 +2822,78 @@ path: state.json
         backend.save(&state).await.unwrap();
         assert!(backend.exists().await.unwrap());
         backend.delete().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_diligence_consul_state_survives_session_release() {
+        let server = MockServer::start().await;
+        let stored = Arc::new(std::sync::Mutex::new(None::<String>));
+        let session_holds_state = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        Mock::given(method("PUT"))
+            .and(path("/v1/session/create"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"ID": "local-test-session"})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/v1/kv/diligence/state/.lock"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("true"))
+            .mount(&server)
+            .await;
+        let saved = stored.clone();
+        let held = session_holds_state.clone();
+        Mock::given(method("PUT"))
+            .and(path("/v1/kv/diligence/state"))
+            .respond_with(move |request: &wiremock::Request| {
+                held.store(
+                    request.url.query_pairs().any(|(name, _)| name == "acquire"),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+                *saved.lock().unwrap() = Some(String::from_utf8(request.body.clone()).unwrap());
+                ResponseTemplate::new(200).set_body_string("true")
+            })
+            .mount(&server)
+            .await;
+        let saved = stored.clone();
+        let held = session_holds_state.clone();
+        Mock::given(method("PUT"))
+            .and(path("/v1/session/destroy/local-test-session"))
+            .respond_with(move |_: &wiremock::Request| {
+                // Model Consul's documented Behavior=delete for session-held KV keys.
+                if held.load(std::sync::atomic::Ordering::SeqCst) {
+                    *saved.lock().unwrap() = None;
+                }
+                ResponseTemplate::new(200).set_body_string("true")
+            })
+            .mount(&server)
+            .await;
+        let saved = stored.clone();
+        Mock::given(method("GET"))
+            .and(path("/v1/kv/diligence/state"))
+            .respond_with(
+                move |_: &wiremock::Request| match saved.lock().unwrap().as_ref() {
+                    Some(content) => ResponseTemplate::new(200).set_body_string(content.clone()),
+                    None => ResponseTemplate::new(404),
+                },
+            )
+            .mount(&server)
+            .await;
+
+        let backend = ConsulBackend::new("diligence/state".to_string()).with_address(server.uri());
+        let lock = backend.lock_backend().unwrap();
+        let info = LockInfo::new("local-test");
+        assert!(lock.acquire(&info, Duration::from_secs(1)).await.unwrap());
+        let state = ProvisioningState::new();
+        backend.save(&state).await.unwrap();
+        assert!(lock.release(&info.id).await.unwrap());
+        let loaded = backend
+            .load()
+            .await
+            .unwrap()
+            .expect("releasing a lock must not delete saved state");
+        assert_eq!(loaded.lineage, state.lineage);
     }
 
     #[tokio::test]
