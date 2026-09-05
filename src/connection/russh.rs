@@ -4061,9 +4061,13 @@ mod tests {
             .unwrap();
 
         assert!(output.status.success());
+        // Compare canonical paths: macOS temp dirs live under /var, a symlink
+        // to /private/var, and `pwd` prints the resolved path.
+        let printed =
+            std::path::PathBuf::from(String::from_utf8(output.stdout).unwrap().trim_end());
         assert_eq!(
-            String::from_utf8(output.stdout).unwrap().trim_end(),
-            directory.to_string_lossy()
+            printed.canonicalize().unwrap(),
+            directory.canonicalize().unwrap()
         );
     }
 
