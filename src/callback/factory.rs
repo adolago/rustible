@@ -333,14 +333,8 @@ impl PluginFactory {
                         default: "false",
                     },
                     PluginOptionInfo {
-                        name: "show_diff",
-                        description: "Show diffs for changed files",
-                        option_type: "bool",
-                        default: "false",
-                    },
-                    PluginOptionInfo {
                         name: "show_duration",
-                        description: "Show task and playbook durations",
+                        description: "Show per-task durations",
                         option_type: "bool",
                         default: "false",
                     },
@@ -353,6 +347,12 @@ impl PluginFactory {
                     PluginOptionInfo {
                         name: "show_ok",
                         description: "Show ok (unchanged) tasks",
+                        option_type: "bool",
+                        default: "true",
+                    },
+                    PluginOptionInfo {
+                        name: "show_recap",
+                        description: "Show the PLAY RECAP header and per-host statistics",
                         option_type: "bool",
                         default: "true",
                     },
@@ -503,6 +503,8 @@ impl PluginFactory {
     ) -> PluginResult<Arc<dyn ExecutionCallback>> {
         // `CallbackConfig` counts 1 as normal output, while the default plugin
         // counts `-v` flags from 0, so shift by one and treat quiet as normal.
+        // `show_diff` is passed through for completeness, but the default
+        // plugin does not render diffs yet, so it is not advertised as an option.
         let mut default_config = DefaultCallbackConfig {
             verbosity: config.verbosity.saturating_sub(1),
             no_color: !config.use_colors,
@@ -510,15 +512,13 @@ impl PluginFactory {
             show_duration: config.show_task_timing,
             show_skipped: config.show_skipped,
             show_ok: config.show_ok,
+            show_recap: config.show_recap,
         };
 
         // Apply plugin-specific config
         if let Some(pc) = plugin_config {
             if let Some(v) = pc.get_bool("no_color") {
                 default_config.no_color = v;
-            }
-            if let Some(v) = pc.get_bool("show_diff") {
-                default_config.show_diff = v;
             }
             if let Some(v) = pc.get_bool("show_duration") {
                 default_config.show_duration = v;
@@ -528,6 +528,9 @@ impl PluginFactory {
             }
             if let Some(v) = pc.get_bool("show_ok") {
                 default_config.show_ok = v;
+            }
+            if let Some(v) = pc.get_bool("show_recap") {
+                default_config.show_recap = v;
             }
         }
 

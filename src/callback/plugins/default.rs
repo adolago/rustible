@@ -185,6 +185,8 @@ pub struct DefaultCallbackConfig {
     pub show_skipped: bool,
     /// Whether to show ok tasks (can be noisy for large playbooks)
     pub show_ok: bool,
+    /// Whether to print the PLAY RECAP header and per-host statistics
+    pub show_recap: bool,
 }
 
 impl Default for DefaultCallbackConfig {
@@ -196,6 +198,7 @@ impl Default for DefaultCallbackConfig {
             show_duration: true,
             show_skipped: true,
             show_ok: true,
+            show_recap: true,
         }
     }
 }
@@ -568,33 +571,35 @@ impl ExecutionCallback for DefaultCallback {
     }
 
     async fn on_playbook_end(&self, _name: &str, success: bool) {
-        // Print recap
-        self.print_recap_header();
+        // Print recap unless it was disabled
+        if self.config.show_recap {
+            self.print_recap_header();
 
-        let stats = self.host_stats.read();
+            let stats = self.host_stats.read();
 
-        // Sort hosts for consistent output
-        let mut hosts: Vec<_> = stats.keys().collect();
-        hosts.sort();
+            // Sort hosts for consistent output
+            let mut hosts: Vec<_> = stats.keys().collect();
+            hosts.sort();
 
-        for host in hosts {
-            if let Some(host_stats) = stats.get(host) {
-                let host_colored = self.format_recap_host(host, host_stats);
+            for host in hosts {
+                if let Some(host_stats) = stats.get(host) {
+                    let host_colored = self.format_recap_host(host, host_stats);
 
-                // Format each stat
-                let ok = self.format_stat("ok", host_stats.ok, Color::Green);
-                let changed = self.format_stat("changed", host_stats.changed, Color::Yellow);
-                let unreachable =
-                    self.format_stat("unreachable", host_stats.unreachable, Color::Red);
-                let failed = self.format_stat("failed", host_stats.failed, Color::Red);
-                let skipped = self.format_stat("skipped", host_stats.skipped, Color::Cyan);
-                let rescued = self.format_stat("rescued", host_stats.rescued, Color::Magenta);
-                let ignored = self.format_stat("ignored", host_stats.ignored, Color::Blue);
+                    // Format each stat
+                    let ok = self.format_stat("ok", host_stats.ok, Color::Green);
+                    let changed = self.format_stat("changed", host_stats.changed, Color::Yellow);
+                    let unreachable =
+                        self.format_stat("unreachable", host_stats.unreachable, Color::Red);
+                    let failed = self.format_stat("failed", host_stats.failed, Color::Red);
+                    let skipped = self.format_stat("skipped", host_stats.skipped, Color::Cyan);
+                    let rescued = self.format_stat("rescued", host_stats.rescued, Color::Magenta);
+                    let ignored = self.format_stat("ignored", host_stats.ignored, Color::Blue);
 
-                println!(
-                    "{:<30} : {}    {}    {}    {}    {}    {}    {}",
-                    host_colored, ok, changed, unreachable, failed, skipped, rescued, ignored
-                );
+                    println!(
+                        "{:<30} : {}    {}    {}    {}    {}    {}    {}",
+                        host_colored, ok, changed, unreachable, failed, skipped, rescued, ignored
+                    );
+                }
             }
         }
 
@@ -838,6 +843,12 @@ impl DefaultCallbackBuilder {
         self
     }
 
+    /// Enable or disable the PLAY RECAP header and per-host statistics.
+    pub fn show_recap(mut self, show: bool) -> Self {
+        self.config.show_recap = show;
+        self
+    }
+
     /// Build the DefaultCallback.
     pub fn build(self) -> DefaultCallback {
         DefaultCallback::with_config(self.config)
@@ -862,6 +873,13 @@ mod tests {
     fn test_default_callback_with_verbosity() {
         let callback = DefaultCallback::new().with_verbosity(2);
         assert_eq!(callback.verbosity(), Verbosity::MoreVerbose);
+    }
+
+    #[test]
+    fn test_default_callback_builder_recap_toggle() {
+        assert!(DefaultCallback::new().config.show_recap);
+        let callback = DefaultCallback::builder().show_recap(false).build();
+        assert!(!callback.config.show_recap);
     }
 
     #[test]
