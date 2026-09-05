@@ -41,8 +41,9 @@ use std::sync::Arc;
 
 use crate::callback::config::{CallbackConfig, PluginConfig};
 use crate::callback::plugins::{
-    DiffCallback, DiffConfig, MinimalCallback, NullCallback, ProgressCallback, ProgressConfig,
-    SelectiveCallback, SelectiveConfig, SummaryCallback, SummaryConfig,
+    DefaultCallback, DefaultCallbackConfig, DiffCallback, DiffConfig, MinimalCallback,
+    NullCallback, ProgressCallback, ProgressConfig, SelectiveCallback, SelectiveConfig,
+    SummaryCallback, SummaryConfig,
 };
 use crate::traits::ExecutionCallback;
 
@@ -216,17 +217,24 @@ impl PluginFactory {
     /// # }
     /// ```
     pub fn create(name: &str, config: &CallbackConfig) -> PluginResult<Arc<dyn ExecutionCallback>> {
+        let Some(canonical) = Self::canonical_name(name) else {
+            return Err(PluginFactoryError::unknown_plugin(name));
+        };
+
+        // Plugin-specific options may be keyed by the canonical name or by the
+        // alias the caller used (the historical lookup key).
         let name_lower = name.to_lowercase();
+        let plugin_config = config
+            .get_plugin_config(canonical)
+            .or_else(|| config.get_plugin_config(&name_lower));
 
-        // Get plugin-specific config if available
-        let plugin_config = config.get_plugin_config(&name_lower);
-
-        match name_lower.as_str() {
+        match canonical {
             // ================================================================
             // Stdout Plugins
             // ================================================================
+            "default" => Self::create_default_callback(config, plugin_config),
             "minimal" => Self::create_minimal(config, plugin_config),
-            "null" | "silent" | "quiet" => Self::create_null(config, plugin_config),
+            "null" => Self::create_null(config, plugin_config),
             "summary" => Self::create_summary(config, plugin_config),
             "progress" => Self::create_progress(config, plugin_config),
             "selective" => Self::create_selective(config, plugin_config),
@@ -276,9 +284,30 @@ impl PluginFactory {
             .collect()
     }
 
+    /// Resolve a plugin name to its canonical built-in name.
+    ///
+    /// This is the single naming contract shared by [`Self::create`],
+    /// [`Self::plugin_exists`] and [`Self::get_plugin_info`]: matching is
+    /// case-insensitive and the documented aliases `silent` and `quiet`
+    /// resolve to `null`. Unknown names, including invented prefixes,
+    /// suffixes or versions, return `None`.
+    pub fn canonical_name(name: &str) -> Option<&'static str> {
+        match name.to_lowercase().as_str() {
+            "default" => Some("default"),
+            "minimal" => Some("minimal"),
+            "null" | "silent" | "quiet" => Some("null"),
+            "summary" => Some("summary"),
+            "progress" => Some("progress"),
+            "selective" => Some("selective"),
+            "diff" => Some("diff"),
+            _ => None,
+        }
+    }
+
     /// Returns a list of all available plugin names.
     pub fn available_plugin_names() -> Vec<&'static str> {
         vec![
+            "default",
             "minimal",
             "null",
             "summary",
@@ -292,6 +321,43 @@ impl PluginFactory {
     /// Returns detailed information about all available plugins.
     pub fn available_plugins() -> Vec<PluginInfo> {
         vec![
+            PluginInfo {
+                name: "default",
+                description: "Ansible-style colored task-by-task output with a final recap",
+                plugin_type: PluginType::Stdout,
+                options: vec![
+                    PluginOptionInfo {
+                        name: "no_color",
+                        description: "Disable ANSI colors (NO_COLOR is always respected)",
+                        option_type: "bool",
+                        default: "false",
+                    },
+                    PluginOptionInfo {
+                        name: "show_diff",
+                        description: "Show diffs for changed files",
+                        option_type: "bool",
+                        default: "false",
+                    },
+                    PluginOptionInfo {
+                        name: "show_duration",
+                        description: "Show task and playbook durations",
+                        option_type: "bool",
+                        default: "false",
+                    },
+                    PluginOptionInfo {
+                        name: "show_skipped",
+                        description: "Show skipped tasks",
+                        option_type: "bool",
+                        default: "true",
+                    },
+                    PluginOptionInfo {
+                        name: "show_ok",
+                        description: "Show ok (unchanged) tasks",
+                        option_type: "bool",
+                        default: "true",
+                    },
+                ],
+            },
             PluginInfo {
                 name: "minimal",
                 description: "Minimal output - only failures and final recap (ideal for CI/CD)",
@@ -410,28 +476,63 @@ impl PluginFactory {
     }
 
     /// Check if a plugin with the given name exists.
+    ///
+    /// Agrees with [`Self::create`]: every name accepted here can be created,
+    /// including aliases and case variants, and every rejected name cannot.
     pub fn plugin_exists(name: &str) -> bool {
-        let name_lower = name.to_lowercase();
-        Self::available_plugin_names().iter().any(|&n| {
-            n.to_lowercase() == name_lower
-                || n.replace('_', "-") == name_lower
-                || n.replace('-', "_") == name_lower
-        })
+        Self::canonical_name(name).is_some()
     }
 
     /// Get information about a specific plugin.
+    ///
+    /// Aliases resolve to their canonical plugin (for example `quiet` to `null`).
     pub fn get_plugin_info(name: &str) -> Option<PluginInfo> {
-        let name_lower = name.to_lowercase();
-        Self::available_plugins().into_iter().find(|p| {
-            p.name.to_lowercase() == name_lower
-                || p.name.replace('_', "-") == name_lower
-                || p.name.replace('-', "_") == name_lower
-        })
+        let canonical = Self::canonical_name(name)?;
+        Self::available_plugins()
+            .into_iter()
+            .find(|p| p.name == canonical)
     }
 
     // ========================================================================
     // Private Factory Methods for Each Plugin
     // ========================================================================
+
+    fn create_default_callback(
+        config: &CallbackConfig,
+        plugin_config: Option<&PluginConfig>,
+    ) -> PluginResult<Arc<dyn ExecutionCallback>> {
+        // `CallbackConfig` counts 1 as normal output, while the default plugin
+        // counts `-v` flags from 0, so shift by one and treat quiet as normal.
+        let mut default_config = DefaultCallbackConfig {
+            verbosity: config.verbosity.saturating_sub(1),
+            no_color: !config.use_colors,
+            show_diff: config.show_diff,
+            show_duration: config.show_task_timing,
+            show_skipped: config.show_skipped,
+            show_ok: config.show_ok,
+        };
+
+        // Apply plugin-specific config
+        if let Some(pc) = plugin_config {
+            if let Some(v) = pc.get_bool("no_color") {
+                default_config.no_color = v;
+            }
+            if let Some(v) = pc.get_bool("show_diff") {
+                default_config.show_diff = v;
+            }
+            if let Some(v) = pc.get_bool("show_duration") {
+                default_config.show_duration = v;
+            }
+            if let Some(v) = pc.get_bool("show_skipped") {
+                default_config.show_skipped = v;
+            }
+            if let Some(v) = pc.get_bool("show_ok") {
+                default_config.show_ok = v;
+            }
+        }
+
+        Ok(Arc::new(DefaultCallback::with_config(default_config)))
+    }
 
     fn create_minimal(
         _config: &CallbackConfig,
@@ -828,6 +929,7 @@ mod tests {
     #[test]
     fn test_available_plugin_names() {
         let names = PluginFactory::available_plugin_names();
+        assert!(names.contains(&"default"));
         assert!(names.contains(&"minimal"));
         assert!(names.contains(&"null"));
         assert!(names.contains(&"summary"));
@@ -854,9 +956,12 @@ mod tests {
 
     #[test]
     fn test_plugin_exists() {
+        assert!(PluginFactory::plugin_exists("default"));
         assert!(PluginFactory::plugin_exists("minimal"));
         assert!(PluginFactory::plugin_exists("null"));
         assert!(PluginFactory::plugin_exists("summary"));
+        assert!(PluginFactory::plugin_exists("silent"));
+        assert!(PluginFactory::plugin_exists("quiet"));
         assert!(!PluginFactory::plugin_exists("nonexistent"));
     }
 
@@ -912,6 +1017,77 @@ mod tests {
 
         let plugins = PluginFactory::create_from_config(&config);
         assert_eq!(plugins.len(), 2);
+    }
+
+    #[test]
+    fn test_default_configuration_constructs_the_default_plugin() {
+        let config = CallbackConfig::default();
+        assert_eq!(config.enabled_plugins, vec!["default".to_string()]);
+        assert!(PluginFactory::plugin_exists("default"));
+        assert!(PluginFactory::create("default", &config).is_ok());
+        assert_eq!(PluginFactory::create_from_config(&config).len(), 1);
+        assert!(PluginRegistry::with_builtins().is_registered("default"));
+    }
+
+    #[test]
+    fn test_lookup_and_create_agree_for_names_aliases_and_case() {
+        let config = CallbackConfig::default();
+        let mut accepted: Vec<String> = PluginFactory::available_plugin_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        accepted.extend(["silent", "quiet"].map(str::to_owned));
+        for name in &accepted {
+            let capitalized = format!("{}{}", name[..1].to_uppercase(), &name[1..]);
+            for variant in [name.clone(), name.to_uppercase(), capitalized] {
+                assert!(PluginFactory::plugin_exists(&variant), "{variant}");
+                assert!(
+                    PluginFactory::create(&variant, &config).is_ok(),
+                    "{variant}"
+                );
+                assert!(
+                    PluginFactory::get_plugin_info(&variant).is_some(),
+                    "{variant}"
+                );
+            }
+        }
+        for name in [
+            "",
+            "nonexistent",
+            "min",
+            "null-",
+            " quiet",
+            "json@2.0",
+            "rustible.callback.default",
+        ] {
+            assert!(!PluginFactory::plugin_exists(name), "{name:?}");
+            assert!(PluginFactory::create(name, &config).is_err(), "{name:?}");
+            assert!(PluginFactory::get_plugin_info(name).is_none(), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn test_aliases_resolve_to_their_canonical_plugin() {
+        assert_eq!(PluginFactory::canonical_name("QUIET"), Some("null"));
+        assert_eq!(PluginFactory::canonical_name("Silent"), Some("null"));
+        assert_eq!(
+            PluginFactory::get_plugin_info("quiet").map(|p| p.name),
+            Some("null")
+        );
+        assert_eq!(PluginFactory::canonical_name("notify"), None);
+    }
+
+    #[test]
+    fn test_alias_still_finds_plugin_options_keyed_by_alias_or_canonical_name() {
+        let mut config = CallbackConfig::default();
+        let mut disabled = PluginConfig::enabled();
+        disabled.set_option("show_ok", false);
+        config.plugins.insert("default".to_string(), disabled);
+        assert!(PluginFactory::create("DEFAULT", &config).is_ok());
+        config
+            .plugins
+            .insert("quiet".to_string(), PluginConfig::enabled());
+        assert!(PluginFactory::create("quiet", &config).is_ok());
     }
 
     // ========================================================================
