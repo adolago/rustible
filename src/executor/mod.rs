@@ -2158,7 +2158,8 @@ impl Executor {
 
         // Check for regex pattern (starts with ~)
         if let Some(regex_pattern) = pattern.strip_prefix('~') {
-            let re = regex::Regex::new(regex_pattern)
+            // Optimize: Use cached get_regex instead of recompiling
+            let re = crate::utils::get_regex(regex_pattern)
                 .map_err(|e| ExecutorError::ParseError(format!("Invalid regex: {}", e)))?;
 
             let all_hosts = runtime.get_all_hosts();

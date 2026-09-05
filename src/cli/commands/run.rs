@@ -2423,7 +2423,8 @@ impl RunArgs {
 
             // Check for regex pattern
             if let Some(regex_str) = pattern.strip_prefix('~') {
-                if regex::Regex::new(regex_str).is_err() {
+                // Optimize: Use cached get_regex instead of recompiling
+                if rustible::utils::get_regex(regex_str).is_err() {
                     return Err(format!("Invalid regex pattern in limit: {}", regex_str));
                 }
             }
