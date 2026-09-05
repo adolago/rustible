@@ -376,7 +376,7 @@ impl InteractiveSession {
             "👁️ View encrypted file",
             "✏️ Edit encrypted file",
             "✨ Create new encrypted file",
-            "🔑 Rekey (change password)",
+            "🔒 Rekey (change password)",
             "🔏 Encrypt a string",
             "🔙 Back to main menu",
         ];
