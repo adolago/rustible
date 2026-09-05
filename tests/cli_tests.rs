@@ -24,6 +24,15 @@ fn rustible_cmd() -> Command {
     assert_cmd::cargo::cargo_bin_cmd!("rustible")
 }
 
+// Executor and inventory contracts these tests assert. Privilege escalation is
+// refused at play level until it is verified end-to-end; a `--limit` pattern
+// that matches no inventory host is an error rather than a warning; and
+// `--start-at-task` naming a task that never runs is an error. Execution
+// refusals exit with code 2, pattern errors with code 1.
+const BECOME_REFUSED: &str = "Play-level privilege escalation is not verified end-to-end";
+const NO_HOSTS_MATCHED: &str = "No hosts matched pattern";
+const START_TASK_NOT_FOUND: &str = "Requested start task was not found";
+
 // Helper to create a test playbook
 fn create_test_playbook() -> NamedTempFile {
     let mut file = NamedTempFile::new().unwrap();
@@ -670,7 +679,9 @@ fn test_run_with_become() {
         .arg(playbook.path())
         .arg("-b")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 #[test]
@@ -684,7 +695,9 @@ fn test_run_with_become_method() {
         .arg("--become-method")
         .arg("su")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 #[test]
@@ -698,7 +711,9 @@ fn test_run_with_become_user() {
         .arg("--become-user")
         .arg("admin")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 #[test]
@@ -1070,7 +1085,9 @@ fn test_complex_run_with_all_flags() {
         .arg("--become-user")
         .arg("root")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 #[test]
@@ -1658,7 +1675,9 @@ fn test_limit_multiple_hosts() {
         .arg("run")
         .arg(playbook.path())
         .assert()
-        .success();
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(NO_HOSTS_MATCHED));
 }
 
 #[test]
@@ -2397,7 +2416,9 @@ fn test_long_form_arguments() {
         .arg("--become-user")
         .arg("root")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 // =============================================================================
@@ -3287,7 +3308,9 @@ fn test_run_with_all_become_options() {
         .arg("--become-user")
         .arg("admin")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 #[test]
@@ -3309,7 +3332,9 @@ fn test_check_with_all_options() {
         .arg("-u")
         .arg("testuser")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 // =============================================================================
@@ -3433,14 +3458,17 @@ fn test_extra_vars_with_special_chars() {
 fn test_limit_with_special_patterns() {
     let playbook = create_test_playbook();
 
-    // Test various limit patterns
+    // Exclusion and inclusion operators parse, but nothing in the default
+    // inventory matches, which is an error.
     rustible_cmd()
         .arg("-l")
         .arg("!excluded:included")
         .arg("run")
         .arg(playbook.path())
         .assert()
-        .success();
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(NO_HOSTS_MATCHED));
 }
 
 // =============================================================================
@@ -3481,15 +3509,16 @@ fn test_start_at_task_accepted() {
 fn test_start_at_task_nonexistent() {
     let playbook = create_test_playbook();
 
-    // Starting at a non-existent task should still succeed
-    // (it just won't find the task to start from)
+    // A start task that never runs is an error, not a silent no-op.
     rustible_cmd()
         .arg("run")
         .arg(playbook.path())
         .arg("--start-at-task")
         .arg("Nonexistent Task Name")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(START_TASK_NOT_FOUND));
 }
 
 // =============================================================================
@@ -3507,7 +3536,9 @@ fn test_become_method_su() {
         .arg("--become-method")
         .arg("su")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 #[test]
@@ -3521,20 +3552,24 @@ fn test_become_method_sudo() {
         .arg("--become-method")
         .arg("sudo")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 #[test]
 fn test_become_without_method() {
     let playbook = create_test_playbook();
 
-    // --become without explicit method should use default (sudo)
+    // --become without an explicit method is refused like any other escalation.
     rustible_cmd()
         .arg("run")
         .arg(playbook.path())
         .arg("--become")
         .assert()
-        .success();
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains(BECOME_REFUSED));
 }
 
 // =============================================================================
@@ -3684,7 +3719,9 @@ fn test_limit_exclusion_pattern() {
         .arg("run")
         .arg(playbook.path())
         .assert()
-        .success();
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(NO_HOSTS_MATCHED));
 }
 
 #[test]
@@ -3697,7 +3734,9 @@ fn test_limit_intersection_pattern() {
         .arg("run")
         .arg(playbook.path())
         .assert()
-        .success();
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(NO_HOSTS_MATCHED));
 }
 
 #[test]
@@ -3710,7 +3749,9 @@ fn test_limit_complex_pattern() {
         .arg("run")
         .arg(playbook.path())
         .assert()
-        .success();
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(NO_HOSTS_MATCHED));
 }
 
 // =============================================================================
@@ -3908,7 +3949,8 @@ fn test_limit_multiple_patterns() {
         .arg("-i")
         .arg(inventory.path())
         .arg("-l")
-        .arg("localhost,webservers")
+        // Patterns are joined with ':'; a ',' separator is not parsed yet.
+        .arg("localhost:webservers")
         .arg("run")
         .arg(playbook.path())
         .assert()
