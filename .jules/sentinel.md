@@ -121,3 +121,8 @@
 **Vulnerability:** In `src/api/kernel.rs`, a temporary private key file was created using `std::fs::write` followed by `std::fs::set_permissions`. This allowed for a Time-of-Check to Time-of-Use (TOCTOU) vulnerability where the file was temporarily written to disk with default (potentially world-readable) permissions before being restricted.
 **Learning:** Convenience functions like `fs::write` combined with subsequent permission changes are not atomic and introduce a race condition.
 **Prevention:** Use `crate::utils::fs::secure_write_file` (or `std::fs::OpenOptionsExt::mode`) to set permissions *at creation time* atomically.
+
+## 2025-07-05 - Command Injection in Podman Connection Module
+**Vulnerability:** The `PodmanConnection` module constructed shell commands (like `mkdir`, `chmod`, `chown`, `cat`, `test`, and `stat`) by interpolating unescaped file paths and ownership strings directly into the command string. If a malicious path (e.g., containing `;` or `&`) was provided, it could result in arbitrary command execution on the host where `podman exec` is running.
+**Learning:** File paths and user-provided configuration values must always be treated as untrusted input when constructing shell commands, even in contextually "safe" modules like file transfer or connection handlers.
+**Prevention:** Always use `crate::utils::shell_escape` for any variable interpolated into a string that will be executed as a shell command.
