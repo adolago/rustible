@@ -489,10 +489,11 @@ impl VaultArgs {
                     content.into_bytes()
                 };
 
-                // Create temporary file securely
+                // Create temporary file
                 let temp_file = tempfile::Builder::new()
                     .prefix(".rustible_vault_")
-                    .tempfile()?
+                    .tempfile()
+                    .context("Failed to create temporary file")?
                     .into_temp_path();
 
                 fs::write(&temp_file, &plaintext)?;
@@ -536,10 +537,11 @@ impl VaultArgs {
                 let password = get_password_with_confirm(args.vault_password_file.as_ref(), ctx)?;
                 let engine = VaultEngine::new(password);
 
-                // Create temporary file securely
+                // Create temporary file
                 let temp_file = tempfile::Builder::new()
                     .prefix(".rustible_vault_")
-                    .tempfile()?
+                    .tempfile()
+                    .context("Failed to create temporary file")?
                     .into_temp_path();
 
                 fs::write(&temp_file, "")?;
