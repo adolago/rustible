@@ -1177,11 +1177,28 @@ impl Task {
         {
             facts.insert("os_family".to_string(), value.clone());
         }
-        // An explicitly local target executes on this machine. Modules that run
-        // commands through the connection (package, apt, ...) need a real local
-        // connection; a connection the context carries for remote use is never reused.
+        // Modules with their own local execution path keep running on the control
+        // node without a connection object: their remote path would drop local-only
+        // behaviour (copy's `validate` staging, shell's `stdin`, chdir-relative
+        // `creates`/`removes`). Every other module only knows how to run through a
+        // connection, so an explicitly local target hands it a real local connection
+        // instead of failing with "No connection available". A connection the
+        // context carries for remote use is never reused for local execution.
+        const LOCAL_DISPATCH_MODULES: &[&str] = &[
+            "authorized_key",
+            "command",
+            "copy",
+            "lineinfile",
+            "shell",
+            "stat",
+            "template",
+        ];
         let connection: Option<Arc<dyn crate::connection::Connection + Send + Sync>> = if local {
-            Some(Arc::new(crate::connection::local::LocalConnection::new()))
+            if LOCAL_DISPATCH_MODULES.contains(&module_name) {
+                None
+            } else {
+                Some(Arc::new(crate::connection::local::LocalConnection::new()))
+            }
         } else {
             ctx.connection.clone()
         };
@@ -2830,51 +2847,83 @@ mod tests {
         assert_eq!(result.status, TaskStatus::Unreachable);
     }
 
-    #[tokio::test]
-    async fn diligence_explicit_local_target_receives_a_local_connection() {
-        use crate::modules::{Module, ModuleContext, ModuleOutput, ModuleParams, ModuleResult};
+    /// Reports whether the module context carried a connection, under any name.
+    struct ConnectionProbe(&'static str);
 
-        struct ConnectionProbe;
-        impl Module for ConnectionProbe {
-            fn name(&self) -> &'static str {
-                "connection_probe"
-            }
-            fn description(&self) -> &'static str {
-                "reports whether the module context carries a connection"
-            }
-            fn execute(
-                &self,
-                _params: &ModuleParams,
-                context: &ModuleContext,
-            ) -> ModuleResult<ModuleOutput> {
-                Ok(ModuleOutput::ok(match &context.connection {
+    impl crate::modules::Module for ConnectionProbe {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn description(&self) -> &'static str {
+            "reports whether the module context carries a connection"
+        }
+        fn execute(
+            &self,
+            _params: &crate::modules::ModuleParams,
+            context: &crate::modules::ModuleContext,
+        ) -> crate::modules::ModuleResult<crate::modules::ModuleOutput> {
+            Ok(crate::modules::ModuleOutput::ok(
+                match &context.connection {
                     Some(_) => "connection",
                     None => "none",
-                }))
-            }
+                },
+            ))
         }
+    }
 
+    async fn probe_local_target(module: &'static str) -> TaskResult {
         let mut registry = ModuleRegistry::new();
-        registry.register(Arc::new(ConnectionProbe));
+        registry.register(Arc::new(ConnectionProbe(module)));
         let mut runtime = RuntimeContext::new();
         runtime.set_host_var(
             "web1",
             "ansible_connection".into(),
             serde_json::json!("local"),
         );
-        let task = Task::new("probe", "connection_probe");
+        let task = Task::new("probe", module);
+        task.execute_native(
+            module,
+            &task.args,
+            &ExecutionContext::new("web1"),
+            &Arc::new(RwLock::new(runtime)),
+            &Arc::new(registry),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn diligence_explicit_local_target_receives_a_local_connection() {
+        let result = probe_local_target("connection_probe").await;
+        assert_eq!(result.status, TaskStatus::Ok);
+        assert_eq!(result.msg.as_deref(), Some("connection"));
+    }
+
+    #[tokio::test]
+    async fn diligence_local_dispatch_modules_keep_running_without_a_connection() {
+        let result = probe_local_target("copy").await;
+        assert_eq!(result.status, TaskStatus::Ok);
+        assert_eq!(result.msg.as_deref(), Some("none"));
+    }
+
+    #[tokio::test]
+    async fn diligence_local_shell_stdin_reaches_the_command() {
+        let task = Task::new("stdin", "shell")
+            .arg("cmd", "cat")
+            .arg("stdin", "payload");
         let result = task
             .execute_native(
-                "connection_probe",
+                "shell",
                 &task.args,
-                &ExecutionContext::new("web1"),
-                &Arc::new(RwLock::new(runtime)),
-                &Arc::new(registry),
+                &ExecutionContext::new("localhost"),
+                &Arc::new(RwLock::new(RuntimeContext::new())),
+                &Arc::new(ModuleRegistry::default()),
             )
             .await
             .unwrap();
-        assert_eq!(result.status, TaskStatus::Ok);
-        assert_eq!(result.msg.as_deref(), Some("connection"));
+        assert_ne!(result.status, TaskStatus::Failed, "{:?}", result.msg);
+        let stdout = result.result.as_ref().and_then(|r| r["stdout"].as_str());
+        assert_eq!(stdout.map(str::trim_end), Some("payload"));
     }
 
     #[test]
