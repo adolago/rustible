@@ -116,3 +116,8 @@
 **Vulnerability:** The vault command created temporary files for editing decrypted content using predictable filenames (`.rustible_vault_<pid>`) in the system's shared temporary directory (`std::env::temp_dir()`).
 **Learning:** This exposes sensitive plaintext data to other local users and creates symlink vulnerability risks, as local attackers could predict the file path and redirect it. Explicit `fs::remove_file` cleanup calls are also brittle as they are skipped during panics.
 **Prevention:** Always use secure temporary file creation APIs like `tempfile::Builder::new().tempfile()` which generate unpredictable names with correct restricted permissions and provide automatic cleanup upon dropping. Use `.into_temp_path()` to ensure the file handles are dropped to avoid locking issues in external editors.
+
+## 2026-06-27 - Insecure File Creation (TOCTOU) for Temporary Private Key
+**Vulnerability:** In `src/api/kernel.rs`, a temporary private key file was created using `std::fs::write` followed by `std::fs::set_permissions`. This allowed for a Time-of-Check to Time-of-Use (TOCTOU) vulnerability where the file was temporarily written to disk with default (potentially world-readable) permissions before being restricted.
+**Learning:** Convenience functions like `fs::write` combined with subsequent permission changes are not atomic and introduce a race condition.
+**Prevention:** Use `crate::utils::fs::secure_write_file` (or `std::fs::OpenOptionsExt::mode`) to set permissions *at creation time* atomically.
