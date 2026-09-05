@@ -126,3 +126,7 @@
 **Vulnerability:** The `PodmanConnection` module constructed shell commands (like `mkdir`, `chmod`, `chown`, `cat`, `test`, and `stat`) by interpolating unescaped file paths and ownership strings directly into the command string. If a malicious path (e.g., containing `;` or `&`) was provided, it could result in arbitrary command execution on the host where `podman exec` is running.
 **Learning:** File paths and user-provided configuration values must always be treated as untrusted input when constructing shell commands, even in contextually "safe" modules like file transfer or connection handlers.
 **Prevention:** Always use `crate::utils::shell_escape` for any variable interpolated into a string that will be executed as a shell command.
+## 2026-03-05 - Command Injection in AWS SSM Parameters
+**Vulnerability:** The AWS SSM connection module used the `{:?}` Debug formatter to construct a shorthand JSON array for the `--parameters` argument (`commands=[{:?}]`). Debug formatting only adds double quotes and does not perform proper JSON escaping (e.g., for unicode or internal quotes).
+**Learning:** Relying on `{:?}` for any form of structured serialization (like JSON parameters for CLI tools) is brittle and can lead to command injection or parsing errors.
+**Prevention:** Always use a proper serialization library like `serde_json` to encode parameters that require structured formatting (e.g., JSON) before passing them as arguments to external commands.
