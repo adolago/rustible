@@ -738,7 +738,7 @@ impl RunArgs {
             if std::io::stdin().is_terminal() {
                 Some(
                     dialoguer::Password::with_theme(&ColorfulTheme::default())
-                        .with_prompt("🔐 BECOME password")
+                        .with_prompt("🔒 BECOME password")
                         .interact()?,
                 )
             } else {
