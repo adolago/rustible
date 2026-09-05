@@ -786,7 +786,11 @@ fn truncate_output(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}... (truncated, {} bytes total)", &s[..max_len], s.len())
+        let mut end = max_len;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}... (truncated, {} bytes total)", &s[..end], s.len())
     }
 }
 
