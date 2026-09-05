@@ -38,7 +38,7 @@ We are committed to providing a welcoming and inclusive environment. Please be r
 
 - **Rust**: Version 1.88 or later
 - **Git**: For version control
-- **Build Tools**: Standard C/C++ toolchain for optional libssh2 backend
+- **Build Tools**: A native build toolchain for dependencies that compile native code; exact requirements depend on the selected features and platform
 
 ### Fork and Clone
 
@@ -50,7 +50,7 @@ We are committed to providing a welcoming and inclusive environment. Please be r
    ```
 3. Add the upstream remote:
    ```bash
-   git remote add upstream https://github.com/rustible/rustible.git
+   git remote add upstream https://github.com/adolago/rustible.git
    ```
 
 ## Development Setup
@@ -77,10 +77,18 @@ cargo build --release
 | `local` | Local connection support (default) |
 | `docker` | Docker container support |
 | `kubernetes` | Kubernetes pod support |
-| `full` | All features enabled |
-| `pure-rust` | Pure Rust build (no C dependencies) |
+| `full` | SSH, container and basic HPC aggregate; not every feature |
+| `pure-rust` | `russh` and `local` aggregate; not a guarantee of no native transitive dependencies |
+
+The feature definitions in `Cargo.toml` are authoritative. See
+[`FEATURE_STATUS.md`](../FEATURE_STATUS.md) for implementation and verification limits.
 
 ### Running Tests
+
+Run broad module and integration suites in an isolated disposable environment.
+They can execute commands and change filesystem or service state. Inspect a
+focused test before running it on the development host. A passing build or a
+test count alone does not establish feature correctness.
 
 ```bash
 # Run all tests
@@ -161,13 +169,12 @@ src/
 ├── executor/        # Playbook execution engine
 ├── inventory/       # Inventory management
 ├── playbook.rs      # Playbook parsing
-├── template.rs      # Jinja2-compatible templating
-├── vault.rs         # Encrypted secrets (Ansible Vault compatible)
+├── template.rs      # Template rendering; compatibility has documented limits
+├── vault.rs         # Rustible vault encryption; not Ansible Vault wire format
 ├── facts.rs         # System fact gathering
 ├── handlers.rs      # Handler management
 ├── vars/            # Variable management
 ├── cache/           # Caching system
-├── strategy.rs      # Execution strategies
 ├── roles.rs         # Role management
 ├── traits.rs        # Core trait definitions
 └── error.rs         # Error types
@@ -179,7 +186,7 @@ src/
 2. **Module System** (`src/modules/`): Units of work that perform actions
 3. **Callback System** (`src/callback/`): Event handling and output formatting
 4. **Executor** (`src/executor/`): Orchestrates playbook execution
-5. **Template Engine** (`src/template.rs`): Jinja2-compatible template rendering
+5. **Template Engine** (`src/template.rs`): Template rendering with the compatibility limits documented in `docs/FEATURE_STATUS.md`
 
 ## Coding Standards
 
@@ -372,6 +379,8 @@ mock! {
    - Update documentation as needed
 
 3. **Run checks locally**:
+   Run the broad test command below inside the disposable environment described
+   in Testing Guidelines.
    ```bash
    cargo fmt
    cargo clippy --all-features
