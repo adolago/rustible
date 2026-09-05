@@ -55,7 +55,7 @@ impl Redactor {
                     if let Ok(re) = crate::utils::get_regex(pattern) {
                         result = re
                             .replace_all(&result, rule.replacement.as_str())
-                            .to_string();
+                            .into_owned();
                     }
                 }
                 RedactionPattern::Literal(literal) => {
