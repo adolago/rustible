@@ -558,6 +558,9 @@ impl Task {
         }
 
         // Handle delegation - create appropriate context for execution and fact storage
+        // Decide contexts on the same canonical name that dispatch uses, so
+        // `ansible.legacy.set_fact` behaves exactly like `set_fact`.
+        let canonical_module = ModuleRegistry::normalize_module_name(&self.module);
         let (mut execution_ctx, fact_storage_ctx) =
             if let Some(ref delegate_host) = self.delegate_to {
                 debug!("Delegating task to host: {}", delegate_host);
@@ -614,7 +617,7 @@ impl Task {
                         .unwrap_or_else(|_| vec![JsonValue::String(rendered)])
                 }
             };
-            let loop_ctx = if self.module == "set_fact" {
+            let loop_ctx = if canonical_module == "set_fact" {
                 &fact_storage_ctx
             } else {
                 &execution_ctx
@@ -635,7 +638,7 @@ impl Task {
         }
 
         // Execute the module - use fact_storage_ctx for set_fact to ensure facts go to right host
-        let module_ctx = if self.module == "set_fact" {
+        let module_ctx = if canonical_module == "set_fact" {
             &fact_storage_ctx
         } else {
             &execution_ctx
@@ -2984,6 +2987,38 @@ mod tests {
         )
         .await;
         assert_eq!(result.msg.as_deref(), Some("connection"));
+    }
+
+    #[tokio::test]
+    async fn diligence_prefixed_set_fact_stores_facts_on_the_inventory_host() {
+        use crate::executor::batch_processor::{BatchConfig, BatchProcessor};
+
+        let mut task = Task::new("fact", "ansible.legacy.set_fact").arg("greeting", "hello");
+        task.delegate_to = Some("delegate.invalid".to_string());
+        let mut runtime = RuntimeContext::new();
+        runtime.add_host("web1".to_string(), None);
+        runtime.add_host("delegate.invalid".to_string(), None);
+        let runtime = Arc::new(RwLock::new(runtime));
+        let result = task
+            .execute(
+                &ExecutionContext::new("web1"),
+                &runtime,
+                &Arc::new(RwLock::new(HashMap::new())),
+                &Arc::new(Mutex::new(std::collections::HashSet::new())),
+                &Arc::new(ParallelizationManager::new()),
+                &Arc::new(ModuleRegistry::default()),
+                &Arc::new(BatchProcessor::new(BatchConfig::default())),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_ne!(result.status, TaskStatus::Failed, "{:?}", result.msg);
+        let runtime = runtime.read().await;
+        assert_eq!(
+            runtime.get_host_fact("web1", "greeting"),
+            Some(serde_json::json!("hello"))
+        );
+        assert_eq!(runtime.get_host_fact("delegate.invalid", "greeting"), None);
     }
 
     #[tokio::test]
