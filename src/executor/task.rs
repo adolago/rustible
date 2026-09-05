@@ -1177,6 +1177,14 @@ impl Task {
         {
             facts.insert("os_family".to_string(), value.clone());
         }
+        // An explicitly local target executes on this machine. Modules that run
+        // commands through the connection (package, apt, ...) need a real local
+        // connection; a connection the context carries for remote use is never reused.
+        let connection: Option<Arc<dyn crate::connection::Connection + Send + Sync>> = if local {
+            Some(Arc::new(crate::connection::local::LocalConnection::new()))
+        } else {
+            ctx.connection.clone()
+        };
         let module_ctx = crate::modules::ModuleContext {
             check_mode: ctx.check_mode,
             diff_mode: ctx.diff_mode,
@@ -1188,7 +1196,7 @@ impl Task {
             become_method: Some(ctx.r#become_method.clone()),
             become_user: Some(ctx.r#become_user.clone()),
             become_password: ctx.become_password.clone(),
-            connection: if local { None } else { ctx.connection.clone() },
+            connection,
         };
         let params = args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let registry = Arc::clone(registry);
@@ -2820,6 +2828,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.status, TaskStatus::Unreachable);
+    }
+
+    #[tokio::test]
+    async fn diligence_explicit_local_target_receives_a_local_connection() {
+        use crate::modules::{Module, ModuleContext, ModuleOutput, ModuleParams, ModuleResult};
+
+        struct ConnectionProbe;
+        impl Module for ConnectionProbe {
+            fn name(&self) -> &'static str {
+                "connection_probe"
+            }
+            fn description(&self) -> &'static str {
+                "reports whether the module context carries a connection"
+            }
+            fn execute(
+                &self,
+                _params: &ModuleParams,
+                context: &ModuleContext,
+            ) -> ModuleResult<ModuleOutput> {
+                Ok(ModuleOutput::ok(match &context.connection {
+                    Some(_) => "connection",
+                    None => "none",
+                }))
+            }
+        }
+
+        let mut registry = ModuleRegistry::new();
+        registry.register(Arc::new(ConnectionProbe));
+        let mut runtime = RuntimeContext::new();
+        runtime.set_host_var(
+            "web1",
+            "ansible_connection".into(),
+            serde_json::json!("local"),
+        );
+        let task = Task::new("probe", "connection_probe");
+        let result = task
+            .execute_native(
+                "connection_probe",
+                &task.args,
+                &ExecutionContext::new("web1"),
+                &Arc::new(RwLock::new(runtime)),
+                &Arc::new(registry),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, TaskStatus::Ok);
+        assert_eq!(result.msg.as_deref(), Some("connection"));
     }
 
     #[test]
