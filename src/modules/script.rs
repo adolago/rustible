@@ -93,6 +93,16 @@ impl ScriptModule {
             None => return Ok(true), // No connection, assume we should execute
         };
 
+        // Relative guards refer to `chdir`, where the script itself runs.
+        let chdir = params.get_string("chdir")?;
+        let anchor = |raw: &str| -> PathBuf {
+            let path = PathBuf::from(raw);
+            match (&chdir, path.is_absolute()) {
+                (Some(dir), false) => PathBuf::from(dir).join(path),
+                _ => path,
+            }
+        };
+
         // Check 'creates' condition - skip if path exists
         if let Some(creates_path) = params.get_string("creates")? {
             validate_path_param(&creates_path, "creates")?;
@@ -102,7 +112,7 @@ impl ScriptModule {
             })?;
 
             let conn = connection.clone();
-            let path = PathBuf::from(&creates_path);
+            let path = anchor(&creates_path);
             let exists = std::thread::scope(|s| {
                 s.spawn(|| rt.block_on(async move { conn.path_exists(&path).await }))
                     .join()
@@ -123,7 +133,7 @@ impl ScriptModule {
             })?;
 
             let conn = connection.clone();
-            let path = PathBuf::from(&removes_path);
+            let path = anchor(&removes_path);
             let exists = std::thread::scope(|s| {
                 s.spawn(|| rt.block_on(async move { conn.path_exists(&path).await }))
                     .join()
@@ -416,6 +426,42 @@ impl Module for ScriptModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn diligence_relative_guards_are_anchored_to_chdir() {
+        let scratch = tempfile::tempdir().unwrap();
+        std::fs::write(scratch.path().join("marker"), b"").unwrap();
+        let context = ModuleContext {
+            check_mode: false,
+            diff_mode: false,
+            verbosity: 0,
+            vars: HashMap::new(),
+            facts: HashMap::new(),
+            work_dir: None,
+            r#become: false,
+            become_method: None,
+            become_user: None,
+            become_password: None,
+            connection: Some(std::sync::Arc::new(
+                crate::connection::local::LocalConnection::new(),
+            )),
+        };
+        let mut params: ModuleParams = HashMap::new();
+        params.insert("script".to_string(), serde_json::json!("/bin/true"));
+        params.insert(
+            "chdir".to_string(),
+            serde_json::json!(scratch.path().to_string_lossy()),
+        );
+        params.insert("creates".to_string(), serde_json::json!("marker"));
+        assert!(!ScriptModule.should_execute(&params, &context).unwrap());
+        params.insert("creates".to_string(), serde_json::json!("absent"));
+        assert!(ScriptModule.should_execute(&params, &context).unwrap());
+        params.remove("creates");
+        params.insert("removes".to_string(), serde_json::json!("marker"));
+        assert!(ScriptModule.should_execute(&params, &context).unwrap());
+        params.insert("removes".to_string(), serde_json::json!("absent"));
+        assert!(!ScriptModule.should_execute(&params, &context).unwrap());
+    }
     use serde_json::Value;
     use std::collections::HashMap;
 

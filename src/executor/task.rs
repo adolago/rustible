@@ -1066,8 +1066,18 @@ impl Task {
 
         // Acquire parallelization guard - this will block if necessary based on the hint
         // The guard is automatically released when it goes out of scope (when this function returns)
+        // Every explicitly local inventory entry is the same machine: serialize
+        // host-exclusive modules (package managers, ...) under one key so aliases
+        // such as web1 and web2 with `ansible_connection: local` never race.
+        const LOCAL_TARGET_LOCK_KEY: &str = "localhost";
+        let connection_kind = self.configured_transport(ctx, runtime).await;
+        let lock_host = if Self::is_local_target(connection_kind.as_deref(), ctx) {
+            LOCAL_TARGET_LOCK_KEY
+        } else {
+            ctx.host.as_str()
+        };
         let _parallelization_guard = parallelization_manager
-            .acquire(hint, &ctx.host, &self.module)
+            .acquire(hint, lock_host, &self.module)
             .await;
 
         // Dispatch on the same canonical name the registry resolves, so the
@@ -1100,6 +1110,33 @@ impl Task {
         }
     }
 
+    /// The transport configured for this task's host: a task-level
+    /// `ansible_connection` override, else the inventory value.
+    async fn configured_transport(
+        &self,
+        ctx: &ExecutionContext,
+        runtime: &Arc<RwLock<RuntimeContext>>,
+    ) -> Option<String> {
+        let runtime = runtime.read().await;
+        self.vars
+            .get("ansible_connection")
+            .map(|value| {
+                value
+                    .as_str()
+                    .unwrap_or("__invalid_transport__")
+                    .to_string()
+            })
+            .or_else(|| runtime.configured_connection(&ctx.host))
+    }
+
+    /// Whether the task executes on the control node itself.
+    fn is_local_target(connection_kind: Option<&str>, ctx: &ExecutionContext) -> bool {
+        connection_kind == Some("local")
+            || (connection_kind.is_none()
+                && ctx.connection.is_none()
+                && matches!(ctx.host.as_str(), "localhost" | "127.0.0.1" | "::1"))
+    }
+
     /// Native modules may run locally only for an explicitly local inventory target.
     /// A missing or unsupported remote connection must never become a local fallback.
     async fn execute_native(
@@ -1110,25 +1147,9 @@ impl Task {
         runtime: &Arc<RwLock<RuntimeContext>>,
         registry: &Arc<ModuleRegistry>,
     ) -> ExecutorResult<TaskResult> {
-        let (vars, connection_kind) = {
-            let runtime = runtime.read().await;
-            (
-                runtime.get_merged_vars(&ctx.host),
-                self.vars
-                    .get("ansible_connection")
-                    .map(|value| {
-                        value
-                            .as_str()
-                            .unwrap_or("__invalid_transport__")
-                            .to_string()
-                    })
-                    .or_else(|| runtime.configured_connection(&ctx.host)),
-            )
-        };
-        let local = connection_kind.as_deref() == Some("local")
-            || (connection_kind.is_none()
-                && ctx.connection.is_none()
-                && matches!(ctx.host.as_str(), "localhost" | "127.0.0.1" | "::1"));
+        let vars = runtime.read().await.get_merged_vars(&ctx.host);
+        let connection_kind = self.configured_transport(ctx, runtime).await;
+        let local = Self::is_local_target(connection_kind.as_deref(), ctx);
         if local && module_name == "get_url" {
             return Ok(TaskResult::failed(
                 "Local get_url destination writes are not implemented; refusing execution",
@@ -2856,6 +2877,9 @@ mod tests {
         fn description(&self) -> &'static str {
             "reports whether the module context carries a connection"
         }
+        fn parallelization_hint(&self) -> crate::modules::ParallelizationHint {
+            crate::modules::ParallelizationHint::HostExclusive
+        }
         fn execute(
             &self,
             _params: &crate::modules::ModuleParams,
@@ -2906,24 +2930,26 @@ mod tests {
     }
 
     async fn probe_local_target_via_task(
+        host: &str,
         task_module: &str,
         registered: &'static str,
+        manager: &Arc<ParallelizationManager>,
     ) -> TaskResult {
         let mut registry = ModuleRegistry::new();
         registry.register(Arc::new(ConnectionProbe(registered)));
         let mut runtime = RuntimeContext::new();
         runtime.set_host_var(
-            "web1",
+            host,
             "ansible_connection".into(),
             serde_json::json!("local"),
         );
         Task::new("probe", task_module)
             .execute_module(
-                &ExecutionContext::new("web1"),
+                &ExecutionContext::new(host),
                 &Arc::new(RwLock::new(runtime)),
                 &Arc::new(RwLock::new(HashMap::new())),
                 &Arc::new(Mutex::new(std::collections::HashSet::new())),
-                &Arc::new(ParallelizationManager::new()),
+                manager,
                 &Arc::new(registry),
             )
             .await
@@ -2931,12 +2957,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn diligence_local_aliases_share_one_host_exclusive_lock() {
+        let manager = Arc::new(ParallelizationManager::new());
+        for host in ["web1", "web2"] {
+            let result =
+                probe_local_target_via_task(host, "connection_probe", "connection_probe", &manager)
+                    .await;
+            assert_eq!(result.msg.as_deref(), Some("connection"));
+        }
+        let locks = manager.stats().host_locks;
+        assert_eq!(locks.len(), 1, "{locks:?}");
+        assert_eq!(locks.get("localhost"), Some(&1));
+    }
+
+    #[tokio::test]
     async fn diligence_collection_prefixed_names_follow_the_same_dispatch_rule() {
-        let result = probe_local_target_via_task("ansible.legacy.copy", "copy").await;
-        assert_eq!(result.msg.as_deref(), Some("none"));
+        let manager = Arc::new(ParallelizationManager::new());
         let result =
-            probe_local_target_via_task("ansible.builtin.connection_probe", "connection_probe")
-                .await;
+            probe_local_target_via_task("web1", "ansible.legacy.copy", "copy", &manager).await;
+        assert_eq!(result.msg.as_deref(), Some("none"));
+        let result = probe_local_target_via_task(
+            "web1",
+            "ansible.builtin.connection_probe",
+            "connection_probe",
+            &manager,
+        )
+        .await;
         assert_eq!(result.msg.as_deref(), Some("connection"));
     }
 
