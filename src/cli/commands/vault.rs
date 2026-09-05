@@ -674,7 +674,7 @@ impl VaultArgs {
                 } else if std::io::stdin().is_terminal() {
                     println!(
                         "{}",
-                        "📝 Enter encrypted string (press Enter twice to finish):".bold()
+                        "🔐 Enter encrypted string (press Enter twice to finish):".bold()
                     );
                     let mut lines = Vec::new();
                     let stdin = io::stdin();
