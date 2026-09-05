@@ -112,3 +112,7 @@
 **Vulnerability:** The vault edit and create commands used `std::env::temp_dir()` combined with `std::process::id()` to create a predictable temporary file path. This could allow a local attacker to guess the file name and intercept or modify sensitive unencrypted data.
 **Learning:** Using predictable paths for temporary files that hold sensitive data is a security risk, especially on shared systems where `/tmp` is accessible to multiple users.
 **Prevention:** Always use secure temporary file creation utilities like `tempfile::Builder::new().tempfile()` which ensure unique names and atomic creation with secure default permissions.
+## 2025-06-25 - Predictable Temporary File Vulnerability in Vault
+**Vulnerability:** The vault command created temporary files for editing decrypted content using predictable filenames (`.rustible_vault_<pid>`) in the system's shared temporary directory (`std::env::temp_dir()`).
+**Learning:** This exposes sensitive plaintext data to other local users and creates symlink vulnerability risks, as local attackers could predict the file path and redirect it. Explicit `fs::remove_file` cleanup calls are also brittle as they are skipped during panics.
+**Prevention:** Always use secure temporary file creation APIs like `tempfile::Builder::new().tempfile()` which generate unpredictable names with correct restricted permissions and provide automatic cleanup upon dropping. Use `.into_temp_path()` to ensure the file handles are dropped to avoid locking issues in external editors.

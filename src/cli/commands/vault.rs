@@ -500,7 +500,7 @@ impl VaultArgs {
 
                 // Open editor
                 let status = std::process::Command::new(&args.editor)
-                    .arg(&temp_file)
+                    .arg(&*temp_file)
                     .status()
                     .with_context(|| format!("Failed to open editor: {}", args.editor))?;
 
@@ -548,7 +548,7 @@ impl VaultArgs {
 
                 // Open editor
                 let status = std::process::Command::new(&args.editor)
-                    .arg(&temp_file)
+                    .arg(&*temp_file)
                     .status()
                     .with_context(|| format!("Failed to open editor: {}", args.editor))?;
 
