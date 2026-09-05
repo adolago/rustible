@@ -366,7 +366,7 @@ impl Inventory {
 fn glob_match(name: &str, pattern: &str) -> bool {
     if pattern.contains('*') {
         let regex_pattern = pattern.replace('.', "\\.").replace('*', ".*");
-        regex::Regex::new(&format!("^{}$", regex_pattern))
+        rustible::utils::get_regex(&format!("^{}$", regex_pattern))
             .map(|re| re.is_match(name))
             .unwrap_or(false)
     } else {
