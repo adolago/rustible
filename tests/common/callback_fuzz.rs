@@ -61,10 +61,17 @@ pub fn callback_event(data: &[u8]) -> CallbackEvent {
 
 /// Exercise the real factory, including rejection of unsupported names.
 /// Only construction occurs; callback methods are never invoked.
+/// Name lookup and construction must agree for every input.
 pub fn plugin_resolution(data: &[u8]) -> PluginResult<Arc<dyn ExecutionCallback>> {
     let name = String::from_utf8_lossy(bounded(data));
-    let _ = PluginFactory::plugin_exists(&name);
-    PluginFactory::create(&name, &CallbackConfig::default())
+    let exists = PluginFactory::plugin_exists(&name);
+    let result = PluginFactory::create(&name, &CallbackConfig::default());
+    assert_eq!(
+        exists,
+        result.is_ok(),
+        "plugin_exists and create must agree for {name:?}"
+    );
+    result
 }
 
 /// Exercise the actual bounded-output path with arbitrary UTF-8 and JSON data.

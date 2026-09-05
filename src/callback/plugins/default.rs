@@ -179,12 +179,14 @@ pub struct DefaultCallbackConfig {
     pub no_color: bool,
     /// Whether to show diffs for changed files
     pub show_diff: bool,
-    /// Whether to show task duration
+    /// Whether to show per-task durations (printed at any verbosity)
     pub show_duration: bool,
     /// Whether to show skipped tasks
     pub show_skipped: bool,
     /// Whether to show ok tasks (can be noisy for large playbooks)
     pub show_ok: bool,
+    /// Whether to print the PLAY RECAP header and per-host statistics
+    pub show_recap: bool,
 }
 
 impl Default for DefaultCallbackConfig {
@@ -193,9 +195,10 @@ impl Default for DefaultCallbackConfig {
             verbosity: 0,
             no_color: false,
             show_diff: false,
-            show_duration: true,
+            show_duration: false,
             show_skipped: true,
             show_ok: true,
+            show_recap: true,
         }
     }
 }
@@ -497,19 +500,35 @@ impl DefaultCallback {
                 }
             }
         }
+    }
 
-        // Show duration if configured
-        if self.config.show_duration {
-            if self.use_color() {
-                println!(
-                    "    {}: {}",
-                    "duration".bright_black(),
-                    Self::format_duration(result.duration).bright_black()
-                );
-            } else {
-                println!("    duration: {}", Self::format_duration(result.duration));
-            }
+    /// Print the task duration when configured, independent of verbosity.
+    fn print_duration(&self, result: &ExecutionResult) {
+        if !self.config.show_duration {
+            return;
         }
+        if self.use_color() {
+            println!(
+                "    {}: {}",
+                "duration".bright_black(),
+                Self::format_duration(result.duration).bright_black()
+            );
+        } else {
+            println!("    duration: {}", Self::format_duration(result.duration));
+        }
+    }
+
+    /// Decide whether a task result is printed under the configured filters.
+    /// Skipped results follow `show_skipped` only; `show_ok` applies to
+    /// successful, unchanged, non-skipped results.
+    fn should_display(&self, result: &ModuleResult) -> bool {
+        if result.skipped {
+            return self.config.show_skipped;
+        }
+        if result.success && !result.changed {
+            return self.config.show_ok;
+        }
+        true
     }
 
     /// Create a task key for tracking
@@ -568,33 +587,35 @@ impl ExecutionCallback for DefaultCallback {
     }
 
     async fn on_playbook_end(&self, _name: &str, success: bool) {
-        // Print recap
-        self.print_recap_header();
+        // Print recap unless it was disabled
+        if self.config.show_recap {
+            self.print_recap_header();
 
-        let stats = self.host_stats.read();
+            let stats = self.host_stats.read();
 
-        // Sort hosts for consistent output
-        let mut hosts: Vec<_> = stats.keys().collect();
-        hosts.sort();
+            // Sort hosts for consistent output
+            let mut hosts: Vec<_> = stats.keys().collect();
+            hosts.sort();
 
-        for host in hosts {
-            if let Some(host_stats) = stats.get(host) {
-                let host_colored = self.format_recap_host(host, host_stats);
+            for host in hosts {
+                if let Some(host_stats) = stats.get(host) {
+                    let host_colored = self.format_recap_host(host, host_stats);
 
-                // Format each stat
-                let ok = self.format_stat("ok", host_stats.ok, Color::Green);
-                let changed = self.format_stat("changed", host_stats.changed, Color::Yellow);
-                let unreachable =
-                    self.format_stat("unreachable", host_stats.unreachable, Color::Red);
-                let failed = self.format_stat("failed", host_stats.failed, Color::Red);
-                let skipped = self.format_stat("skipped", host_stats.skipped, Color::Cyan);
-                let rescued = self.format_stat("rescued", host_stats.rescued, Color::Magenta);
-                let ignored = self.format_stat("ignored", host_stats.ignored, Color::Blue);
+                    // Format each stat
+                    let ok = self.format_stat("ok", host_stats.ok, Color::Green);
+                    let changed = self.format_stat("changed", host_stats.changed, Color::Yellow);
+                    let unreachable =
+                        self.format_stat("unreachable", host_stats.unreachable, Color::Red);
+                    let failed = self.format_stat("failed", host_stats.failed, Color::Red);
+                    let skipped = self.format_stat("skipped", host_stats.skipped, Color::Cyan);
+                    let rescued = self.format_stat("rescued", host_stats.rescued, Color::Magenta);
+                    let ignored = self.format_stat("ignored", host_stats.ignored, Color::Blue);
 
-                println!(
-                    "{:<30} : {}    {}    {}    {}    {}    {}    {}",
-                    host_colored, ok, changed, unreachable, failed, skipped, rescued, ignored
-                );
+                    println!(
+                        "{:<30} : {}    {}    {}    {}    {}    {}    {}",
+                        host_colored, ok, changed, unreachable, failed, skipped, rescued, ignored
+                    );
+                }
             }
         }
 
@@ -682,10 +703,7 @@ impl ExecutionCallback for DefaultCallback {
         }
 
         // Check if we should display this result
-        if result.result.skipped && !self.config.show_skipped {
-            return;
-        }
-        if result.result.success && !result.result.changed && !self.config.show_ok {
+        if !self.should_display(&result.result) {
             return;
         }
 
@@ -755,6 +773,7 @@ impl ExecutionCallback for DefaultCallback {
 
         // Show verbose output
         self.print_verbose_result(result);
+        self.print_duration(result);
 
         let _ = io::stdout().flush();
     }
@@ -838,6 +857,12 @@ impl DefaultCallbackBuilder {
         self
     }
 
+    /// Enable or disable the PLAY RECAP header and per-host statistics.
+    pub fn show_recap(mut self, show: bool) -> Self {
+        self.config.show_recap = show;
+        self
+    }
+
     /// Build the DefaultCallback.
     pub fn build(self) -> DefaultCallback {
         DefaultCallback::with_config(self.config)
@@ -862,6 +887,33 @@ mod tests {
     fn test_default_callback_with_verbosity() {
         let callback = DefaultCallback::new().with_verbosity(2);
         assert_eq!(callback.verbosity(), Verbosity::MoreVerbose);
+    }
+
+    #[test]
+    fn test_display_filters_keep_skipped_independent_of_show_ok() {
+        let hide_ok = DefaultCallback::builder().show_ok(false).build();
+        assert!(hide_ok.should_display(&ModuleResult::skipped("skip")));
+        assert!(!hide_ok.should_display(&ModuleResult::ok("ok")));
+        assert!(hide_ok.should_display(&ModuleResult::changed("changed")));
+        assert!(hide_ok.should_display(&ModuleResult::failed("failed")));
+
+        let hide_skipped = DefaultCallback::builder().show_skipped(false).build();
+        assert!(!hide_skipped.should_display(&ModuleResult::skipped("skip")));
+        assert!(hide_skipped.should_display(&ModuleResult::ok("ok")));
+    }
+
+    #[test]
+    fn test_task_durations_are_opt_in() {
+        assert!(!DefaultCallback::new().config.show_duration);
+        let timed = DefaultCallback::builder().show_duration(true).build();
+        assert!(timed.config.show_duration);
+    }
+
+    #[test]
+    fn test_default_callback_builder_recap_toggle() {
+        assert!(DefaultCallback::new().config.show_recap);
+        let callback = DefaultCallback::builder().show_recap(false).build();
+        assert!(!callback.config.show_recap);
     }
 
     #[test]

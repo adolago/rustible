@@ -12,8 +12,9 @@ targets and the old callback property suite are not evidence of product coverage
 - `fuzz_callback_event`: real `CallbackEvent` JSON parsing, classification,
   host/handler/failure accessors and serialization round trips.
 - `fuzz_plugin_resolution`: the real `PluginFactory` name lookup and construction.
-  No callback is executed. Unsupported names must remain ordinary errors;
-  invented prefix/suffix, namespace, version and alias support is not simulated.
+  No callback is executed. Lookup and construction must agree for every input.
+  Unsupported names must remain ordinary errors; invented prefix/suffix,
+  namespace, version and alias support is not simulated.
 - `fuzz_large_event_data`: real `ResultInfo::with_output` UTF-8 truncation,
   bounded result payloads and JSON round trips.
 

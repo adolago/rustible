@@ -231,9 +231,11 @@ mod default_callback_tests {
         assert_eq!(config.verbosity, 0);
         assert!(!config.no_color);
         assert!(!config.show_diff);
-        assert!(config.show_duration);
+        // Per-task durations are opt-in (builder or CallbackConfig::show_task_timing).
+        assert!(!config.show_duration);
         assert!(config.show_skipped);
         assert!(config.show_ok);
+        assert!(config.show_recap);
     }
 
     #[test]
