@@ -650,11 +650,9 @@ mod tests {
                 let destination = scratch
                     .path()
                     .join(format!("fifo-{content_upload}-{requested_mode}"));
-                nix::unistd::mkfifo(
-                    &destination,
-                    nix::sys::stat::Mode::from_bits_truncate(old_mode),
-                )
-                .unwrap();
+                // `mode_t` is u16 on macOS and u32 on Linux, so keep `old_mode` a u32:
+                // create the FIFO with an empty mode and let `set_permissions` apply it.
+                nix::unistd::mkfifo(&destination, nix::sys::stat::Mode::empty()).unwrap();
                 fs::set_permissions(&destination, fs::Permissions::from_mode(old_mode)).unwrap();
                 // Opening a reader prevents the writer open from blocking. Explicit
                 // mode uploads reject FIFO truncation, before any bytes are written.
