@@ -1224,15 +1224,18 @@ impl Inventory {
         Ok(Some(candidates))
     }
 
-    /// Resolve one expanded candidate. Nested ranges and globs that match
-    /// nothing are skipped; only the outermost range reports an empty result.
-    /// `remaining` is the number of candidates the whole pattern may still
-    /// produce, so nested ranges cannot multiply past `MAX_RANGE_EXPANSION`.
+    /// Resolve one expanded candidate. Nested ranges are expanded in place,
+    /// plain names that do not exist are skipped, and candidates that still
+    /// carry a wildcard are collected into `globs` so the whole set is matched
+    /// against the inventory in a single pass. `remaining` is the number of
+    /// candidates the whole pattern may still produce, so nested ranges cannot
+    /// multiply past `MAX_RANGE_EXPANSION`.
     fn collect_range_candidate<'a>(
         &'a self,
         candidate: &str,
         depth: usize,
         remaining: &mut u64,
+        globs: &mut Vec<String>,
         result: &mut HashSet<&'a str>,
     ) -> InventoryResult<()> {
         if depth > Self::MAX_PATTERN_DEPTH {
@@ -1252,14 +1255,41 @@ impl Inventory {
         *remaining -= 1;
         if let Some(nested) = self.range_candidates(candidate)? {
             for name in &nested {
-                self.collect_range_candidate(name, depth + 1, remaining, result)?;
+                self.collect_range_candidate(name, depth + 1, remaining, globs, result)?;
             }
-        } else if candidate.contains(['*', '?', '~', '@']) {
-            for host in self.get_hosts_for_pattern_inner(candidate, depth)? {
-                result.insert(host.name.as_str());
-            }
+        } else if candidate.contains(['*', '?', '[']) {
+            globs.push(candidate.to_string());
         } else if let Some(host) = self.hosts.get(candidate) {
             result.insert(host.name.as_str());
+        }
+        Ok(())
+    }
+
+    /// Match every wildcard candidate left by range expansion in one pass:
+    /// the globs become one alternation, compiled once and checked once per host.
+    fn collect_glob_candidates<'a>(
+        &'a self,
+        pattern: &str,
+        globs: &[String],
+        result: &mut HashSet<&'a str>,
+    ) -> InventoryResult<()> {
+        if globs.is_empty() {
+            return Ok(());
+        }
+        let alternation = globs
+            .iter()
+            .map(|glob| {
+                let regex = glob_to_regex(glob);
+                regex[1..regex.len() - 1].to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        let regex = regex::Regex::new(&format!("^(?:{alternation})$"))
+            .map_err(|_| InventoryError::InvalidPattern(pattern.to_string()))?;
+        for host in self.hosts.values() {
+            if regex.is_match(&host.name) {
+                result.insert(host.name.as_str());
+            }
         }
         Ok(())
     }
@@ -1276,10 +1306,18 @@ impl Inventory {
             return Ok(None);
         };
         let mut result: HashSet<&str> = HashSet::new();
+        let mut globs = Vec::new();
         let mut remaining = Self::MAX_RANGE_EXPANSION;
         for candidate in &candidates {
-            self.collect_range_candidate(candidate, depth + 1, &mut remaining, &mut result)?;
+            self.collect_range_candidate(
+                candidate,
+                depth + 1,
+                &mut remaining,
+                &mut globs,
+                &mut result,
+            )?;
         }
+        self.collect_glob_candidates(pattern, &globs, &mut result)?;
         if result.is_empty() {
             return Err(InventoryError::InvalidPattern(format!(
                 "No hosts matched pattern: {}",
@@ -1795,6 +1833,10 @@ nodec
         assert!(inv.get_hosts_for_pattern("web[01:03:0]").is_err());
         // A regex keeps its own bracket semantics: `[1:3]` is a character class.
         assert_eq!(inv.get_hosts_for_pattern("~^web0[1:3]$").unwrap().len(), 2);
+        // Wildcards left in expanded candidates are matched in one pass.
+        assert_eq!(inv.get_hosts_for_pattern("web[01:02]*").unwrap().len(), 2);
+        assert_eq!(inv.get_hosts_for_pattern("w[a:z]b0*").unwrap().len(), 3);
+        assert!(inv.get_hosts_for_pattern("x[a:c]*").is_err());
     }
 
     #[test]
