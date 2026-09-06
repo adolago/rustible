@@ -1076,12 +1076,8 @@ impl Inventory {
             return self.get_hosts_from_limit_file(path, depth);
         }
 
-        // Inventory-style ranges come before globs: `web[01:03]` is not a character class.
-        if let Some(hosts) = self.expand_range_pattern(pattern, depth)? {
-            return Ok(hosts);
-        }
-
-        // Handle regex pattern
+        // Regexes keep their own bracket semantics: `~^node[1:3]$` is a character
+        // class, so they dispatch before inventory-style ranges.
         if let Some(regex_str) = pattern.strip_prefix('~') {
             // OPTIMIZATION (Bolt): Use cached get_regex instead of Regex::new to prevent
             // expensive recompilation on every evaluation.
@@ -1093,6 +1089,11 @@ impl Inventory {
                 .values()
                 .filter(|h| regex.is_match(&h.name))
                 .collect());
+        }
+
+        // Inventory-style ranges come before globs: `web[01:03]` is not a character class.
+        if let Some(hosts) = self.expand_range_pattern(pattern, depth)? {
+            return Ok(hosts);
         }
 
         // Handle glob/wildcard pattern
@@ -1160,17 +1161,12 @@ impl Inventory {
     /// Largest number of names a single range may expand to.
     const MAX_RANGE_EXPANSION: u64 = 10_000;
 
-    /// Expand an inventory-style range such as `web[01:03]`, `node[a:c]` or
-    /// `rack[1:9:2]` into host names and resolve them. Returns `None` when the
-    /// pattern has no range. Zero padding follows the start bound, members that
-    /// do not exist are skipped, and a range matching nothing is an error. Text
-    /// before the bracket that names a group is an Ansible subscript, which is
-    /// reported as unsupported rather than silently matching nothing.
-    fn expand_range_pattern(
-        &self,
-        pattern: &str,
-        depth: usize,
-    ) -> InventoryResult<Option<Vec<&Host>>> {
+    /// Expand the first inventory-style range in `pattern` (`web[01:03]`,
+    /// `node[a:c]`, `rack[1:9:2]`) into candidate names. Returns `None` when the
+    /// pattern has no range. Zero padding follows the start bound. Text before
+    /// the bracket that names a group is an Ansible subscript, which is reported
+    /// as unsupported rather than silently matching nothing.
+    fn range_candidates(&self, pattern: &str) -> InventoryResult<Option<Vec<String>>> {
         let regex = crate::utils::get_regex(
             r"^([^\[]*)\[([0-9]+|[A-Za-z]):([0-9]+|[A-Za-z])(?::([0-9]+))?\](.*)$",
         )
@@ -1196,7 +1192,7 @@ impl Inventory {
         if step == 0 {
             return Err(invalid());
         }
-        let candidates: Vec<String> = match (start.parse::<u64>(), end.parse::<u64>()) {
+        let candidates = match (start.parse::<u64>(), end.parse::<u64>()) {
             (Ok(first), Ok(last)) => {
                 if first > last || (last - first) / step >= Self::MAX_RANGE_EXPANSION {
                     return Err(invalid());
@@ -1228,18 +1224,52 @@ impl Inventory {
                     .collect()
             }
         };
+        Ok(Some(candidates))
+    }
+
+    /// Resolve one expanded candidate. Nested ranges and globs that match
+    /// nothing are skipped; only the outermost range reports an empty result.
+    fn collect_range_candidate<'a>(
+        &'a self,
+        candidate: &str,
+        depth: usize,
+        result: &mut HashSet<&'a str>,
+    ) -> InventoryResult<()> {
+        if depth > Self::MAX_PATTERN_DEPTH {
+            return Err(InventoryError::InvalidPattern(format!(
+                "Pattern recursion depth exceeded (max {}): {}",
+                Self::MAX_PATTERN_DEPTH,
+                candidate
+            )));
+        }
+        if let Some(nested) = self.range_candidates(candidate)? {
+            for name in &nested {
+                self.collect_range_candidate(name, depth + 1, result)?;
+            }
+        } else if candidate.contains(['*', '?', '~', '@']) {
+            for host in self.get_hosts_for_pattern_inner(candidate, depth)? {
+                result.insert(host.name.as_str());
+            }
+        } else if let Some(host) = self.hosts.get(candidate) {
+            result.insert(host.name.as_str());
+        }
+        Ok(())
+    }
+
+    /// Expand and resolve an inventory-style range pattern. Returns `None` when
+    /// the pattern has no range; members that do not exist are skipped, and a
+    /// range matching nothing at all is an error.
+    fn expand_range_pattern(
+        &self,
+        pattern: &str,
+        depth: usize,
+    ) -> InventoryResult<Option<Vec<&Host>>> {
+        let Some(candidates) = self.range_candidates(pattern)? else {
+            return Ok(None);
+        };
         let mut result: HashSet<&str> = HashSet::new();
         for candidate in &candidates {
-            let is_plain = !candidate.contains(['*', '?', '[', '~', ':', '@']);
-            if is_plain {
-                if let Some(host) = self.hosts.get(candidate.as_str()) {
-                    result.insert(host.name.as_str());
-                }
-            } else {
-                for host in self.get_hosts_for_pattern_inner(candidate, depth + 1)? {
-                    result.insert(host.name.as_str());
-                }
-            }
+            self.collect_range_candidate(candidate, depth + 1, &mut result)?;
         }
         if result.is_empty() {
             return Err(InventoryError::InvalidPattern(format!(
@@ -1752,6 +1782,27 @@ nodec
         assert!(inv.get_hosts_for_pattern("webservers[0:1]").is_err());
         assert!(inv.get_hosts_for_pattern("web[03:01]").is_err());
         assert!(inv.get_hosts_for_pattern("web[01:03:0]").is_err());
+        // A regex keeps its own bracket semantics: `[1:3]` is a character class.
+        assert_eq!(inv.get_hosts_for_pattern("~^web0[1:3]$").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_nested_range_patterns_skip_empty_branches() {
+        let mut inv = Inventory::new();
+        inv.parse_ini("rack1node1\nrack1node2\n").unwrap();
+        assert_eq!(
+            inv.get_hosts_for_pattern("rack[1:2]node[1:2]")
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            inv.get_hosts_for_pattern("rack[1:2]node[2:3]")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(inv.get_hosts_for_pattern("rack[3:4]node[1:2]").is_err());
     }
 
     #[test]
