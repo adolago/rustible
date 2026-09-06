@@ -1163,10 +1163,16 @@ impl Inventory {
 
     /// Expand the first inventory-style range in `pattern` (`web[01:03]`,
     /// `node[a:c]`, `rack[1:9:2]`) into candidate names. Returns `None` when the
-    /// pattern has no range. Zero padding follows the start bound. Text before
-    /// the bracket that names a group is an Ansible subscript, which is reported
-    /// as unsupported rather than silently matching nothing.
-    fn range_candidates(&self, pattern: &str) -> InventoryResult<Option<Vec<String>>> {
+    /// pattern has no range. Zero padding follows the start bound. With
+    /// `check_subscript`, text before the bracket that names a group is treated
+    /// as an Ansible subscript and reported as unsupported rather than silently
+    /// matching nothing; that check applies to the pattern as written, not to
+    /// partially expanded candidates whose prefix may coincide with a group name.
+    fn range_candidates(
+        &self,
+        pattern: &str,
+        check_subscript: bool,
+    ) -> InventoryResult<Option<Vec<String>>> {
         let regex = crate::utils::get_regex(
             r"^([^\[]*)\[([0-9]+|[A-Za-z]):([0-9]+|[A-Za-z])(?::([0-9]+))?\](.*)$",
         )
@@ -1175,7 +1181,7 @@ impl Inventory {
             return Ok(None);
         };
         let (prefix, start, end, suffix) = (&caps[1], &caps[2], &caps[3], &caps[5]);
-        if self.groups.contains_key(prefix) {
+        if check_subscript && self.groups.contains_key(prefix) {
             return Err(InventoryError::InvalidPattern(format!(
                 "Group subscripts are not supported: {}",
                 pattern
@@ -1253,7 +1259,7 @@ impl Inventory {
             )));
         }
         *remaining -= 1;
-        if let Some(nested) = self.range_candidates(candidate)? {
+        if let Some(nested) = self.range_candidates(candidate, false)? {
             for name in &nested {
                 self.collect_range_candidate(name, depth + 1, remaining, globs, result)?;
             }
@@ -1302,7 +1308,7 @@ impl Inventory {
         pattern: &str,
         depth: usize,
     ) -> InventoryResult<Option<Vec<&Host>>> {
-        let Some(candidates) = self.range_candidates(pattern)? else {
+        let Some(candidates) = self.range_candidates(pattern, true)? else {
             return Ok(None);
         };
         let mut result: HashSet<&str> = HashSet::new();
@@ -1842,7 +1848,10 @@ nodec
     #[test]
     fn test_nested_range_patterns_skip_empty_branches() {
         let mut inv = Inventory::new();
-        inv.parse_ini("rack1node1\nrack1node2\n").unwrap();
+        // A group whose name coincides with a partially expanded prefix must not
+        // turn the nested range into a "group subscript".
+        inv.parse_ini("[rack1node]\nrack1node1\nrack1node2\n")
+            .unwrap();
         assert_eq!(
             inv.get_hosts_for_pattern("rack[1:2]node[1:2]")
                 .unwrap()
