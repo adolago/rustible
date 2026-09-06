@@ -133,6 +133,7 @@ fn create_multi_host_executor() -> Executor {
 // - Perform health check
 
 #[tokio::test]
+#[ignore = "requires root and systemd: package and service tasks against localhost; run by the high-risk workflow"]
 async fn test_scenario_web_server_deployment() {
     let temp_dir = TempDir::new().unwrap();
     let executor = create_local_executor(&temp_dir);
@@ -396,6 +397,7 @@ server {
 // - Configure backup procedures
 
 #[tokio::test]
+#[ignore = "requires root and systemd: package and service tasks against localhost; run by the high-risk workflow"]
 async fn test_scenario_database_setup() {
     let temp_dir = TempDir::new().unwrap();
     let executor = create_local_executor(&temp_dir);
@@ -699,6 +701,7 @@ echo "Backup completed: $DATE"
 // - Simulate blue/green deployment
 
 #[tokio::test]
+#[ignore = "requires root and systemd: package and service tasks against localhost; run by the high-risk workflow"]
 async fn test_scenario_application_deployment() {
     let temp_dir = TempDir::new().unwrap();
     let executor = create_local_executor(&temp_dir);
@@ -1273,6 +1276,7 @@ alias ll='ls -la'
 // - Verify metrics collection
 
 #[tokio::test]
+#[ignore = "requires root and systemd: package and service tasks against localhost; run by the high-risk workflow"]
 async fn test_scenario_monitoring_setup() {
     let temp_dir = TempDir::new().unwrap();
     let executor = create_local_executor(&temp_dir);
@@ -1573,6 +1577,7 @@ exit 0
 // - Audit configuration
 
 #[tokio::test]
+#[ignore = "requires root and systemd: package and service tasks against localhost; run by the high-risk workflow"]
 async fn test_scenario_security_hardening() {
     let temp_dir = TempDir::new().unwrap();
     let executor = create_local_executor(&temp_dir);
@@ -3147,6 +3152,7 @@ fi
 // This test combines multiple scenarios to simulate a real-world deployment
 
 #[tokio::test]
+#[ignore = "requires root and systemd: package and service tasks against localhost; run by the high-risk workflow"]
 async fn test_comprehensive_deployment_pipeline() {
     let temp_dir = TempDir::new().unwrap();
     let executor = create_local_executor(&temp_dir);
