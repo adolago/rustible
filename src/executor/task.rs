@@ -3047,11 +3047,14 @@ mod tests {
             "ansible_connection".into(),
             serde_json::json!("local"),
         );
-        let manager = Arc::new(ParallelizationManager::new());
-        let task = Task::new("include", "include_tasks").arg(
-            "file",
-            serde_json::json!(scratch.path().join("included.yml").to_string_lossy()),
+        // Includes resolve against the playbook directory and reject anything
+        // outside it, so anchor the test to its own scratch directory.
+        runtime.set_magic_var(
+            "playbook_dir".into(),
+            serde_json::json!(scratch.path().to_string_lossy()),
         );
+        let manager = Arc::new(ParallelizationManager::new());
+        let task = Task::new("include", "include_tasks").arg("file", "included.yml");
         let ctx = ExecutionContext::new("web1");
         let runtime = Arc::new(RwLock::new(runtime));
         let handlers = Arc::new(RwLock::new(HashMap::new()));
