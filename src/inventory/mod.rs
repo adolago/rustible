@@ -1033,18 +1033,26 @@ impl Inventory {
     pub fn get_hosts_for_pattern(&self, pattern: &str) -> InventoryResult<Vec<&Host>> {
         // Public mutable group access can bypass load/add_group validation.
         self.validate_group_graph()?;
-        self.get_hosts_for_pattern_inner(pattern, 0)
+        let mut budget = PatternBudget::new();
+        self.get_hosts_for_pattern_inner(pattern, 0, &mut budget)
     }
 
     /// Maximum recursion depth for pattern matching to prevent stack overflow
     /// with malformed or adversarial patterns containing many `:` characters.
     const MAX_PATTERN_DEPTH: usize = 20;
 
+    /// Cost of one pass over every host, charged to the pattern budget.
+    fn scan_cost(&self) -> u64 {
+        self.hosts.len().max(1) as u64
+    }
+
     fn get_hosts_for_pattern_inner(
         &self,
         pattern: &str,
         depth: usize,
+        budget: &mut PatternBudget,
     ) -> InventoryResult<Vec<&Host>> {
+        budget.charge(1, pattern)?;
         if depth > Self::MAX_PATTERN_DEPTH {
             return Err(InventoryError::InvalidPattern(format!(
                 "Pattern recursion depth exceeded (max {}): {}",
@@ -1067,13 +1075,13 @@ impl Inventory {
         // Complex patterns: `:` outside brackets separates elements. A `:` inside
         // brackets belongs to a range such as `web[01:03]` and must not recurse here.
         if split_host_pattern(pattern).len() > 1 {
-            return self.parse_complex_pattern(pattern, depth);
+            return self.parse_complex_pattern(pattern, depth, budget);
         }
 
         // `@path`: one host pattern per line, as in Ansible's `--limit @file`. Like
         // Ansible, this runs after splitting, so a path may not contain `:`.
         if let Some(path) = pattern.strip_prefix('@') {
-            return self.get_hosts_from_limit_file(path, depth);
+            return self.get_hosts_from_limit_file(path, depth, budget);
         }
 
         // Regexes keep their own bracket semantics: `~^node[1:3]$` is a character
@@ -1083,6 +1091,7 @@ impl Inventory {
             // expensive recompilation on every evaluation.
             let regex = crate::utils::get_regex(regex_str)
                 .map_err(|_| InventoryError::InvalidPattern(pattern.to_string()))?;
+            budget.charge(self.scan_cost(), pattern)?;
 
             return Ok(self
                 .hosts
@@ -1092,7 +1101,7 @@ impl Inventory {
         }
 
         // Inventory-style ranges come before globs: `web[01:03]` is not a character class.
-        if let Some(hosts) = self.expand_range_pattern(pattern, depth)? {
+        if let Some(hosts) = self.expand_range_pattern(pattern, depth, budget)? {
             return Ok(hosts);
         }
 
@@ -1103,6 +1112,7 @@ impl Inventory {
             // expensive recompilation of the converted glob pattern.
             let regex = crate::utils::get_regex(&regex_pattern)
                 .map_err(|_| InventoryError::InvalidPattern(pattern.to_string()))?;
+            budget.charge(self.scan_cost(), pattern)?;
 
             return Ok(self
                 .hosts
@@ -1130,11 +1140,17 @@ impl Inventory {
 
     /// Resolve `@path`: every non-empty line that does not start with `#` is a
     /// host pattern, and the result is their union.
-    fn get_hosts_from_limit_file(&self, path: &str, depth: usize) -> InventoryResult<Vec<&Host>> {
+    fn get_hosts_from_limit_file(
+        &self,
+        path: &str,
+        depth: usize,
+        budget: &mut PatternBudget,
+    ) -> InventoryResult<Vec<&Host>> {
         let content = std::fs::read_to_string(path).map_err(|e| {
             InventoryError::InvalidPattern(format!("Cannot read limit file {}: {}", path, e))
         })?;
         let mut result: HashSet<&str> = HashSet::new();
+        let mut seen: HashSet<&str> = HashSet::new();
         let mut patterns = 0usize;
         for line in content.lines() {
             let line = line.trim();
@@ -1142,7 +1158,11 @@ impl Inventory {
                 continue;
             }
             patterns += 1;
-            for host in self.get_hosts_for_pattern_inner(line, depth + 1)? {
+            // Each distinct pattern is resolved once, however often it repeats.
+            if !seen.insert(line) {
+                continue;
+            }
+            for host in self.get_hosts_for_pattern_inner(line, depth + 1, budget)? {
                 result.insert(host.name.as_str());
             }
         }
@@ -1160,6 +1180,9 @@ impl Inventory {
 
     /// Largest number of names a single range may expand to.
     const MAX_RANGE_EXPANSION: u64 = 10_000;
+
+    /// Largest total size of the names a single range may materialize.
+    const MAX_RANGE_BYTES: u64 = 1 << 20;
 
     /// Expand the first inventory-style range in `pattern` (`web[01:03]`,
     /// `node[a:c]`, `rack[1:9:2]`) into candidate names. Returns `None` when the
@@ -1188,6 +1211,15 @@ impl Inventory {
             )));
         }
         let invalid = || InventoryError::InvalidPattern(format!("Invalid range: {}", pattern));
+        // Reject expansions whose names would not fit the byte cap before
+        // allocating any of them; 20 covers the widest decimal bound.
+        let fits = |count: u64| -> InventoryResult<()> {
+            let per_name = (prefix.len() + suffix.len() + 20) as u64;
+            if count.saturating_mul(per_name) > Self::MAX_RANGE_BYTES {
+                return Err(invalid());
+            }
+            Ok(())
+        };
         let step: u64 = match caps.get(4) {
             Some(m) => m.as_str().parse().map_err(|_| invalid())?,
             None => 1,
@@ -1200,6 +1232,7 @@ impl Inventory {
                 if first > last || (last - first) / step >= Self::MAX_RANGE_EXPANSION {
                     return Err(invalid());
                 }
+                fits((last - first) / step + 1)?;
                 let width = if start.len() > 1 && start.starts_with('0') {
                     start.len()
                 } else {
@@ -1220,6 +1253,7 @@ impl Inventory {
                 {
                     return Err(invalid());
                 }
+                fits((last as u64 - first as u64) / step + 1)?;
                 (first as u32..=last as u32)
                     .step_by(step as usize)
                     .filter_map(char::from_u32)
@@ -1233,14 +1267,13 @@ impl Inventory {
     /// Resolve one expanded candidate. Nested ranges are expanded in place,
     /// plain names that do not exist are skipped, and candidates that still
     /// carry a wildcard are collected into `globs` so the whole set is matched
-    /// against the inventory in a single pass. `remaining` is the number of
-    /// candidates the whole pattern may still produce, so nested ranges cannot
-    /// multiply past `MAX_RANGE_EXPANSION`.
+    /// against the inventory in a single pass. Every candidate is charged to
+    /// the pattern budget, so nested ranges cannot multiply without bound.
     fn collect_range_candidate<'a>(
         &'a self,
         candidate: &str,
         depth: usize,
-        remaining: &mut u64,
+        budget: &mut PatternBudget,
         globs: &mut Vec<String>,
         result: &mut HashSet<&'a str>,
     ) -> InventoryResult<()> {
@@ -1251,17 +1284,10 @@ impl Inventory {
                 candidate
             )));
         }
-        if *remaining == 0 {
-            return Err(InventoryError::InvalidPattern(format!(
-                "Invalid range: pattern expands to more than {} names: {}",
-                Self::MAX_RANGE_EXPANSION,
-                candidate
-            )));
-        }
-        *remaining -= 1;
+        budget.charge(1, candidate)?;
         if let Some(nested) = self.range_candidates(candidate, false)? {
             for name in &nested {
-                self.collect_range_candidate(name, depth + 1, remaining, globs, result)?;
+                self.collect_range_candidate(name, depth + 1, budget, globs, result)?;
             }
         } else if candidate.contains(['*', '?', '[']) {
             globs.push(candidate.to_string());
@@ -1277,11 +1303,13 @@ impl Inventory {
         &'a self,
         pattern: &str,
         globs: &[String],
+        budget: &mut PatternBudget,
         result: &mut HashSet<&'a str>,
     ) -> InventoryResult<()> {
         if globs.is_empty() {
             return Ok(());
         }
+        budget.charge(self.scan_cost(), pattern)?;
         let alternation = globs
             .iter()
             .map(|glob| {
@@ -1307,23 +1335,17 @@ impl Inventory {
         &self,
         pattern: &str,
         depth: usize,
+        budget: &mut PatternBudget,
     ) -> InventoryResult<Option<Vec<&Host>>> {
         let Some(candidates) = self.range_candidates(pattern, true)? else {
             return Ok(None);
         };
         let mut result: HashSet<&str> = HashSet::new();
         let mut globs = Vec::new();
-        let mut remaining = Self::MAX_RANGE_EXPANSION;
         for candidate in &candidates {
-            self.collect_range_candidate(
-                candidate,
-                depth + 1,
-                &mut remaining,
-                &mut globs,
-                &mut result,
-            )?;
+            self.collect_range_candidate(candidate, depth + 1, budget, &mut globs, &mut result)?;
         }
-        self.collect_glob_candidates(pattern, &globs, &mut result)?;
+        self.collect_glob_candidates(pattern, &globs, budget, &mut result)?;
         if result.is_empty() {
             return Err(InventoryError::InvalidPattern(format!(
                 "No hosts matched pattern: {}",
@@ -1339,7 +1361,12 @@ impl Inventory {
     }
 
     /// Parse a complex pattern with operators
-    fn parse_complex_pattern(&self, pattern: &str, depth: usize) -> InventoryResult<Vec<&Host>> {
+    fn parse_complex_pattern(
+        &self,
+        pattern: &str,
+        depth: usize,
+        budget: &mut PatternBudget,
+    ) -> InventoryResult<Vec<&Host>> {
         let mut result: HashSet<&str> = HashSet::new();
         let mut first = true;
 
@@ -1355,18 +1382,18 @@ impl Inventory {
 
             if let Some(sub_pattern) = part.strip_prefix('&') {
                 // Intersection
-                let sub_hosts = self.get_hosts_for_pattern_inner(sub_pattern, depth + 1)?;
+                let sub_hosts = self.get_hosts_for_pattern_inner(sub_pattern, depth + 1, budget)?;
                 let sub_set: HashSet<&str> = sub_hosts.iter().map(|h| h.name.as_str()).collect();
                 result = result.intersection(&sub_set).cloned().collect();
             } else if let Some(sub_pattern) = part.strip_prefix('!') {
                 // Exclusion
-                let sub_hosts = self.get_hosts_for_pattern_inner(sub_pattern, depth + 1)?;
+                let sub_hosts = self.get_hosts_for_pattern_inner(sub_pattern, depth + 1, budget)?;
                 for host in sub_hosts {
                     result.remove(host.name.as_str());
                 }
             } else {
                 // Union
-                let sub_hosts = self.get_hosts_for_pattern_inner(part, depth + 1)?;
+                let sub_hosts = self.get_hosts_for_pattern_inner(part, depth + 1, budget)?;
 
                 if first {
                     for host in sub_hosts {
@@ -1517,6 +1544,37 @@ impl Inventory {
     /// Count total groups
     pub fn group_count(&self) -> usize {
         self.groups.len()
+    }
+}
+
+/// Work budget for resolving one top-level host pattern. Every element
+/// evaluated and every range candidate costs one unit; every inventory scan
+/// (glob, regex, batched globs) costs one unit per host. A pattern that
+/// exhausts the budget is rejected instead of pinning the process.
+struct PatternBudget {
+    remaining: u64,
+}
+
+impl PatternBudget {
+    const TOTAL: u64 = 2_000_000;
+
+    fn new() -> Self {
+        Self {
+            remaining: Self::TOTAL,
+        }
+    }
+
+    fn charge(&mut self, cost: u64, pattern: &str) -> InventoryResult<()> {
+        if cost > self.remaining {
+            self.remaining = 0;
+            return Err(InventoryError::InvalidPattern(format!(
+                "Pattern too expensive to resolve (work budget of {} exhausted): {}",
+                Self::TOTAL,
+                pattern
+            )));
+        }
+        self.remaining -= cost;
+        Ok(())
     }
 }
 
@@ -1865,16 +1923,40 @@ nodec
             1
         );
         assert!(inv.get_hosts_for_pattern("rack[3:4]node[1:2]").is_err());
-        // The expansion budget is shared across nested ranges, and an
+        // Larger nested expansions stay within the shared work budget, and an
         // unparseable step is rejected instead of defaulting to one.
-        let error = inv
-            .get_hosts_for_pattern("rack[1:200]node[1:200]")
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("more than"), "{error}");
+        assert_eq!(
+            inv.get_hosts_for_pattern("rack[1:200]node[1:200]")
+                .unwrap()
+                .len(),
+            2
+        );
         assert!(inv
             .get_hosts_for_pattern("rack[1:2]node[1:2:18446744073709551616]")
             .is_err());
+    }
+
+    #[test]
+    fn test_pattern_work_is_bounded() {
+        use std::io::Write;
+        let mut inv = Inventory::new();
+        let hosts: String = (0..1000).map(|i| format!("web{i:04}\n")).collect();
+        inv.parse_ini(&hosts).unwrap();
+        // Thousands of glob elements against a thousand hosts exhaust the budget.
+        let pattern = vec!["web*"; 3000].join(":");
+        let error = inv.get_hosts_for_pattern(&pattern).unwrap_err().to_string();
+        assert!(error.contains("work budget"), "{error}");
+        // A range whose names would exceed the byte cap is rejected before allocation.
+        let huge = format!("{}[1:10000]", "x".repeat(200));
+        let error = inv.get_hosts_for_pattern(&huge).unwrap_err().to_string();
+        assert!(error.contains("Invalid range"), "{error}");
+        // Repeated limit-file lines are resolved once, so they cannot multiply scans.
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for _ in 0..5000 {
+            writeln!(file, "web*").unwrap();
+        }
+        let pattern = format!("@{}", file.path().display());
+        assert_eq!(inv.get_hosts_for_pattern(&pattern).unwrap().len(), 1000);
     }
 
     #[test]
