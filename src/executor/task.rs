@@ -1069,15 +1069,24 @@ impl Task {
 
         // Acquire parallelization guard - this will block if necessary based on the hint
         // The guard is automatically released when it goes out of scope (when this function returns)
-        // Every explicitly local inventory entry is the same machine: serialize
-        // host-exclusive modules (package managers, ...) under one key so aliases
-        // such as web1 and web2 with `ansible_connection: local` never race.
+        // Every explicitly local inventory entry is the same machine, so aliases
+        // such as web1 and web2 with `ansible_connection: local` must never run
+        // module code at the same time: package databases, crontabs and other
+        // controller state would race. Modules that declared no constraint are
+        // therefore made host-exclusive on local targets, and every local target
+        // shares one lock key.
         const LOCAL_TARGET_LOCK_KEY: &str = "localhost";
         let connection_kind = self.configured_transport(ctx, runtime).await;
-        let lock_host = if Self::is_local_target(connection_kind.as_deref(), ctx) {
-            LOCAL_TARGET_LOCK_KEY
+        let (hint, lock_host) = if Self::is_local_target(connection_kind.as_deref(), ctx) {
+            let hint = match hint {
+                crate::modules::ParallelizationHint::FullyParallel => {
+                    crate::modules::ParallelizationHint::HostExclusive
+                }
+                other => other,
+            };
+            (hint, LOCAL_TARGET_LOCK_KEY)
         } else {
-            ctx.host.as_str()
+            (hint, ctx.host.as_str())
         };
         let _parallelization_guard = parallelization_manager
             .acquire(hint, lock_host, &self.module)
@@ -2880,9 +2889,6 @@ mod tests {
         fn description(&self) -> &'static str {
             "reports whether the module context carries a connection"
         }
-        fn parallelization_hint(&self) -> crate::modules::ParallelizationHint {
-            crate::modules::ParallelizationHint::HostExclusive
-        }
         fn execute(
             &self,
             _params: &crate::modules::ModuleParams,
@@ -2960,7 +2966,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn diligence_local_aliases_share_one_host_exclusive_lock() {
+    async fn diligence_local_aliases_serialize_default_hint_modules_under_one_lock() {
+        // The probe declares no parallelization constraint; on local aliases it
+        // must still be serialized under the shared key.
         let manager = Arc::new(ParallelizationManager::new());
         for host in ["web1", "web2"] {
             let result =
