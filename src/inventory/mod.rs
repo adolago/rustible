@@ -1064,9 +1064,21 @@ impl Inventory {
             return Ok(self.hosts.values().collect());
         }
 
-        // Handle complex patterns with operators
-        if pattern.contains(':') {
+        // Complex patterns: `:` outside brackets separates elements. A `:` inside
+        // brackets belongs to a range such as `web[01:03]` and must not recurse here.
+        if split_pattern(pattern).len() > 1 {
             return self.parse_complex_pattern(pattern, depth);
+        }
+
+        // `@path`: one host pattern per line, as in Ansible's `--limit @file`. Like
+        // Ansible, this runs after splitting, so a path may not contain `:`.
+        if let Some(path) = pattern.strip_prefix('@') {
+            return self.get_hosts_from_limit_file(path, depth);
+        }
+
+        // Inventory-style ranges come before globs: `web[01:03]` is not a character class.
+        if let Some(hosts) = self.expand_range_pattern(pattern, depth)? {
+            return Ok(hosts);
         }
 
         // Handle regex pattern
@@ -1113,6 +1125,134 @@ impl Inventory {
             "No hosts matched pattern: {}",
             pattern
         )))
+    }
+
+    /// Resolve `@path`: every non-empty line that does not start with `#` is a
+    /// host pattern, and the result is their union.
+    fn get_hosts_from_limit_file(&self, path: &str, depth: usize) -> InventoryResult<Vec<&Host>> {
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            InventoryError::InvalidPattern(format!("Cannot read limit file {}: {}", path, e))
+        })?;
+        let mut result: HashSet<&str> = HashSet::new();
+        let mut patterns = 0usize;
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            patterns += 1;
+            for host in self.get_hosts_for_pattern_inner(line, depth + 1)? {
+                result.insert(host.name.as_str());
+            }
+        }
+        if patterns == 0 {
+            return Err(InventoryError::InvalidPattern(format!(
+                "Limit file contains no host patterns: {}",
+                path
+            )));
+        }
+        Ok(result
+            .into_iter()
+            .filter_map(|name| self.hosts.get(name))
+            .collect())
+    }
+
+    /// Largest number of names a single range may expand to.
+    const MAX_RANGE_EXPANSION: u64 = 10_000;
+
+    /// Expand an inventory-style range such as `web[01:03]`, `node[a:c]` or
+    /// `rack[1:9:2]` into host names and resolve them. Returns `None` when the
+    /// pattern has no range. Zero padding follows the start bound, members that
+    /// do not exist are skipped, and a range matching nothing is an error. Text
+    /// before the bracket that names a group is an Ansible subscript, which is
+    /// reported as unsupported rather than silently matching nothing.
+    fn expand_range_pattern(
+        &self,
+        pattern: &str,
+        depth: usize,
+    ) -> InventoryResult<Option<Vec<&Host>>> {
+        let regex = crate::utils::get_regex(
+            r"^([^\[]*)\[([0-9]+|[A-Za-z]):([0-9]+|[A-Za-z])(?::([0-9]+))?\](.*)$",
+        )
+        .map_err(|_| InventoryError::InvalidPattern(pattern.to_string()))?;
+        let Some(caps) = regex.captures(pattern) else {
+            return Ok(None);
+        };
+        let (prefix, start, end, suffix) = (&caps[1], &caps[2], &caps[3], &caps[5]);
+        if self.groups.contains_key(prefix) {
+            return Err(InventoryError::InvalidPattern(format!(
+                "Group subscripts are not supported: {}",
+                pattern
+            )));
+        }
+        let step: u64 = caps
+            .get(4)
+            .map(|m| m.as_str().parse())
+            .transpose()
+            .ok()
+            .flatten()
+            .unwrap_or(1);
+        let invalid = || InventoryError::InvalidPattern(format!("Invalid range: {}", pattern));
+        if step == 0 {
+            return Err(invalid());
+        }
+        let candidates: Vec<String> = match (start.parse::<u64>(), end.parse::<u64>()) {
+            (Ok(first), Ok(last)) => {
+                if first > last || (last - first) / step >= Self::MAX_RANGE_EXPANSION {
+                    return Err(invalid());
+                }
+                let width = if start.len() > 1 && start.starts_with('0') {
+                    start.len()
+                } else {
+                    0
+                };
+                (first..=last)
+                    .step_by(step as usize)
+                    .map(|n| format!("{prefix}{n:0width$}{suffix}"))
+                    .collect()
+            }
+            _ => {
+                let (Some(first), Some(last)) = (start.chars().next(), end.chars().next()) else {
+                    return Err(invalid());
+                };
+                if !(first.is_ascii_alphabetic() && last.is_ascii_alphabetic())
+                    || first.is_ascii_lowercase() != last.is_ascii_lowercase()
+                    || first > last
+                {
+                    return Err(invalid());
+                }
+                (first as u32..=last as u32)
+                    .step_by(step as usize)
+                    .filter_map(char::from_u32)
+                    .map(|c| format!("{prefix}{c}{suffix}"))
+                    .collect()
+            }
+        };
+        let mut result: HashSet<&str> = HashSet::new();
+        for candidate in &candidates {
+            let is_plain = !candidate.contains(['*', '?', '[', '~', ':', '@']);
+            if is_plain {
+                if let Some(host) = self.hosts.get(candidate.as_str()) {
+                    result.insert(host.name.as_str());
+                }
+            } else {
+                for host in self.get_hosts_for_pattern_inner(candidate, depth + 1)? {
+                    result.insert(host.name.as_str());
+                }
+            }
+        }
+        if result.is_empty() {
+            return Err(InventoryError::InvalidPattern(format!(
+                "No hosts matched pattern: {}",
+                pattern
+            )));
+        }
+        Ok(Some(
+            result
+                .into_iter()
+                .filter_map(|name| self.hosts.get(name))
+                .collect(),
+        ))
     }
 
     /// Parse a complex pattern with operators
@@ -1558,6 +1698,85 @@ db1
 
         let webs = inv.get_hosts_for_pattern("web*").unwrap();
         assert_eq!(webs.len(), 2);
+    }
+
+    fn range_inventory() -> Inventory {
+        let mut inv = Inventory::new();
+        inv.parse_ini(
+            r#"
+[webservers]
+web01
+web02
+web03
+
+[databases]
+db01
+
+[nodes]
+nodea
+nodeb
+nodec
+        "#,
+        )
+        .unwrap();
+        inv
+    }
+
+    #[test]
+    fn test_range_pattern_expands_inventory_style_ranges() {
+        let inv = range_inventory();
+        assert_eq!(inv.get_hosts_for_pattern("web[01:03]").unwrap().len(), 3);
+        assert_eq!(inv.get_hosts_for_pattern("web[01:02]").unwrap().len(), 2);
+        // Missing members are skipped; a range matching nothing is an error.
+        assert_eq!(inv.get_hosts_for_pattern("web[01:05]").unwrap().len(), 3);
+        assert!(inv.get_hosts_for_pattern("web[05:09]").is_err());
+        // Zero padding follows the start bound; steps and letters work as in inventory files.
+        assert!(inv.get_hosts_for_pattern("web[1:3]").is_err());
+        assert_eq!(inv.get_hosts_for_pattern("web[01:03:2]").unwrap().len(), 2);
+        assert_eq!(inv.get_hosts_for_pattern("node[a:c]").unwrap().len(), 3);
+        // Ranges compose with the other operators and no longer recurse.
+        assert_eq!(
+            inv.get_hosts_for_pattern("web[01:03]:db01").unwrap().len(),
+            4
+        );
+        assert_eq!(
+            inv.get_hosts_for_pattern("web[01:03]:!web02")
+                .unwrap()
+                .len(),
+            2
+        );
+        // Globs still work, brackets without a `:` stay literal as before, and
+        // group subscripts are reported instead of matching nothing.
+        assert_eq!(inv.get_hosts_for_pattern("web0*").unwrap().len(), 3);
+        assert!(inv.get_hosts_for_pattern("web0[12]").unwrap().is_empty());
+        assert!(inv.get_hosts_for_pattern("webservers[0:1]").is_err());
+        assert!(inv.get_hosts_for_pattern("web[03:01]").is_err());
+        assert!(inv.get_hosts_for_pattern("web[01:03:0]").is_err());
+    }
+
+    #[test]
+    fn test_limit_file_patterns() {
+        use std::io::Write;
+        let inv = range_inventory();
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "# comment\n\nweb01\nweb[02:03]\n  db01  \n").unwrap();
+        let pattern = format!("@{}", file.path().display());
+        assert_eq!(inv.get_hosts_for_pattern(&pattern).unwrap().len(), 4);
+        assert_eq!(
+            inv.get_hosts_for_pattern(&format!("{pattern}:!db01"))
+                .unwrap()
+                .len(),
+            3
+        );
+        let empty = tempfile::NamedTempFile::new().unwrap();
+        let error = inv
+            .get_hosts_for_pattern(&format!("@{}", empty.path().display()))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no host patterns"), "{error}");
+        assert!(inv
+            .get_hosts_for_pattern("@/nonexistent/limit-file")
+            .is_err());
     }
 
     #[test]

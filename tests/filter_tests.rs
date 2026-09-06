@@ -977,7 +977,7 @@ mod limit_from_file {
         let inventory = fixtures_dir().join("inventory_multi.yml");
 
         let hosts_file = NamedTempFile::new().unwrap();
-        // Empty file
+        // An empty limit file is rejected with a clear message.
 
         rustible_cmd()
             .arg("-i")
@@ -987,7 +987,11 @@ mod limit_from_file {
             .arg("run")
             .arg(&playbook)
             .assert()
-            .success(); // Should succeed with no hosts (or fail gracefully)
+            .failure()
+            .code(1)
+            .stderr(predicates::str::contains(
+                "Limit file contains no host patterns",
+            ));
     }
 }
 
@@ -1174,7 +1178,7 @@ mod edge_cases {
         let playbook = fixtures_dir().join("limit_playbook.yml");
         let inventory = fixtures_dir().join("inventory_multi.yml");
 
-        // Specific non-existent host
+        // A limit that matches nothing is an error, as in Ansible.
         rustible_cmd()
             .arg("-i")
             .arg(&inventory)
@@ -1183,7 +1187,9 @@ mod edge_cases {
             .arg("run")
             .arg(&playbook)
             .assert()
-            .success(); // Should warn but not fail
+            .failure()
+            .code(1)
+            .stderr(predicates::str::contains("No hosts matched pattern"));
     }
 
     #[test]
@@ -1199,7 +1205,9 @@ mod edge_cases {
             .arg("run")
             .arg(&playbook)
             .assert()
-            .success();
+            .failure()
+            .code(1)
+            .stderr(predicates::str::contains("No hosts matched pattern"));
     }
 
     #[test]

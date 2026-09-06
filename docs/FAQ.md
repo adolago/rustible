@@ -702,8 +702,12 @@ rustible run playbook.yml -f 10
 
 3. **Use limits for subset operations:**
    ```bash
-   rustible run playbook.yml --limit 'webservers[0:99]'
+   rustible run playbook.yml --limit 'web[01:50]'
+   rustible run playbook.yml --limit @hosts-batch-1.txt
    ```
+   Ranges expand like inventory host lines (`web[01:50]`, `node[a:f]`, `rack[1:9:2]`),
+   and `@file` reads one pattern per line. Positional group subscripts such as
+   `webservers[0:99]` are not supported.
 
 4. **Avoid storing large data in variables:**
    ```yaml
