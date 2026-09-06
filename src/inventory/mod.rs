@@ -1268,12 +1268,15 @@ impl Inventory {
     /// plain names that do not exist are skipped, and candidates that still
     /// carry a wildcard are collected into `globs` so the whole set is matched
     /// against the inventory in a single pass. Every candidate is charged to
-    /// the pattern budget, so nested ranges cannot multiply without bound.
+    /// the pattern budget (work) and to `names_left` (memory): across all
+    /// nesting levels a pattern may produce at most `MAX_RANGE_EXPANSION`
+    /// names, which also bounds the wildcard list kept for the final pass.
     fn collect_range_candidate<'a>(
         &'a self,
         candidate: &str,
         depth: usize,
         budget: &mut PatternBudget,
+        names_left: &mut u64,
         globs: &mut Vec<String>,
         result: &mut HashSet<&'a str>,
     ) -> InventoryResult<()> {
@@ -1285,9 +1288,17 @@ impl Inventory {
             )));
         }
         budget.charge(1, candidate)?;
+        if *names_left == 0 {
+            return Err(InventoryError::InvalidPattern(format!(
+                "Invalid range: pattern expands to more than {} names: {}",
+                Self::MAX_RANGE_EXPANSION,
+                candidate
+            )));
+        }
+        *names_left -= 1;
         if let Some(nested) = self.range_candidates(candidate, false)? {
             for name in &nested {
-                self.collect_range_candidate(name, depth + 1, budget, globs, result)?;
+                self.collect_range_candidate(name, depth + 1, budget, names_left, globs, result)?;
             }
         } else if candidate.contains(['*', '?', '[']) {
             globs.push(candidate.to_string());
@@ -1342,8 +1353,16 @@ impl Inventory {
         };
         let mut result: HashSet<&str> = HashSet::new();
         let mut globs = Vec::new();
+        let mut names_left = Self::MAX_RANGE_EXPANSION;
         for candidate in &candidates {
-            self.collect_range_candidate(candidate, depth + 1, budget, &mut globs, &mut result)?;
+            self.collect_range_candidate(
+                candidate,
+                depth + 1,
+                budget,
+                &mut names_left,
+                &mut globs,
+                &mut result,
+            )?;
         }
         self.collect_glob_candidates(pattern, &globs, budget, &mut result)?;
         if result.is_empty() {
@@ -1923,14 +1942,13 @@ nodec
             1
         );
         assert!(inv.get_hosts_for_pattern("rack[3:4]node[1:2]").is_err());
-        // Larger nested expansions stay within the shared work budget, and an
-        // unparseable step is rejected instead of defaulting to one.
-        assert_eq!(
-            inv.get_hosts_for_pattern("rack[1:200]node[1:200]")
-                .unwrap()
-                .len(),
-            2
-        );
+        // The name cap is shared across nesting levels, also when a trailing
+        // wildcard would otherwise keep every leaf in memory, and an unparseable
+        // step is rejected instead of defaulting to one.
+        for pattern in ["rack[1:200]node[1:200]", "[1:1400][1:1400]*"] {
+            let error = inv.get_hosts_for_pattern(pattern).unwrap_err().to_string();
+            assert!(error.contains("more than"), "{pattern}: {error}");
+        }
         assert!(inv
             .get_hosts_for_pattern("rack[1:2]node[1:2:18446744073709551616]")
             .is_err());
