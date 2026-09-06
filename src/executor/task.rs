@@ -558,6 +558,9 @@ impl Task {
         }
 
         // Handle delegation - create appropriate context for execution and fact storage
+        // Decide contexts on the same canonical name that dispatch uses, so
+        // `ansible.legacy.set_fact` behaves exactly like `set_fact`.
+        let canonical_module = ModuleRegistry::normalize_module_name(&self.module);
         let (mut execution_ctx, fact_storage_ctx) =
             if let Some(ref delegate_host) = self.delegate_to {
                 debug!("Delegating task to host: {}", delegate_host);
@@ -614,7 +617,7 @@ impl Task {
                         .unwrap_or_else(|_| vec![JsonValue::String(rendered)])
                 }
             };
-            let loop_ctx = if self.module == "set_fact" {
+            let loop_ctx = if canonical_module == "set_fact" {
                 &fact_storage_ctx
             } else {
                 &execution_ctx
@@ -635,7 +638,7 @@ impl Task {
         }
 
         // Execute the module - use fact_storage_ctx for set_fact to ensure facts go to right host
-        let module_ctx = if self.module == "set_fact" {
+        let module_ctx = if canonical_module == "set_fact" {
             &fact_storage_ctx
         } else {
             &execution_ctx
@@ -1066,14 +1069,35 @@ impl Task {
 
         // Acquire parallelization guard - this will block if necessary based on the hint
         // The guard is automatically released when it goes out of scope (when this function returns)
+        // Every explicitly local inventory entry is the same machine, so aliases
+        // such as web1 and web2 with `ansible_connection: local` must never run
+        // module code at the same time: package databases, crontabs and other
+        // controller state would race. Modules that declared no constraint are
+        // therefore made host-exclusive on local targets, and every local target
+        // shares one lock key.
+        // The include wrappers run their children through this same manager while
+        // holding their own guard, so they must never take the shared lock.
+        const LOCAL_TARGET_LOCK_KEY: &str = "localhost";
+        // Dispatch on the same canonical name the registry resolves, so the
+        // guards below see `copy` for `ansible.legacy.copy` as well.
+        let module_name = ModuleRegistry::normalize_module_name(&self.module);
+        let include_wrapper = matches!(module_name, "include_tasks" | "import_tasks");
+        let connection_kind = self.configured_transport(ctx, runtime).await;
+        let (hint, lock_host) = if Self::is_local_target(connection_kind.as_deref(), ctx) {
+            let hint = match hint {
+                crate::modules::ParallelizationHint::FullyParallel if !include_wrapper => {
+                    crate::modules::ParallelizationHint::HostExclusive
+                }
+                other => other,
+            };
+            (hint, LOCAL_TARGET_LOCK_KEY)
+        } else {
+            (hint, ctx.host.as_str())
+        };
         let _parallelization_guard = parallelization_manager
-            .acquire(hint, &ctx.host, &self.module)
+            .acquire(hint, lock_host, &self.module)
             .await;
 
-        let module_name = self
-            .module
-            .strip_prefix("ansible.builtin.")
-            .unwrap_or(&self.module);
         match module_name {
             "debug" => self.execute_debug(&args, ctx).await,
             "set_fact" => self.execute_set_fact(&args, ctx, runtime).await,
@@ -1101,6 +1125,33 @@ impl Task {
         }
     }
 
+    /// The transport configured for this task's host: a task-level
+    /// `ansible_connection` override, else the inventory value.
+    async fn configured_transport(
+        &self,
+        ctx: &ExecutionContext,
+        runtime: &Arc<RwLock<RuntimeContext>>,
+    ) -> Option<String> {
+        let runtime = runtime.read().await;
+        self.vars
+            .get("ansible_connection")
+            .map(|value| {
+                value
+                    .as_str()
+                    .unwrap_or("__invalid_transport__")
+                    .to_string()
+            })
+            .or_else(|| runtime.configured_connection(&ctx.host))
+    }
+
+    /// Whether the task executes on the control node itself.
+    fn is_local_target(connection_kind: Option<&str>, ctx: &ExecutionContext) -> bool {
+        connection_kind == Some("local")
+            || (connection_kind.is_none()
+                && ctx.connection.is_none()
+                && matches!(ctx.host.as_str(), "localhost" | "127.0.0.1" | "::1"))
+    }
+
     /// Native modules may run locally only for an explicitly local inventory target.
     /// A missing or unsupported remote connection must never become a local fallback.
     async fn execute_native(
@@ -1111,25 +1162,9 @@ impl Task {
         runtime: &Arc<RwLock<RuntimeContext>>,
         registry: &Arc<ModuleRegistry>,
     ) -> ExecutorResult<TaskResult> {
-        let (vars, connection_kind) = {
-            let runtime = runtime.read().await;
-            (
-                runtime.get_merged_vars(&ctx.host),
-                self.vars
-                    .get("ansible_connection")
-                    .map(|value| {
-                        value
-                            .as_str()
-                            .unwrap_or("__invalid_transport__")
-                            .to_string()
-                    })
-                    .or_else(|| runtime.configured_connection(&ctx.host)),
-            )
-        };
-        let local = connection_kind.as_deref() == Some("local")
-            || (connection_kind.is_none()
-                && ctx.connection.is_none()
-                && matches!(ctx.host.as_str(), "localhost" | "127.0.0.1" | "::1"));
+        let vars = runtime.read().await.get_merged_vars(&ctx.host);
+        let connection_kind = self.configured_transport(ctx, runtime).await;
+        let local = Self::is_local_target(connection_kind.as_deref(), ctx);
         if local && module_name == "get_url" {
             return Ok(TaskResult::failed(
                 "Local get_url destination writes are not implemented; refusing execution",
@@ -1177,6 +1212,31 @@ impl Task {
         {
             facts.insert("os_family".to_string(), value.clone());
         }
+        // Modules with their own local execution path keep running on the control
+        // node without a connection object: their remote path would drop local-only
+        // behaviour (copy's `validate` staging, shell's `stdin`, chdir-relative
+        // `creates`/`removes`). Every other module only knows how to run through a
+        // connection, so an explicitly local target hands it a real local connection
+        // instead of failing with "No connection available". A connection the
+        // context carries for remote use is never reused for local execution.
+        const LOCAL_DISPATCH_MODULES: &[&str] = &[
+            "authorized_key",
+            "command",
+            "copy",
+            "lineinfile",
+            "shell",
+            "stat",
+            "template",
+        ];
+        let connection: Option<Arc<dyn crate::connection::Connection + Send + Sync>> = if local {
+            if LOCAL_DISPATCH_MODULES.contains(&module_name) {
+                None
+            } else {
+                Some(Arc::new(crate::connection::local::LocalConnection::new()))
+            }
+        } else {
+            ctx.connection.clone()
+        };
         let module_ctx = crate::modules::ModuleContext {
             check_mode: ctx.check_mode,
             diff_mode: ctx.diff_mode,
@@ -1188,7 +1248,7 @@ impl Task {
             become_method: Some(ctx.r#become_method.clone()),
             become_user: Some(ctx.r#become_user.clone()),
             become_password: ctx.become_password.clone(),
-            connection: if local { None } else { ctx.connection.clone() },
+            connection,
         };
         let params = args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let registry = Arc::clone(registry);
@@ -2820,6 +2880,212 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.status, TaskStatus::Unreachable);
+    }
+
+    /// Reports whether the module context carried a connection, under any name.
+    struct ConnectionProbe(&'static str);
+
+    impl crate::modules::Module for ConnectionProbe {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn description(&self) -> &'static str {
+            "reports whether the module context carries a connection"
+        }
+        fn execute(
+            &self,
+            _params: &crate::modules::ModuleParams,
+            context: &crate::modules::ModuleContext,
+        ) -> crate::modules::ModuleResult<crate::modules::ModuleOutput> {
+            Ok(crate::modules::ModuleOutput::ok(
+                match &context.connection {
+                    Some(_) => "connection",
+                    None => "none",
+                },
+            ))
+        }
+    }
+
+    async fn probe_local_target(module: &'static str) -> TaskResult {
+        let mut registry = ModuleRegistry::new();
+        registry.register(Arc::new(ConnectionProbe(module)));
+        let mut runtime = RuntimeContext::new();
+        runtime.set_host_var(
+            "web1",
+            "ansible_connection".into(),
+            serde_json::json!("local"),
+        );
+        let task = Task::new("probe", module);
+        task.execute_native(
+            module,
+            &task.args,
+            &ExecutionContext::new("web1"),
+            &Arc::new(RwLock::new(runtime)),
+            &Arc::new(registry),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn diligence_explicit_local_target_receives_a_local_connection() {
+        let result = probe_local_target("connection_probe").await;
+        assert_eq!(result.status, TaskStatus::Ok);
+        assert_eq!(result.msg.as_deref(), Some("connection"));
+    }
+
+    #[tokio::test]
+    async fn diligence_local_dispatch_modules_keep_running_without_a_connection() {
+        let result = probe_local_target("copy").await;
+        assert_eq!(result.status, TaskStatus::Ok);
+        assert_eq!(result.msg.as_deref(), Some("none"));
+    }
+
+    async fn probe_local_target_via_task(
+        host: &str,
+        task_module: &str,
+        registered: &'static str,
+        manager: &Arc<ParallelizationManager>,
+    ) -> TaskResult {
+        let mut registry = ModuleRegistry::new();
+        registry.register(Arc::new(ConnectionProbe(registered)));
+        let mut runtime = RuntimeContext::new();
+        runtime.set_host_var(
+            host,
+            "ansible_connection".into(),
+            serde_json::json!("local"),
+        );
+        Task::new("probe", task_module)
+            .execute_module(
+                &ExecutionContext::new(host),
+                &Arc::new(RwLock::new(runtime)),
+                &Arc::new(RwLock::new(HashMap::new())),
+                &Arc::new(Mutex::new(std::collections::HashSet::new())),
+                manager,
+                &Arc::new(registry),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn diligence_local_aliases_serialize_default_hint_modules_under_one_lock() {
+        // The probe declares no parallelization constraint; on local aliases it
+        // must still be serialized under the shared key.
+        let manager = Arc::new(ParallelizationManager::new());
+        for host in ["web1", "web2"] {
+            let result =
+                probe_local_target_via_task(host, "connection_probe", "connection_probe", &manager)
+                    .await;
+            assert_eq!(result.msg.as_deref(), Some("connection"));
+        }
+        let locks = manager.stats().host_locks;
+        assert_eq!(locks.len(), 1, "{locks:?}");
+        assert_eq!(locks.get("localhost"), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn diligence_collection_prefixed_names_follow_the_same_dispatch_rule() {
+        let manager = Arc::new(ParallelizationManager::new());
+        let result =
+            probe_local_target_via_task("web1", "ansible.legacy.copy", "copy", &manager).await;
+        assert_eq!(result.msg.as_deref(), Some("none"));
+        let result = probe_local_target_via_task(
+            "web1",
+            "ansible.builtin.connection_probe",
+            "connection_probe",
+            &manager,
+        )
+        .await;
+        assert_eq!(result.msg.as_deref(), Some("connection"));
+    }
+
+    #[tokio::test]
+    async fn diligence_prefixed_set_fact_stores_facts_on_the_inventory_host() {
+        use crate::executor::batch_processor::{BatchConfig, BatchProcessor};
+
+        let mut task = Task::new("fact", "ansible.legacy.set_fact").arg("greeting", "hello");
+        task.delegate_to = Some("delegate.invalid".to_string());
+        let mut runtime = RuntimeContext::new();
+        runtime.add_host("web1".to_string(), None);
+        runtime.add_host("delegate.invalid".to_string(), None);
+        let runtime = Arc::new(RwLock::new(runtime));
+        let result = task
+            .execute(
+                &ExecutionContext::new("web1"),
+                &runtime,
+                &Arc::new(RwLock::new(HashMap::new())),
+                &Arc::new(Mutex::new(std::collections::HashSet::new())),
+                &Arc::new(ParallelizationManager::new()),
+                &Arc::new(ModuleRegistry::default()),
+                &Arc::new(BatchProcessor::new(BatchConfig::default())),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_ne!(result.status, TaskStatus::Failed, "{:?}", result.msg);
+        let runtime = runtime.read().await;
+        assert_eq!(
+            runtime.get_host_fact("web1", "greeting"),
+            Some(serde_json::json!("hello"))
+        );
+        assert_eq!(runtime.get_host_fact("delegate.invalid", "greeting"), None);
+    }
+
+    #[tokio::test]
+    async fn diligence_local_include_tasks_does_not_deadlock_on_the_shared_lock() {
+        let scratch = tempfile::tempdir().unwrap();
+        std::fs::write(
+            scratch.path().join("included.yml"),
+            "- name: included\n  debug:\n    msg: included ran\n",
+        )
+        .unwrap();
+        let mut runtime = RuntimeContext::new();
+        runtime.add_host("web1".to_string(), None);
+        runtime.set_host_var(
+            "web1",
+            "ansible_connection".into(),
+            serde_json::json!("local"),
+        );
+        // Includes resolve against the playbook directory and reject anything
+        // outside it, so anchor the test to its own scratch directory.
+        runtime.set_magic_var(
+            "playbook_dir".into(),
+            serde_json::json!(scratch.path().to_string_lossy()),
+        );
+        let manager = Arc::new(ParallelizationManager::new());
+        let task = Task::new("include", "include_tasks").arg("file", "included.yml");
+        let ctx = ExecutionContext::new("web1");
+        let runtime = Arc::new(RwLock::new(runtime));
+        let handlers = Arc::new(RwLock::new(HashMap::new()));
+        let notified = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let registry = Arc::new(ModuleRegistry::default());
+        let run = task.execute_module(&ctx, &runtime, &handlers, &notified, &manager, &registry);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), run)
+            .await
+            .expect("include_tasks must not wait on the shared local lock")
+            .unwrap();
+        assert_ne!(result.status, TaskStatus::Failed, "{:?}", result.msg);
+    }
+
+    #[tokio::test]
+    async fn diligence_local_shell_stdin_reaches_the_command() {
+        let task = Task::new("stdin", "shell")
+            .arg("cmd", "cat")
+            .arg("stdin", "payload");
+        let result = task
+            .execute_native(
+                "shell",
+                &task.args,
+                &ExecutionContext::new("localhost"),
+                &Arc::new(RwLock::new(RuntimeContext::new())),
+                &Arc::new(ModuleRegistry::default()),
+            )
+            .await
+            .unwrap();
+        assert_ne!(result.status, TaskStatus::Failed, "{:?}", result.msg);
+        let stdout = result.result.as_ref().and_then(|r| r["stdout"].as_str());
+        assert_eq!(stdout.map(str::trim_end), Some("payload"));
     }
 
     #[test]
