@@ -406,6 +406,40 @@ jobs:
             echo "- PROPTEST_CASES: \`$PROPTEST_CASES\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  scenarios:
+    name: Privileged Localhost Scenarios
+    runs-on: ubuntu-latest
+    needs: prepare
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build scenario suite
+        run: cargo test --test scenario_tests --no-run
+
+      - name: Run scenarios that install packages and manage services as root
+        # These scenarios run package and service tasks against localhost, so they
+        # are ignored in the default matrix and run here with root and systemd.
+        run: |
+          set -euo pipefail
+          sudo -E env "PATH=$PATH" cargo test --test scenario_tests -- --ignored --test-threads=1
+
+      - name: Report scenario suite
+        run: |
+          {
+            echo "## Privileged Scenarios Result"
+            echo "- Executed: scenario_tests (--ignored) as root on the runner"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   summary:
     name: High-Risk Sign-Off Summary
     runs-on: ubuntu-latest
