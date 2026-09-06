@@ -2402,17 +2402,9 @@ impl RunArgs {
     /// Validate a limit pattern
     /// Returns an error message if the pattern is invalid
     fn validate_limit_pattern(limit: &str) -> std::result::Result<(), String> {
-        // Check for limit from file (@filename)
-        if let Some(file_path) = limit.strip_prefix('@') {
-            let path = std::path::Path::new(file_path);
-            if !path.exists() {
-                return Err(format!("Limit file not found: {}", file_path));
-            }
-            return Ok(());
-        }
-
-        // Split by colon to check each part
-        for part in limit.split(':') {
+        // Split exactly as the inventory resolver does: on `:` outside brackets,
+        // so `~^web0[1:3]$` and `@file:!db01` validate element by element.
+        for part in rustible::inventory::split_host_pattern(limit) {
             let part = part.trim();
             if part.is_empty() {
                 continue;
@@ -2420,6 +2412,14 @@ impl RunArgs {
 
             // Strip leading operators (!, &)
             let pattern = part.trim_start_matches('!').trim_start_matches('&');
+
+            // Limit from file (@filename) as one element
+            if let Some(file_path) = pattern.strip_prefix('@') {
+                if !std::path::Path::new(file_path).exists() {
+                    return Err(format!("Limit file not found: {}", file_path));
+                }
+                continue;
+            }
 
             // Check for regex pattern
             if let Some(regex_str) = pattern.strip_prefix('~') {
@@ -2502,6 +2502,18 @@ impl Runnable for RunArgs {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn validate_limit_pattern_matches_the_resolver_elements() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().display();
+        assert!(RunArgs::validate_limit_pattern("~^web0[1:3]$").is_ok());
+        assert!(RunArgs::validate_limit_pattern("web[01:03]:!web02").is_ok());
+        assert!(RunArgs::validate_limit_pattern(&format!("@{path}:!db01")).is_ok());
+        assert!(RunArgs::validate_limit_pattern(&format!("!@{path}")).is_ok());
+        assert!(RunArgs::validate_limit_pattern("@/nonexistent/limit-file").is_err());
+        assert!(RunArgs::validate_limit_pattern("~^web0[1").is_err());
+    }
     use super::*;
 
     #[test]

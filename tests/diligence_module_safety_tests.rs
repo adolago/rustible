@@ -421,13 +421,22 @@ fn diligence_archive_output_hardlink_never_truncates_source_member() {
         // A broken self-copy can grow forever. Restrict the child before exec;
         // the parent owns the TempDir and always reaps it before assertions.
         use std::os::unix::process::CommandExt;
+        // macOS rejects an address-space limit below the process's current
+        // mappings, so it keeps only the file-size and CPU limits.
+        #[cfg(not(target_vendor = "apple"))]
+        let limits = [
+            (nix::libc::RLIMIT_FSIZE, 1024 * 1024),
+            (nix::libc::RLIMIT_AS, 256 * 1024 * 1024),
+            (nix::libc::RLIMIT_CPU, 2),
+        ];
+        #[cfg(target_vendor = "apple")]
+        let limits = [
+            (nix::libc::RLIMIT_FSIZE, 1024 * 1024),
+            (nix::libc::RLIMIT_CPU, 2),
+        ];
         unsafe {
-            command.pre_exec(|| {
-                for (resource, limit) in [
-                    (nix::libc::RLIMIT_FSIZE, 1024 * 1024),
-                    (nix::libc::RLIMIT_AS, 256 * 1024 * 1024),
-                    (nix::libc::RLIMIT_CPU, 2),
-                ] {
+            command.pre_exec(move || {
+                for (resource, limit) in limits {
                     let limits = nix::libc::rlimit {
                         rlim_cur: limit,
                         rlim_max: limit,
