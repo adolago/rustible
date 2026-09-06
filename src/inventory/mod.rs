@@ -1066,7 +1066,7 @@ impl Inventory {
 
         // Complex patterns: `:` outside brackets separates elements. A `:` inside
         // brackets belongs to a range such as `web[01:03]` and must not recurse here.
-        if split_pattern(pattern).len() > 1 {
+        if split_host_pattern(pattern).len() > 1 {
             return self.parse_complex_pattern(pattern, depth);
         }
 
@@ -1300,7 +1300,7 @@ impl Inventory {
         let mut first = true;
 
         // Split by : but not inside brackets
-        let parts = split_pattern(pattern);
+        let parts = split_host_pattern(pattern);
 
         for part in parts {
             let part = part.trim();
@@ -1476,8 +1476,10 @@ impl Inventory {
     }
 }
 
-/// Split pattern by : but not inside brackets
-fn split_pattern(pattern: &str) -> Vec<&str> {
+/// Split a host pattern on `:` outside brackets, so a range such as
+/// `web[01:03]` or a regex class stays one element. Shared with the CLI so
+/// its pre-validation sees the same elements the resolver does.
+pub fn split_host_pattern(pattern: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut bracket_depth: usize = 0;

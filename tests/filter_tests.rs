@@ -933,6 +933,39 @@ mod limit_from_file {
     }
 
     #[test]
+    fn test_limit_from_file_composes_with_exclusion() {
+        let playbook = fixtures_dir().join("limit_playbook.yml");
+        let inventory = fixtures_dir().join("inventory_multi.yml");
+        let mut hosts_file = NamedTempFile::new().unwrap();
+        writeln!(hosts_file, "web01").unwrap();
+        writeln!(hosts_file, "db01").unwrap();
+        rustible_cmd()
+            .arg("-i")
+            .arg(&inventory)
+            .arg("-l")
+            .arg(format!("@{}:!db01", hosts_file.path().display()))
+            .arg("run")
+            .arg(&playbook)
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn test_limit_regex_keeps_range_shaped_class() {
+        let playbook = fixtures_dir().join("limit_playbook.yml");
+        let inventory = fixtures_dir().join("inventory_multi.yml");
+        rustible_cmd()
+            .arg("-i")
+            .arg(&inventory)
+            .arg("-l")
+            .arg("~^web0[1:3]$")
+            .arg("run")
+            .arg(&playbook)
+            .assert()
+            .success();
+    }
+
+    #[test]
     fn test_limit_file_with_comments() {
         let playbook = fixtures_dir().join("limit_playbook.yml");
         let inventory = fixtures_dir().join("inventory_multi.yml");
