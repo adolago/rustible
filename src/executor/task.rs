@@ -1075,11 +1075,17 @@ impl Task {
         // controller state would race. Modules that declared no constraint are
         // therefore made host-exclusive on local targets, and every local target
         // shares one lock key.
+        // The include wrappers run their children through this same manager while
+        // holding their own guard, so they must never take the shared lock.
         const LOCAL_TARGET_LOCK_KEY: &str = "localhost";
+        // Dispatch on the same canonical name the registry resolves, so the
+        // guards below see `copy` for `ansible.legacy.copy` as well.
+        let module_name = ModuleRegistry::normalize_module_name(&self.module);
+        let include_wrapper = matches!(module_name, "include_tasks" | "import_tasks");
         let connection_kind = self.configured_transport(ctx, runtime).await;
         let (hint, lock_host) = if Self::is_local_target(connection_kind.as_deref(), ctx) {
             let hint = match hint {
-                crate::modules::ParallelizationHint::FullyParallel => {
+                crate::modules::ParallelizationHint::FullyParallel if !include_wrapper => {
                     crate::modules::ParallelizationHint::HostExclusive
                 }
                 other => other,
@@ -1092,9 +1098,6 @@ impl Task {
             .acquire(hint, lock_host, &self.module)
             .await;
 
-        // Dispatch on the same canonical name the registry resolves, so the
-        // guards below see `copy` for `ansible.legacy.copy` as well.
-        let module_name = ModuleRegistry::normalize_module_name(&self.module);
         match module_name {
             "debug" => self.execute_debug(&args, ctx).await,
             "set_fact" => self.execute_set_fact(&args, ctx, runtime).await,
@@ -3027,6 +3030,39 @@ mod tests {
             Some(serde_json::json!("hello"))
         );
         assert_eq!(runtime.get_host_fact("delegate.invalid", "greeting"), None);
+    }
+
+    #[tokio::test]
+    async fn diligence_local_include_tasks_does_not_deadlock_on_the_shared_lock() {
+        let scratch = tempfile::tempdir().unwrap();
+        std::fs::write(
+            scratch.path().join("included.yml"),
+            "- name: included\n  debug:\n    msg: included ran\n",
+        )
+        .unwrap();
+        let mut runtime = RuntimeContext::new();
+        runtime.add_host("web1".to_string(), None);
+        runtime.set_host_var(
+            "web1",
+            "ansible_connection".into(),
+            serde_json::json!("local"),
+        );
+        let manager = Arc::new(ParallelizationManager::new());
+        let task = Task::new("include", "include_tasks").arg(
+            "file",
+            serde_json::json!(scratch.path().join("included.yml").to_string_lossy()),
+        );
+        let ctx = ExecutionContext::new("web1");
+        let runtime = Arc::new(RwLock::new(runtime));
+        let handlers = Arc::new(RwLock::new(HashMap::new()));
+        let notified = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let registry = Arc::new(ModuleRegistry::default());
+        let run = task.execute_module(&ctx, &runtime, &handlers, &notified, &manager, &registry);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), run)
+            .await
+            .expect("include_tasks must not wait on the shared local lock")
+            .unwrap();
+        assert_ne!(result.status, TaskStatus::Failed, "{:?}", result.msg);
     }
 
     #[tokio::test]
