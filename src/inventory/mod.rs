@@ -1181,14 +1181,11 @@ impl Inventory {
                 pattern
             )));
         }
-        let step: u64 = caps
-            .get(4)
-            .map(|m| m.as_str().parse())
-            .transpose()
-            .ok()
-            .flatten()
-            .unwrap_or(1);
         let invalid = || InventoryError::InvalidPattern(format!("Invalid range: {}", pattern));
+        let step: u64 = match caps.get(4) {
+            Some(m) => m.as_str().parse().map_err(|_| invalid())?,
+            None => 1,
+        };
         if step == 0 {
             return Err(invalid());
         }
@@ -1229,10 +1226,13 @@ impl Inventory {
 
     /// Resolve one expanded candidate. Nested ranges and globs that match
     /// nothing are skipped; only the outermost range reports an empty result.
+    /// `remaining` is the number of candidates the whole pattern may still
+    /// produce, so nested ranges cannot multiply past `MAX_RANGE_EXPANSION`.
     fn collect_range_candidate<'a>(
         &'a self,
         candidate: &str,
         depth: usize,
+        remaining: &mut u64,
         result: &mut HashSet<&'a str>,
     ) -> InventoryResult<()> {
         if depth > Self::MAX_PATTERN_DEPTH {
@@ -1242,9 +1242,17 @@ impl Inventory {
                 candidate
             )));
         }
+        if *remaining == 0 {
+            return Err(InventoryError::InvalidPattern(format!(
+                "Invalid range: pattern expands to more than {} names: {}",
+                Self::MAX_RANGE_EXPANSION,
+                candidate
+            )));
+        }
+        *remaining -= 1;
         if let Some(nested) = self.range_candidates(candidate)? {
             for name in &nested {
-                self.collect_range_candidate(name, depth + 1, result)?;
+                self.collect_range_candidate(name, depth + 1, remaining, result)?;
             }
         } else if candidate.contains(['*', '?', '~', '@']) {
             for host in self.get_hosts_for_pattern_inner(candidate, depth)? {
@@ -1268,8 +1276,9 @@ impl Inventory {
             return Ok(None);
         };
         let mut result: HashSet<&str> = HashSet::new();
+        let mut remaining = Self::MAX_RANGE_EXPANSION;
         for candidate in &candidates {
-            self.collect_range_candidate(candidate, depth + 1, &mut result)?;
+            self.collect_range_candidate(candidate, depth + 1, &mut remaining, &mut result)?;
         }
         if result.is_empty() {
             return Err(InventoryError::InvalidPattern(format!(
@@ -1803,6 +1812,16 @@ nodec
             1
         );
         assert!(inv.get_hosts_for_pattern("rack[3:4]node[1:2]").is_err());
+        // The expansion budget is shared across nested ranges, and an
+        // unparseable step is rejected instead of defaulting to one.
+        let error = inv
+            .get_hosts_for_pattern("rack[1:200]node[1:200]")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("more than"), "{error}");
+        assert!(inv
+            .get_hosts_for_pattern("rack[1:2]node[1:2:18446744073709551616]")
+            .is_err());
     }
 
     #[test]
