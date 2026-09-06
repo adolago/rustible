@@ -618,6 +618,11 @@ fn http_stub_custom(
                 Err(_) => return,
             }
         };
+        // BSD-derived kernels (macOS) hand out accepted sockets that inherit the
+        // listener's non-blocking flag; Linux does not. Restore blocking mode so
+        // the first read waits for the request instead of failing with WouldBlock,
+        // which dropped the connection before any response was written.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
