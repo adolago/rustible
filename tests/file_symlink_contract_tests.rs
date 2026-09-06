@@ -187,11 +187,24 @@ fn no_follow_recursive_selinux_request_fails_before_mutation() {
     unsupported_request_preserves_attributes("recursive_selinux");
 }
 
+/// A group the current process may assign that differs from `current`.
+#[cfg(not(target_vendor = "apple"))]
 fn different_permitted_group(current: u32) -> Option<u32> {
     nix::unistd::getgroups()
         .unwrap()
         .into_iter()
         .map(|gid| gid.as_raw())
+        .find(|gid| *gid != current)
+}
+
+/// nix does not expose `getgroups` on Apple platforms; ask `id -G` instead.
+#[cfg(target_vendor = "apple")]
+fn different_permitted_group(current: u32) -> Option<u32> {
+    let output = Command::new("id").arg("-G").output().unwrap();
+    assert!(output.status.success(), "id -G failed");
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .filter_map(|gid| gid.parse::<u32>().ok())
         .find(|gid| *gid != current)
 }
 

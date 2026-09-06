@@ -254,20 +254,24 @@ impl Connection for LocalConnection {
                 ))
             })?;
 
+            let metadata = dest_file.metadata().map_err(|e| {
+                ConnectionError::TransferFailed(format!(
+                    "Failed to inspect destination permissions: {}",
+                    e
+                ))
+            })?;
+            // Refuse FIFOs, devices and other non-regular destinations before any
+            // metadata or content changes. Linux rejects them when truncating;
+            // macOS does not, so the check has to be explicit.
+            if !metadata.is_file() {
+                return Err(ConnectionError::TransferFailed(format!(
+                    "Destination {} is not a regular file",
+                    remote_path.display()
+                )));
+            }
             // Only restrict access while old or partial contents remain. New
             // permissions and special bits are granted after the complete write.
-            let restricted = mode
-                & dest_file
-                    .metadata()
-                    .map_err(|e| {
-                        ConnectionError::TransferFailed(format!(
-                            "Failed to inspect destination permissions: {}",
-                            e
-                        ))
-                    })?
-                    .permissions()
-                    .mode()
-                & 0o777;
+            let restricted = mode & metadata.permissions().mode() & 0o777;
             dest_file
                 .set_permissions(fs::Permissions::from_mode(restricted))
                 .map_err(|e| {
@@ -405,18 +409,21 @@ impl Connection for LocalConnection {
 
             // Apply requested permissions to existing files before writing data.
             if let Some(mode) = options.mode {
-                let restricted = mode
-                    & file
-                        .metadata()
-                        .map_err(|e| {
-                            ConnectionError::TransferFailed(format!(
-                                "Failed to inspect destination permissions: {}",
-                                e
-                            ))
-                        })?
-                        .permissions()
-                        .mode()
-                    & 0o777;
+                let metadata = file.metadata().map_err(|e| {
+                    ConnectionError::TransferFailed(format!(
+                        "Failed to inspect destination permissions: {}",
+                        e
+                    ))
+                })?;
+                // Refuse FIFOs, devices and other non-regular destinations before
+                // any metadata or content changes (see `upload`).
+                if !metadata.is_file() {
+                    return Err(ConnectionError::TransferFailed(format!(
+                        "Destination {} is not a regular file",
+                        remote_path.display()
+                    )));
+                }
+                let restricted = mode & metadata.permissions().mode() & 0o777;
                 file.set_permissions(fs::Permissions::from_mode(restricted))
                     .map_err(|e| {
                         ConnectionError::TransferFailed(format!(
@@ -650,14 +657,12 @@ mod tests {
                 let destination = scratch
                     .path()
                     .join(format!("fifo-{content_upload}-{requested_mode}"));
-                nix::unistd::mkfifo(
-                    &destination,
-                    nix::sys::stat::Mode::from_bits_truncate(old_mode),
-                )
-                .unwrap();
+                // `mode_t` is u16 on macOS and u32 on Linux, so keep `old_mode` a u32:
+                // create the FIFO with an empty mode and let `set_permissions` apply it.
+                nix::unistd::mkfifo(&destination, nix::sys::stat::Mode::empty()).unwrap();
                 fs::set_permissions(&destination, fs::Permissions::from_mode(old_mode)).unwrap();
                 // Opening a reader prevents the writer open from blocking. Explicit
-                // mode uploads reject FIFO truncation, before any bytes are written.
+                // mode uploads reject non-regular destinations before any bytes are written.
                 let _reader = fs::OpenOptions::new()
                     .read(true)
                     .custom_flags(nix::libc::O_NONBLOCK)
