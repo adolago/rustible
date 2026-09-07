@@ -6,6 +6,13 @@
 //! 3. Slow callbacks don't slow execution
 //! 4. Proper timeout handling
 //! 5. Cancellation behavior
+//!
+//! Tests that assert on elapsed time run on tokio's paused clock
+//! (`start_paused = true`) and measure `tokio::time::Instant`. Virtual time
+//! only advances when every task is waiting on a timer, so parallel sleeps
+//! cost their duration once and sequential sleeps cost it per call. The
+//! assertions therefore check how callbacks are scheduled instead of how
+//! fast a shared CI runner happens to be.
 
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -358,12 +365,12 @@ fn create_execution_result(host: &str, task_name: &str, success: bool) -> Execut
 // Test 1: Callbacks Run Without Blocking Executor
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_callback_does_not_block_executor() {
     let callback = Arc::new(TimingCallback::new());
 
     // Spawn multiple concurrent operations that invoke callbacks
-    let start = Instant::now();
+    let start = tokio::time::Instant::now();
 
     let handles: Vec<_> = (0..10)
         .map(|i| {
@@ -392,11 +399,11 @@ async fn test_callback_does_not_block_executor() {
     assert_eq!(callback.invocation_count.load(Ordering::SeqCst), 10);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_fast_callbacks_complete_quickly() {
     let callback = TimingCallback::new();
 
-    let start = Instant::now();
+    let start = tokio::time::Instant::now();
 
     // Run a sequence of callbacks
     callback.on_playbook_start("test_playbook").await;
@@ -543,7 +550,7 @@ async fn test_concurrent_callbacks_with_shared_state() {
     assert_eq!(callback.invocation_count.load(Ordering::SeqCst), 100);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_concurrent_callbacks_detect_parallelism() {
     let callback = Arc::new(SlowCallback::new(50));
 
@@ -557,7 +564,7 @@ async fn test_concurrent_callbacks_detect_parallelism() {
         })
         .collect();
 
-    let start = Instant::now();
+    let start = tokio::time::Instant::now();
 
     for handle in handles {
         handle.await.unwrap();
@@ -580,7 +587,7 @@ async fn test_concurrent_callbacks_detect_parallelism() {
 // Test 3: Slow Callbacks Don't Slow Execution
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_slow_callback_doesnt_block_fast_callbacks() {
     let slow_callback = Arc::new(SlowCallback::new(100));
     let fast_callback = Arc::new(TimingCallback::new());
@@ -594,7 +601,7 @@ async fn test_slow_callback_doesnt_block_fast_callbacks() {
     });
 
     // Fast callbacks should complete while slow one is running
-    let fast_start = Instant::now();
+    let fast_start = tokio::time::Instant::now();
 
     let fast_handles: Vec<_> = (0..10)
         .map(|i| {
@@ -624,7 +631,7 @@ async fn test_slow_callback_doesnt_block_fast_callbacks() {
     assert_eq!(fast_callback.invocation_count.load(Ordering::SeqCst), 10);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_execution_continues_during_slow_callback() {
     let callback = Arc::new(SlowCallback::new(200));
 
@@ -638,7 +645,7 @@ async fn test_execution_continues_during_slow_callback() {
     });
 
     // Simulate execution that should continue independently
-    let start = Instant::now();
+    let start = tokio::time::Instant::now();
     for _ in 0..5 {
         times.write().push(Instant::now());
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -656,11 +663,11 @@ async fn test_execution_continues_during_slow_callback() {
     assert_eq!(execution_times.read().len(), 5);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_multiple_slow_callbacks_parallel() {
     let callbacks: Vec<_> = (0..3).map(|_| Arc::new(SlowCallback::new(100))).collect();
 
-    let start = Instant::now();
+    let start = tokio::time::Instant::now();
 
     // Start all slow callbacks in parallel
     let handles: Vec<_> = callbacks
@@ -693,11 +700,11 @@ async fn test_multiple_slow_callbacks_parallel() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_slow_callback_chain() {
     let callback = Arc::new(SlowCallback::new(30));
 
-    let start = Instant::now();
+    let start = tokio::time::Instant::now();
 
     // Chain of slow callbacks (would be 300ms if sequential)
     let handles: Vec<_> = (0..10)
@@ -1006,12 +1013,12 @@ async fn test_full_playbook_lifecycle_async() {
     assert_eq!(callback.invocation_count.load(Ordering::SeqCst), 24);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_mixed_speed_callbacks_integration() {
     let slow = Arc::new(SlowCallback::new(50));
     let fast = Arc::new(TimingCallback::new());
 
-    let start = Instant::now();
+    let start = tokio::time::Instant::now();
 
     // Run both types of callbacks
     let slow_handle = {
@@ -1050,11 +1057,11 @@ async fn test_mixed_speed_callbacks_integration() {
     assert_eq!(fast.invocation_count.load(Ordering::SeqCst), 100);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_callback_stress_test() {
     let callback = Arc::new(TimingCallback::new());
 
-    let start = Instant::now();
+    let start = tokio::time::Instant::now();
 
     // Spawn many concurrent callbacks
     let handles: Vec<_> = (0..1000)

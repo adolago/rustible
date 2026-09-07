@@ -261,6 +261,8 @@ blake3 = "1.8.2"
 
 [dev-dependencies]
 tokio-test = "0.4"
+# `test-util` provides the paused clock used by timing-sensitive tests.
+tokio = { version = "1.35", features = ["test-util"] }
 mockall = "0.12"
 # Note: atty removed - use is-terminal instead (already in main dependencies)
 assert_cmd = "2.0"

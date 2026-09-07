@@ -8,12 +8,15 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 use rustible::executor::playbook::{Play, Playbook};
 use rustible::executor::runtime::RuntimeContext;
-use rustible::executor::task::{Handler, Task};
-use rustible::executor::{ExecutionStrategy, Executor, ExecutorConfig};
+use rustible::executor::task::{Handler, Task, TaskStatus};
+use rustible::executor::{
+    EventCallback, ExecutionEvent, ExecutionStrategy, Executor, ExecutorConfig,
+};
 
 // ============================================================================
 // Test Helpers
@@ -68,7 +71,25 @@ fn create_local_executor(temp_dir: &TempDir) -> Executor {
         ..Default::default()
     };
 
-    Executor::with_runtime(config, runtime)
+    Executor::with_runtime(config, runtime).with_event_callback(report_failed_tasks())
+}
+
+/// Print every failed task while a scenario runs, so a failed host result
+/// names the task and the module message instead of just "failed".
+fn report_failed_tasks() -> EventCallback {
+    Arc::new(|event| {
+        let ExecutionEvent::HostTaskComplete(host, task, result) = event else {
+            return;
+        };
+        if matches!(result.status, TaskStatus::Failed | TaskStatus::Unreachable) {
+            eprintln!(
+                "task '{}' failed on {}: {}",
+                task,
+                host,
+                result.msg.as_deref().unwrap_or("no message")
+            );
+        }
+    })
 }
 
 /// Create a multi-host executor for testing distributed scenarios
@@ -116,7 +137,7 @@ fn create_multi_host_executor() -> Executor {
         ..Default::default()
     };
 
-    Executor::with_runtime(config, runtime)
+    Executor::with_runtime(config, runtime).with_event_callback(report_failed_tasks())
 }
 
 // ============================================================================
@@ -335,10 +356,11 @@ server {
             .arg("enabled", true),
     );
 
-    // Task 11: Start PHP-FPM service
+    // Task 11: Start PHP-FPM service. Debian and Ubuntu name the unit after
+    // the PHP version (php8.3-fpm.service), so match it with a glob.
     play.add_task(
         Task::new("Start PHP-FPM", "service")
-            .arg("name", "php-fpm")
+            .arg("name", "php*-fpm.service")
             .arg("state", "started")
             .arg("enabled", true),
     );
@@ -701,7 +723,6 @@ echo "Backup completed: $DATE"
 // - Simulate blue/green deployment
 
 #[tokio::test]
-#[ignore = "requires root and systemd: package and service tasks against localhost; run by the high-risk workflow"]
 async fn test_scenario_application_deployment() {
     let temp_dir = TempDir::new().unwrap();
     let executor = create_local_executor(&temp_dir);
@@ -922,11 +943,11 @@ WantedBy=multi-user.target
             .when("blue_green_enabled"),
     );
 
-    // Task 12: Restart application service
+    // Task 12: Restart application service (simulated: the unit file above is
+    // staged in the temp dir, not installed into systemd)
     play.add_task(
-        Task::new("Restart application", "service")
-            .arg("name", "myapp")
-            .arg("state", "restarted"),
+        Task::new("Restart application", "debug")
+            .arg("msg", "Simulating restart of the {{ app_name }} service"),
     );
 
     // Task 13: Health check
@@ -1595,6 +1616,13 @@ async fn test_scenario_security_hardening() {
     let mut play = Play::new("Harden System Security", "localhost");
     play.gather_facts = false;
 
+    // Task 0: Make sure the SSH server the handler restarts is installed
+    play.add_task(
+        Task::new("Install OpenSSH server", "package")
+            .arg("name", "openssh-server")
+            .arg("state", "present"),
+    );
+
     // Task 1: Create security config directories
     play.add_task(
         Task::new("Create SSH config directory", "file")
@@ -1960,13 +1988,14 @@ echo "=== Audit Complete ==="
         "Security hardening applied: SSH on port {{ ssh_port }}, root login disabled",
     ));
 
-    // Handler
+    // Handler. Debian and Ubuntu name the unit ssh.service; sshd is only an
+    // alias that exists once the unit has been enabled.
     play.add_handler(Handler {
         name: "restart sshd".to_string(),
         module: "service".to_string(),
         args: {
             let mut args = indexmap::IndexMap::new();
-            args.insert("name".to_string(), serde_json::json!("sshd"));
+            args.insert("name".to_string(), serde_json::json!("ssh"));
             args.insert("state".to_string(), serde_json::json!("restarted"));
             args
         },
