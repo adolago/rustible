@@ -7,12 +7,18 @@
 //! 4. Proper timeout handling
 //! 5. Cancellation behavior
 //!
-//! Tests that assert on elapsed time run on tokio's paused clock
+//! Tests that compare tokio timers run on tokio's paused clock
 //! (`start_paused = true`) and measure `tokio::time::Instant`. Virtual time
 //! only advances when every task is waiting on a timer, so parallel sleeps
-//! cost their duration once and sequential sleeps cost it per call. The
-//! assertions therefore check how callbacks are scheduled instead of how
-//! fast a shared CI runner happens to be.
+//! cost their duration once and sequential sleeps cost it per call. Those
+//! assertions check how callbacks are scheduled instead of how fast a
+//! shared CI runner happens to be.
+//!
+//! Tests that budget the execution time of timer-free callbacks keep the
+//! real clock, because a paused clock does not advance while a callback
+//! blocks synchronously. Their budgets are wide enough that a stalled
+//! runner does not reach them, while callbacks that each block for
+//! milliseconds still do.
 
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -365,12 +371,12 @@ fn create_execution_result(host: &str, task_name: &str, success: bool) -> Execut
 // Test 1: Callbacks Run Without Blocking Executor
 // ============================================================================
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn test_callback_does_not_block_executor() {
     let callback = Arc::new(TimingCallback::new());
 
     // Spawn multiple concurrent operations that invoke callbacks
-    let start = tokio::time::Instant::now();
+    let start = Instant::now();
 
     let handles: Vec<_> = (0..10)
         .map(|i| {
@@ -388,9 +394,10 @@ async fn test_callback_does_not_block_executor() {
 
     let elapsed = start.elapsed();
 
-    // All callbacks should complete quickly (under 100ms for simple operations)
+    // Real clock: ten timer-free callbacks take microseconds, so the budget
+    // only fails when callbacks block synchronously (100 ms each here).
     assert!(
-        elapsed.as_millis() < 100,
+        elapsed.as_millis() < 1000,
         "Callbacks took too long: {:?}ms",
         elapsed.as_millis()
     );
@@ -399,11 +406,11 @@ async fn test_callback_does_not_block_executor() {
     assert_eq!(callback.invocation_count.load(Ordering::SeqCst), 10);
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn test_fast_callbacks_complete_quickly() {
     let callback = TimingCallback::new();
 
-    let start = tokio::time::Instant::now();
+    let start = Instant::now();
 
     // Run a sequence of callbacks
     callback.on_playbook_start("test_playbook").await;
@@ -418,10 +425,11 @@ async fn test_fast_callbacks_complete_quickly() {
 
     let elapsed = start.elapsed();
 
-    // 202 callbacks (1 start + 100*2 task start/complete + 1 end) should complete quickly
+    // 202 callbacks (1 start + 100*2 task start/complete + 1 end). Real clock:
+    // the budget only fails when each callback blocks for about 10 ms.
     assert!(
-        elapsed.as_millis() < 200,
-        "Fast callbacks should complete in under 200ms, took {:?}ms",
+        elapsed.as_millis() < 2000,
+        "Fast callbacks should complete in under 2s, took {:?}ms",
         elapsed.as_millis()
     );
 
@@ -1057,11 +1065,11 @@ async fn test_mixed_speed_callbacks_integration() {
     assert_eq!(fast.invocation_count.load(Ordering::SeqCst), 100);
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn test_callback_stress_test() {
     let callback = Arc::new(TimingCallback::new());
 
-    let start = tokio::time::Instant::now();
+    let start = Instant::now();
 
     // Spawn many concurrent callbacks
     let handles: Vec<_> = (0..1000)
@@ -1080,10 +1088,11 @@ async fn test_callback_stress_test() {
 
     let elapsed = start.elapsed();
 
-    // 1000 fast callbacks should complete quickly
+    // 1000 fast callbacks. Real clock: the budget only fails when each
+    // callback blocks for about 5 ms.
     assert!(
-        elapsed.as_millis() < 1000,
-        "1000 callbacks should complete in under 1 second, took {:?}ms",
+        elapsed.as_millis() < 5000,
+        "1000 callbacks should complete in under 5 seconds, took {:?}ms",
         elapsed.as_millis()
     );
 
