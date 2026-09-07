@@ -357,10 +357,21 @@ server {
     );
 
     // Task 11: Start PHP-FPM service. Debian and Ubuntu name the unit after
-    // the PHP version (php8.3-fpm.service), so match it with a glob.
+    // the PHP version (php8.3-fpm.service), so look it up and address it by
+    // its exact name: a missing unit fails the lookup and a service that
+    // cannot start fails the start, whereas a wildcard name reports ok for
+    // both.
+    play.add_task(
+        Task::new("Find the PHP-FPM unit", "shell")
+            .arg(
+                "cmd",
+                r#"unit=$(systemctl list-unit-files --type=service --no-legend --no-pager 'php*-fpm.service' | awk 'NR == 1 { print $1 }'); test -n "$unit" && printf '%s' "$unit""#,
+            )
+            .register("php_fpm_unit"),
+    );
     play.add_task(
         Task::new("Start PHP-FPM", "service")
-            .arg("name", "php*-fpm.service")
+            .arg("name", "{{ php_fpm_unit.stdout }}")
             .arg("state", "started")
             .arg("enabled", true),
     );
