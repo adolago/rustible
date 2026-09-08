@@ -26,7 +26,7 @@ jobs:
   benchmark:
     name: Benchmark (${{ matrix.suite.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -87,7 +87,10 @@ jobs:
 
       - name: Run benchmark suite
         id: run-bench
-        timeout-minutes: 20
+        # Compiling the bench target plus the criterion runs takes close to
+        # 20 minutes on a warm cache and longer on a cold one, so a 20 minute
+        # limit was reached on ordinary runs.
+        timeout-minutes: 30
         run: |
           cargo bench --locked --no-default-features --bench ${{ matrix.suite.bench }} -- --verbose 2>&1 | tee ${{ matrix.suite.log }}
 
