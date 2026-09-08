@@ -28,8 +28,8 @@
 //! A `name` containing `*`, `?` or `[` is a systemd unit glob. It is expanded
 //! against both the units systemd has loaded (`systemctl list-units --all`) and
 //! the installed unit files (`systemctl list-unit-files`, template units
-//! skipped), merged without duplicates, and every matched unit is processed on
-//! its own.
+//! skipped, alias files counted as the unit they name), merged without
+//! duplicates, and every matched unit is processed on its own.
 //! The result carries `pattern`, `matched_count` and a `services` array with one
 //! entry per unit (`name` and `changed`, plus `message`, or `failed` and `error`).
 //!
@@ -370,9 +370,10 @@ impl ServiceModule {
     /// `systemctl list-units` only knows units systemd has in memory and
     /// `list-unit-files` only knows installed unit files, so both are queried
     /// and merged without duplicates. Units in memory count only while `loaded`
-    /// (a missing unit that is merely referenced shows up as `not-found`), and
+    /// (a missing unit that is merely referenced shows up as `not-found`),
     /// template unit files (`name@.service`) are skipped because they cannot be
-    /// acted on without an instance name.
+    /// acted on without an instance name, and alias unit files are resolved to
+    /// the unit they name so that unit is acted on once.
     async fn expand_service_pattern(
         connection: &dyn Connection,
         pattern: &str,
@@ -392,19 +393,64 @@ impl ServiceModule {
         };
 
         // Units that are installed but not loaded, such as disabled and
-        // inactive ones, are only visible through their unit files
+        // inactive ones, are only visible through their unit files; the state
+        // column tells alias files apart from real ones
         let cmd = format!(
-            "systemctl list-unit-files --type=service --no-legend --no-pager {} | awk '{{print $1}}'",
+            "systemctl list-unit-files --type=service --no-legend --no-pager {} | awk '{{print $1, $2}}'",
             shell_escape(pattern)
         );
         let result = Self::execute_command(connection, &cmd, context).await?;
-        for unit in Self::parse_unit_names(&result.stdout) {
-            if !unit.ends_with("@.service") && !services.contains(&unit) {
-                services.push(unit);
+        let mut aliases = Vec::new();
+        for line in result.stdout.lines() {
+            let mut fields = line.split_whitespace();
+            let Some(unit) = fields.next() else {
+                continue;
+            };
+            if unit.ends_with("@.service") {
+                continue;
+            }
+            if fields.next() == Some("alias") {
+                aliases.push(unit.to_string());
+            } else if !services.iter().any(|known| known.as_str() == unit) {
+                services.push(unit.to_string());
+            }
+        }
+
+        if !aliases.is_empty() {
+            for unit in Self::resolve_unit_ids(connection, &aliases, context).await? {
+                if !services.contains(&unit) {
+                    services.push(unit);
+                }
             }
         }
 
         Ok(services)
+    }
+
+    /// Resolve unit names, aliases included, to the ids of the units they name
+    ///
+    /// Falls back to the names themselves when systemd reports no ids, so a
+    /// resolution problem never drops a matched unit.
+    async fn resolve_unit_ids(
+        connection: &dyn Connection,
+        names: &[String],
+        context: &ModuleContext,
+    ) -> ModuleResult<Vec<String>> {
+        let escaped: Vec<_> = names.iter().map(|name| shell_escape(name)).collect();
+        let cmd = format!("systemctl show -p Id --no-pager {}", escaped.join(" "));
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        let ids: Vec<String> = result
+            .stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix("Id="))
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect();
+        if ids.is_empty() {
+            Ok(names.to_vec())
+        } else {
+            Ok(ids)
+        }
     }
 
     /// One unit name per non-empty line of `systemctl` output
@@ -2131,6 +2177,68 @@ mod tests {
             2,
             "{commands:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_pattern_alias_is_resolved_to_its_unit() {
+        // Only an alias file matches the glob; the unit it names is acted on
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "", "kmod.service alias\n").unwrap_or_else(|| match cmd {
+                "systemctl show -p Id --no-pager kmod.service" => CommandResult::success(
+                    "Id=systemd-modules-load.service\n".to_string(),
+                    String::new(),
+                ),
+                "systemctl start systemd-modules-load.service" => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+
+        let output = run_pattern(conn, pattern_params(Some("started"), None), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert_eq!(output.data["matched_count"], 1);
+        assert_eq!(
+            output.data["services"][0]["name"],
+            "systemd-modules-load.service"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pattern_alias_and_its_unit_are_restarted_once() {
+        // `ssh*` matches the loaded unit, its unit file and the `sshd` alias;
+        // the unit must be restarted a single time
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(
+                cmd,
+                "ssh.service\n",
+                "ssh.service enabled\nsshd.service alias\nsshd@.service indirect\n",
+            )
+            .unwrap_or_else(|| match cmd {
+                "systemctl show -p Id --no-pager sshd.service" => {
+                    CommandResult::success("Id=ssh.service\n".to_string(), String::new())
+                }
+                "systemctl restart ssh.service" => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+        let mut params = pattern_params(Some("restarted"), None);
+        params.insert("name".to_string(), serde_json::json!("ssh*"));
+
+        let output = run_pattern(conn.clone(), params, false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert_eq!(output.data["matched_count"], 1);
+        assert_eq!(output.data["services"][0]["name"], "ssh.service");
+        let restarts = conn
+            .commands()
+            .iter()
+            .filter(|c| c.starts_with("systemctl restart "))
+            .count();
+        assert_eq!(restarts, 1, "{:?}", conn.commands());
     }
 
     #[tokio::test]
