@@ -25,10 +25,11 @@
 //!
 //! ## Service name patterns (systemd only)
 //!
-//! A `name` containing `*`, `?` or `[` is a systemd unit glob. It is expanded with
-//! `systemctl list-units --all`, or with the installed unit files (template units
-//! skipped) when nothing matching is in memory, and every matched unit is
-//! processed on its own.
+//! A `name` containing `*`, `?` or `[` is a systemd unit glob. It is expanded
+//! against both the units systemd has loaded (`systemctl list-units --all`) and
+//! the installed unit files (`systemctl list-unit-files`, template units
+//! skipped), merged without duplicates, and every matched unit is processed on
+//! its own.
 //! The result carries `pattern`, `matched_count` and a `services` array with one
 //! entry per unit (`name` and `changed`, plus `message`, or `failed` and `error`).
 //!
@@ -366,18 +367,21 @@ impl ServiceModule {
 
     /// Expand service pattern to list of matching services (systemd only)
     ///
-    /// `systemctl list-units` only knows units systemd has in memory, so when it
-    /// reports nothing (or fails) the installed unit files are consulted, minus
-    /// template units (`name@.service`), which cannot be acted on without an
-    /// instance name.
+    /// `systemctl list-units` only knows units systemd has in memory and
+    /// `list-unit-files` only knows installed unit files, so both are queried
+    /// and merged without duplicates. Units in memory count only while `loaded`
+    /// (a missing unit that is merely referenced shows up as `not-found`), and
+    /// template unit files (`name@.service`) are skipped because they cannot be
+    /// acted on without an instance name.
     async fn expand_service_pattern(
         connection: &dyn Connection,
         pattern: &str,
         context: &ModuleContext,
     ) -> ModuleResult<Vec<String>> {
-        // Use systemctl list-units to find matching services
+        // Units in memory; `--plain` drops the bullet marker that would otherwise
+        // be parsed as the name of a failed or missing unit
         let cmd = format!(
-            "systemctl list-units --type=service --all --no-legend --no-pager {} | awk '{{print $1}}'",
+            "systemctl list-units --type=service --all --no-legend --no-pager --plain {} | awk '$2 == \"loaded\" {{print $1}}'",
             shell_escape(pattern)
         );
         let result = Self::execute_command(connection, &cmd, context).await?;
@@ -387,18 +391,17 @@ impl ServiceModule {
             Vec::new()
         };
 
-        if services.is_empty() {
-            // Units that are installed but not loaded, such as disabled and
-            // inactive ones, are only visible through their unit files
-            let cmd = format!(
-                "systemctl list-unit-files --type=service --no-legend --no-pager {} | awk '{{print $1}}'",
-                shell_escape(pattern)
-            );
-            let result = Self::execute_command(connection, &cmd, context).await?;
-            services = Self::parse_unit_names(&result.stdout)
-                .into_iter()
-                .filter(|unit| !unit.ends_with("@.service"))
-                .collect();
+        // Units that are installed but not loaded, such as disabled and
+        // inactive ones, are only visible through their unit files
+        let cmd = format!(
+            "systemctl list-unit-files --type=service --no-legend --no-pager {} | awk '{{print $1}}'",
+            shell_escape(pattern)
+        );
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        for unit in Self::parse_unit_names(&result.stdout) {
+            if !unit.ends_with("@.service") && !services.contains(&unit) {
+                services.push(unit);
+            }
         }
 
         Ok(services)
@@ -2086,6 +2089,48 @@ mod tests {
             .commands()
             .iter()
             .any(|c| c.contains("systemctl list-unit-files")));
+    }
+
+    #[tokio::test]
+    async fn test_pattern_merges_loaded_and_installed_units() {
+        // One unit is in memory, another is only installed; both are acted on
+        // once, the template file is skipped, and the in-memory query must not
+        // parse systemctl's bullet marker as a unit name
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(
+                cmd,
+                "php8.2-fpm.service\n",
+                "php8.2-fpm.service\nphp8.3-fpm.service\nphp-fpm@.service\n",
+            )
+            .unwrap_or_else(|| {
+                assert!(
+                    cmd.starts_with("systemctl start php8."),
+                    "unexpected command: {cmd}"
+                );
+                CommandResult::success(String::new(), String::new())
+            })
+        });
+
+        let output = run_pattern(conn.clone(), pattern_params(Some("started"), None), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert_eq!(output.data["matched_count"], 2);
+        assert_eq!(output.data["services"][0]["name"], "php8.2-fpm.service");
+        assert_eq!(output.data["services"][1]["name"], "php8.3-fpm.service");
+        let commands = conn.commands();
+        let list_units = commands
+            .iter()
+            .find(|c| c.contains("systemctl list-units"))
+            .expect("units in memory were queried");
+        assert!(list_units.contains("--plain"), "{list_units}");
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|c| c.starts_with("systemctl start "))
+                .count(),
+            2,
+            "{commands:?}"
+        );
     }
 
     #[tokio::test]
