@@ -22,6 +22,30 @@
 //! - `use_systemctl`: Force use of systemctl even if service command available
 //! - `daemon_reload`: Reload systemd daemon before action
 //! - `daemon_reexec`: Re-execute systemd manager
+//!
+//! ## Service name patterns (systemd only)
+//!
+//! A `name` containing `*`, `?` or `[` is a systemd unit glob. It is expanded
+//! against both the units systemd has loaded (`systemctl list-units --all`) and
+//! the installed unit files (`systemctl list-unit-files`; alias files count as
+//! the unit they name, template files as their default instance or not at all
+//! without one), merged without duplicates, and every matched unit is
+//! processed on its own.
+//! The result carries `pattern`, `matched_count` and a `services` array with one
+//! entry per unit (`name` and `changed`, plus `message`, or `failed` and `error`).
+//!
+//! - A unit that cannot be started, stopped, restarted, reloaded, enabled or
+//!   disabled fails the task. The remaining units are still processed, the
+//!   message lists every unit's outcome and `changed` reports whether anything
+//!   was modified before the failure, per unit and overall (a unit that was
+//!   enabled, or stopped by a sleeping restart, before a later step on it
+//!   failed counts as changed).
+//! - A pattern that matches nothing fails when the requested outcome needs a
+//!   unit to exist: `state=started`, `state=restarted`, `state=reloaded` or
+//!   `enabled=true`, just as Ansible fails for an unknown service.
+//!   `state=stopped`, `enabled=false` and status-only calls are already
+//!   satisfied, so they succeed unchanged with `matched_count: 0`. Check mode
+//!   applies the same rule.
 
 use super::{
     validate_command_args, Diff, Module, ModuleClassification, ModuleContext, ModuleError,
@@ -293,6 +317,21 @@ impl ServiceConfig {
     fn has_pattern(&self) -> bool {
         self.name.contains('*') || self.name.contains('?') || self.name.contains('[')
     }
+
+    /// The requested outcome that cannot be met without an existing unit, if any
+    ///
+    /// Starting, restarting, reloading and enabling need a unit to act on, while
+    /// `stopped`, `enabled=false` and status-only calls hold when nothing exists.
+    fn outcome_requiring_service(&self) -> Option<&'static str> {
+        match self.state {
+            Some(ServiceState::Started) => Some("state=started"),
+            Some(ServiceState::Restarted) => Some("state=restarted"),
+            Some(ServiceState::Reloaded) => Some("state=reloaded"),
+            Some(ServiceState::Stopped) | None => {
+                (self.enabled == Some(true)).then_some("enabled=true")
+            }
+        }
+    }
 }
 
 /// Module for service management
@@ -328,42 +367,153 @@ impl ServiceModule {
     }
 
     /// Expand service pattern to list of matching services (systemd only)
+    ///
+    /// `systemctl list-units` only knows units systemd has in memory and
+    /// `list-unit-files` only knows installed unit files, so both are queried
+    /// and merged without duplicates. Units in memory count only while `loaded`
+    /// (a missing unit that is merely referenced shows up as `not-found`).
+    /// Among the unit files, aliases are resolved to the unit they name, and
+    /// templates (`name@.service`) to their default instance, or dropped when
+    /// they have none, because a bare template can neither be started nor
+    /// enabled.
     async fn expand_service_pattern(
         connection: &dyn Connection,
         pattern: &str,
         context: &ModuleContext,
     ) -> ModuleResult<Vec<String>> {
-        // Use systemctl list-units to find matching services
+        // Units in memory; `--plain` drops the bullet marker that would otherwise
+        // be parsed as the name of a failed or missing unit
         let cmd = format!(
-            "systemctl list-units --type=service --all --no-legend --no-pager {} | awk '{{print $1}}'",
+            "systemctl list-units --type=service --all --no-legend --no-pager --plain {} | awk '$2 == \"loaded\" {{print $1}}'",
             shell_escape(pattern)
         );
         let result = Self::execute_command(connection, &cmd, context).await?;
-
-        if result.success {
-            let services: Vec<String> = result
-                .stdout
-                .lines()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            Ok(services)
+        let mut services = if result.success {
+            Self::parse_unit_names(&result.stdout)
         } else {
-            // Fallback: try list-unit-files for services that might not be loaded
-            let cmd = format!(
-                "systemctl list-unit-files --type=service --no-legend --no-pager {} | awk '{{print $1}}'",
-                shell_escape(pattern)
-            );
-            let result = Self::execute_command(connection, &cmd, context).await?;
+            Vec::new()
+        };
 
-            let services: Vec<String> = result
-                .stdout
-                .lines()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            Ok(services)
+        // Units that are installed but not loaded, such as disabled and
+        // inactive ones, are only visible through their unit files; the state
+        // column tells alias files apart from real ones
+        let cmd = format!(
+            "systemctl list-unit-files --type=service --no-legend --no-pager {} | awk '{{print $1, $2}}'",
+            shell_escape(pattern)
+        );
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        let mut aliases = Vec::new();
+        let mut templates = Vec::new();
+        for line in result.stdout.lines() {
+            let mut fields = line.split_whitespace();
+            let Some(unit) = fields.next() else {
+                continue;
+            };
+            if unit.ends_with("@.service") {
+                templates.push(unit.to_string());
+            } else if fields.next() == Some("alias") {
+                aliases.push(unit.to_string());
+            } else if !services.iter().any(|known| known.as_str() == unit) {
+                services.push(unit.to_string());
+            }
         }
+
+        let mut resolved = if aliases.is_empty() {
+            Vec::new()
+        } else {
+            Self::resolve_unit_ids(connection, &aliases, context).await?
+        };
+        for template in &templates {
+            resolved.extend(Self::resolve_template(connection, template, context).await?);
+        }
+        for unit in resolved {
+            if !services.contains(&unit) {
+                services.push(unit);
+            }
+        }
+
+        Ok(services)
+    }
+
+    /// Resolve unit names, aliases included, to the ids of the units they name
+    ///
+    /// Falls back to the names themselves when systemd reports no ids, so a
+    /// resolution problem never drops a matched unit.
+    async fn resolve_unit_ids(
+        connection: &dyn Connection,
+        names: &[String],
+        context: &ModuleContext,
+    ) -> ModuleResult<Vec<String>> {
+        let escaped: Vec<_> = names.iter().map(|name| shell_escape(name)).collect();
+        let cmd = format!("systemctl show -p Id --no-pager {}", escaped.join(" "));
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        let ids: Vec<String> = result
+            .stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix("Id="))
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect();
+        if ids.is_empty() {
+            Ok(names.to_vec())
+        } else {
+            Ok(ids)
+        }
+    }
+
+    /// Resolve a template unit file to its default instance
+    ///
+    /// `foo@.service` with `DefaultInstance=main` becomes `foo@main.service`,
+    /// the unit that `systemctl enable foo@.service` would enable. Without a
+    /// default instance there is nothing to start or enable, so `None` is
+    /// returned. The unit file that `systemctl cat` prints first is taken as
+    /// the template's real name, which resolves an alias such as
+    /// `autovt@.service` to `getty@tty1.service`.
+    async fn resolve_template(
+        connection: &dyn Connection,
+        template: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<Option<String>> {
+        let cmd = format!("systemctl cat --no-pager {}", shell_escape(template));
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        if !result.success {
+            return Ok(None);
+        }
+
+        let mut name = template.to_string();
+        let mut instance = None;
+        for line in result.stdout.lines() {
+            let line = line.trim();
+            if let Some(path) = line.strip_prefix("# /") {
+                // File headers name the unit file; drop-ins sit in a `.d`
+                // directory and keep the name of the template they extend
+                let file = path.rsplit('/').next().unwrap_or(path);
+                if file.ends_with("@.service") {
+                    name = file.to_string();
+                }
+            } else if let Some(value) = line.strip_prefix("DefaultInstance=") {
+                // Later files override earlier ones, so the last value wins
+                let value = value.trim();
+                instance = (!value.is_empty()).then(|| value.to_string());
+            }
+        }
+
+        Ok(instance.map(|instance| {
+            format!(
+                "{}@{}.service",
+                name.trim_end_matches("@.service"),
+                instance
+            )
+        }))
+    }
+
+    /// One unit name per non-empty line of `systemctl` output
+    fn parse_unit_names(stdout: &str) -> Vec<String> {
+        stdout
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect()
     }
 
     /// Check if process matching pattern is running
@@ -802,6 +952,10 @@ impl ServiceModule {
     }
 
     /// Perform restart with optional sleep between stop and start
+    ///
+    /// When a sleeping restart stops a unit that was active (`was_active`),
+    /// `changed` is set right away, so a caller still learns that the unit went
+    /// down when the following start fails.
     async fn restart_with_sleep(
         connection: &dyn Connection,
         init: &InitSystem,
@@ -809,6 +963,8 @@ impl ServiceModule {
         sleep_secs: Option<u64>,
         arguments: Option<&str>,
         context: &ModuleContext,
+        was_active: bool,
+        changed: &mut bool,
     ) -> ModuleResult<(bool, String, String)> {
         if let Some(secs) = sleep_secs {
             // Stop, sleep, start
@@ -817,6 +973,10 @@ impl ServiceModule {
 
             if !stop_ok {
                 return Ok((false, stop_out, stop_err));
+            }
+            if was_active {
+                // The unit went down here, whatever the start below does
+                *changed = true;
             }
 
             Self::sleep_seconds(secs).await;
@@ -876,8 +1036,25 @@ impl ServiceModule {
         connection: Arc<dyn Connection + Send + Sync>,
         init: &InitSystem,
     ) -> ModuleResult<ModuleOutput> {
-        let service = &config.name;
         let mut changed = false;
+        self.apply_single_service(config, context, connection, init, &mut changed)
+            .await
+    }
+
+    /// Apply the requested state to one service
+    ///
+    /// `changed` records whether the service was modified so far, so a caller
+    /// still learns about a partial change (for example a unit enabled before it
+    /// failed to start) when this returns an error.
+    async fn apply_single_service(
+        &self,
+        config: &ServiceConfig,
+        context: &ModuleContext,
+        connection: Arc<dyn Connection + Send + Sync>,
+        init: &InitSystem,
+        changed: &mut bool,
+    ) -> ModuleResult<ModuleOutput> {
+        let service = &config.name;
         let mut messages = Vec::new();
 
         // Handle daemon-reexec for systemd (must come before daemon-reload)
@@ -887,7 +1064,7 @@ impl ServiceModule {
             } else {
                 Self::systemd_daemon_reexec(connection.as_ref(), context).await?;
                 messages.push("Re-executed systemd daemon".to_string());
-                changed = true;
+                *changed = true;
             }
         }
 
@@ -898,7 +1075,7 @@ impl ServiceModule {
             } else {
                 Self::systemd_daemon_reload(connection.as_ref(), context).await?;
                 messages.push("Reloaded systemd daemon".to_string());
-                changed = true;
+                *changed = true;
             }
         }
 
@@ -914,7 +1091,7 @@ impl ServiceModule {
                 if context.check_mode {
                     let action = if should_enable { "enable" } else { "disable" };
                     messages.push(format!("Would {} service '{}'", action, service));
-                    changed = true;
+                    *changed = true;
                 } else {
                     let action_word = if should_enable { "enable" } else { "disable" };
                     let (success, _, stderr) = Self::set_enabled(
@@ -935,7 +1112,7 @@ impl ServiceModule {
                     }
 
                     messages.push(format!("{}d service '{}'", action_word, service));
-                    changed = true;
+                    *changed = true;
                 }
             }
         }
@@ -951,7 +1128,7 @@ impl ServiceModule {
                     if !is_active {
                         if context.check_mode {
                             messages.push(format!("Would start service '{}'", service));
-                            changed = true;
+                            *changed = true;
                         } else {
                             let (success, _, stderr) = Self::service_action(
                                 connection.as_ref(),
@@ -971,7 +1148,7 @@ impl ServiceModule {
                             }
 
                             messages.push(format!("Started service '{}'", service));
-                            changed = true;
+                            *changed = true;
                         }
                     } else {
                         messages.push(format!("Service '{}' is already running", service));
@@ -982,7 +1159,7 @@ impl ServiceModule {
                     if is_active {
                         if context.check_mode {
                             messages.push(format!("Would stop service '{}'", service));
-                            changed = true;
+                            *changed = true;
                         } else {
                             let (success, _, stderr) = Self::service_action(
                                 connection.as_ref(),
@@ -1002,7 +1179,7 @@ impl ServiceModule {
                             }
 
                             messages.push(format!("Stopped service '{}'", service));
-                            changed = true;
+                            *changed = true;
                         }
                     } else {
                         messages.push(format!("Service '{}' is already stopped", service));
@@ -1012,7 +1189,7 @@ impl ServiceModule {
                 ServiceState::Restarted => {
                     if context.check_mode {
                         messages.push(format!("Would restart service '{}'", service));
-                        changed = true;
+                        *changed = true;
                     } else {
                         let (success, _, stderr) = Self::restart_with_sleep(
                             connection.as_ref(),
@@ -1021,6 +1198,8 @@ impl ServiceModule {
                             config.sleep,
                             config.arguments.as_deref(),
                             context,
+                            is_active,
+                            changed,
                         )
                         .await?;
 
@@ -1032,14 +1211,14 @@ impl ServiceModule {
                         }
 
                         messages.push(format!("Restarted service '{}'", service));
-                        changed = true;
+                        *changed = true;
                     }
                 }
 
                 ServiceState::Reloaded => {
                     if context.check_mode {
                         messages.push(format!("Would reload service '{}'", service));
-                        changed = true;
+                        *changed = true;
                     } else {
                         let (success, _, _stderr) = Self::service_action(
                             connection.as_ref(),
@@ -1088,7 +1267,7 @@ impl ServiceModule {
                                     "Restarted service '{}' (reload not supported)",
                                     service
                                 ));
-                                changed = true;
+                                *changed = true;
                                 // Skip the normal reload message
                                 return self
                                     .build_output(
@@ -1096,7 +1275,7 @@ impl ServiceModule {
                                         init,
                                         connection.as_ref(),
                                         context,
-                                        changed,
+                                        *changed,
                                         messages,
                                     )
                                     .await;
@@ -1104,7 +1283,7 @@ impl ServiceModule {
                         }
 
                         messages.push(format!("Reloaded service '{}'", service));
-                        changed = true;
+                        *changed = true;
                     }
                 }
             }
@@ -1115,13 +1294,16 @@ impl ServiceModule {
             init,
             connection.as_ref(),
             context,
-            changed,
+            *changed,
             messages,
         )
         .await
     }
 
     /// Execute module for pattern/wildcard service names
+    ///
+    /// Each matched unit runs through `apply_single_service`; the module docs
+    /// describe how per-unit failures and empty matches are reported.
     async fn execute_pattern_async(
         &self,
         config: &ServiceConfig,
@@ -1133,13 +1315,18 @@ impl ServiceModule {
             Self::expand_service_pattern(connection.as_ref(), &config.name, context).await?;
 
         if services.is_empty() {
-            return Ok(ModuleOutput::ok(format!(
-                "No services matched pattern '{}'",
-                config.name
-            )));
+            let output = match config.outcome_requiring_service() {
+                Some(outcome) => ModuleOutput::failed(format!(
+                    "No services matched pattern '{}', but {} needs at least one matching unit",
+                    config.name, outcome
+                )),
+                None => ModuleOutput::ok(format!("No services matched pattern '{}'", config.name)),
+            };
+            return Ok(Self::with_pattern_data(output, &config.name, Vec::new()));
         }
 
         let mut total_changed = false;
+        let mut failed_count = 0usize;
         let mut all_messages = Vec::new();
         let mut service_results = Vec::new();
 
@@ -1158,8 +1345,15 @@ impl ServiceModule {
                 arguments: config.arguments.clone(),
             };
 
+            let mut unit_changed = false;
             match self
-                .execute_single_service_async(&service_config, context, connection.clone(), init)
+                .apply_single_service(
+                    &service_config,
+                    context,
+                    connection.clone(),
+                    init,
+                    &mut unit_changed,
+                )
                 .await
             {
                 Ok(output) => {
@@ -1174,9 +1368,14 @@ impl ServiceModule {
                     }));
                 }
                 Err(e) => {
+                    // A unit can be modified before a later step on it fails,
+                    // for example enabled and then unable to start
+                    failed_count += 1;
+                    total_changed |= unit_changed;
                     all_messages.push(format!("{}: FAILED - {}", service, e));
                     service_results.push(serde_json::json!({
                         "name": service,
+                        "changed": unit_changed,
                         "failed": true,
                         "error": e.to_string()
                     }));
@@ -1184,23 +1383,50 @@ impl ServiceModule {
             }
         }
 
-        let msg = format!(
-            "Processed {} services matching '{}': {}",
-            services.len(),
-            config.name,
-            all_messages.join("; ")
-        );
-
-        let output = if total_changed {
-            ModuleOutput::changed(msg)
+        let details = all_messages.join("; ");
+        let output = if failed_count > 0 {
+            let mut output = ModuleOutput::failed(format!(
+                "{} of {} services matching '{}' failed: {}",
+                failed_count,
+                services.len(),
+                config.name,
+                details
+            ));
+            // Units changed before the failure are still reported as changed
+            output.changed = total_changed;
+            output
         } else {
-            ModuleOutput::ok(msg)
+            let msg = format!(
+                "Processed {} services matching '{}': {}",
+                services.len(),
+                config.name,
+                details
+            );
+            if total_changed {
+                ModuleOutput::changed(msg)
+            } else {
+                ModuleOutput::ok(msg)
+            }
         };
 
-        Ok(output
-            .with_data("services", serde_json::json!(service_results))
-            .with_data("pattern", serde_json::json!(config.name))
-            .with_data("matched_count", serde_json::json!(services.len())))
+        Ok(Self::with_pattern_data(
+            output,
+            &config.name,
+            service_results,
+        ))
+    }
+
+    /// Attach the per-unit results of a pattern run to the output
+    fn with_pattern_data(
+        output: ModuleOutput,
+        pattern: &str,
+        service_results: Vec<serde_json::Value>,
+    ) -> ModuleOutput {
+        let matched_count = service_results.len();
+        output
+            .with_data("services", serde_json::Value::Array(service_results))
+            .with_data("pattern", serde_json::json!(pattern))
+            .with_data("matched_count", serde_json::json!(matched_count))
     }
 
     /// Build the output with current service status
@@ -1392,6 +1618,11 @@ impl Module for ServiceModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connection::{ConnectionResult, FileStat, TransferOptions};
+    use crate::modules::ModuleStatus;
+    use async_trait::async_trait;
+    use std::path::Path;
+    use std::sync::Mutex;
 
     #[test]
     fn test_service_state_from_str() {
@@ -1526,5 +1757,654 @@ mod tests {
         assert_eq!(InitSystem::Launchd.service_command(), "launchctl");
     }
 
-    // Integration tests would require actual services and a connection
+    type Responder = Box<dyn Fn(&str) -> CommandResult + Send + Sync>;
+
+    /// Connection that answers commands from a closure and records what ran
+    struct MockConnection {
+        respond: Responder,
+        commands: Mutex<Vec<String>>,
+    }
+
+    impl MockConnection {
+        fn new(respond: impl Fn(&str) -> CommandResult + Send + Sync + 'static) -> Arc<Self> {
+            Arc::new(Self {
+                respond: Box::new(respond),
+                commands: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn commands(&self) -> Vec<String> {
+            self.commands.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl Connection for MockConnection {
+        fn identifier(&self) -> &str {
+            "mock"
+        }
+
+        async fn is_alive(&self) -> bool {
+            true
+        }
+
+        async fn execute(
+            &self,
+            command: &str,
+            _options: Option<ExecuteOptions>,
+        ) -> ConnectionResult<CommandResult> {
+            self.commands.lock().unwrap().push(command.to_string());
+            Ok((self.respond)(command))
+        }
+
+        async fn upload(
+            &self,
+            _local: &Path,
+            _remote: &Path,
+            _opts: Option<TransferOptions>,
+        ) -> ConnectionResult<()> {
+            unreachable!("the service module never transfers files")
+        }
+
+        async fn upload_content(
+            &self,
+            _content: &[u8],
+            _remote: &Path,
+            _opts: Option<TransferOptions>,
+        ) -> ConnectionResult<()> {
+            unreachable!("the service module never transfers files")
+        }
+
+        async fn download(&self, _remote: &Path, _local: &Path) -> ConnectionResult<()> {
+            unreachable!("the service module never transfers files")
+        }
+
+        async fn download_content(&self, _remote: &Path) -> ConnectionResult<Vec<u8>> {
+            unreachable!("the service module never transfers files")
+        }
+
+        async fn path_exists(&self, _path: &Path) -> ConnectionResult<bool> {
+            unreachable!("the service module never inspects paths")
+        }
+
+        async fn is_directory(&self, _path: &Path) -> ConnectionResult<bool> {
+            unreachable!("the service module never inspects paths")
+        }
+
+        async fn stat(&self, _path: &Path) -> ConnectionResult<FileStat> {
+            unreachable!("the service module never inspects paths")
+        }
+
+        async fn close(&self) -> ConnectionResult<()> {
+            Ok(())
+        }
+    }
+
+    const PATTERN: &str = "php*-fpm.service";
+
+    /// Answer the systemd probe and the `systemctl` queries as a host whose
+    /// units in memory are `loaded` and whose installed unit files are
+    /// `installed` (one name per line), all inactive and disabled
+    fn respond_systemd(cmd: &str, loaded: &str, installed: &str) -> Option<CommandResult> {
+        if cmd.contains("grep -q systemd") {
+            Some(CommandResult::success("yes\n".to_string(), String::new()))
+        } else if cmd.contains("systemctl list-unit-files") {
+            Some(CommandResult::success(installed.to_string(), String::new()))
+        } else if cmd.contains("systemctl list-units") {
+            Some(CommandResult::success(loaded.to_string(), String::new()))
+        } else if cmd.contains("systemctl is-active") {
+            Some(CommandResult::failure(
+                3,
+                "inactive\n".to_string(),
+                String::new(),
+            ))
+        } else if cmd.contains("systemctl is-enabled") {
+            Some(CommandResult::failure(
+                1,
+                "disabled\n".to_string(),
+                String::new(),
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn start_failure(unit: &str) -> CommandResult {
+        CommandResult::failure(1, String::new(), format!("Job for {} failed", unit))
+    }
+
+    /// `systemctl cat` output for the unit file at `path`, optionally with a
+    /// default instance in its `[Install]` section
+    fn unit_file(path: &str, default_instance: Option<&str>) -> CommandResult {
+        let mut text = format!(
+            "# {path}\n[Unit]\nDescription=test\n\n[Install]\nWantedBy=multi-user.target\n"
+        );
+        if let Some(instance) = default_instance {
+            text.push_str(&format!("DefaultInstance={instance}\n"));
+        }
+        CommandResult::success(text, String::new())
+    }
+
+    fn pattern_params(state: Option<&str>, enabled: Option<bool>) -> ModuleParams {
+        let mut params = ModuleParams::new();
+        params.insert("name".to_string(), serde_json::json!(PATTERN));
+        if let Some(state) = state {
+            params.insert("state".to_string(), serde_json::json!(state));
+        }
+        if let Some(enabled) = enabled {
+            params.insert("enabled".to_string(), serde_json::json!(enabled));
+        }
+        params
+    }
+
+    async fn run_pattern(
+        conn: Arc<MockConnection>,
+        params: ModuleParams,
+        check_mode: bool,
+    ) -> ModuleOutput {
+        let context = ModuleContext::new()
+            .with_check_mode(check_mode)
+            .with_connection(conn.clone());
+        ServiceModule
+            .execute_async(&params, &context, conn)
+            .await
+            .expect("pattern runs report failures in the output, not as Err")
+    }
+
+    #[tokio::test]
+    async fn test_pattern_matched_service_failure_fails_task() {
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "php8.3-fpm.service\n", "").unwrap_or_else(|| {
+                assert_eq!(cmd, "systemctl start php8.3-fpm.service");
+                start_failure("php8.3-fpm.service")
+            })
+        });
+
+        let output = run_pattern(conn.clone(), pattern_params(Some("started"), None), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Failed);
+        assert!(!output.changed);
+        assert!(
+            output
+                .msg
+                .contains("1 of 1 services matching 'php*-fpm.service' failed"),
+            "{}",
+            output.msg
+        );
+        assert!(
+            output.msg.contains(
+                "php8.3-fpm.service: FAILED - Execution failed: Failed to start service \
+                 'php8.3-fpm.service': Job for php8.3-fpm.service failed"
+            ),
+            "{}",
+            output.msg
+        );
+        assert_eq!(output.data["pattern"], PATTERN);
+        assert_eq!(output.data["matched_count"], 1);
+        assert_eq!(output.data["services"][0]["name"], "php8.3-fpm.service");
+        assert_eq!(output.data["services"][0]["changed"], false);
+        assert_eq!(output.data["services"][0]["failed"], true);
+        assert!(conn
+            .commands()
+            .contains(&"systemctl start php8.3-fpm.service".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_pattern_partial_change_before_failure_is_reported() {
+        // The unit gets enabled and then fails to start: that is still a change
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "php8.3-fpm.service\n", "").unwrap_or_else(|| match cmd {
+                "systemctl enable php8.3-fpm.service" => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                "systemctl start php8.3-fpm.service" => start_failure("php8.3-fpm.service"),
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+
+        let output = run_pattern(
+            conn.clone(),
+            pattern_params(Some("started"), Some(true)),
+            false,
+        )
+        .await;
+
+        assert_eq!(output.status, ModuleStatus::Failed);
+        assert!(output.changed, "the enable step already modified the unit");
+        assert_eq!(output.data["services"][0]["changed"], true);
+        assert_eq!(output.data["services"][0]["failed"], true);
+        assert!(
+            output
+                .msg
+                .contains("Failed to start service 'php8.3-fpm.service'"),
+            "{}",
+            output.msg
+        );
+        let commands = conn.commands();
+        let enabled_at = commands
+            .iter()
+            .position(|c| c == "systemctl enable php8.3-fpm.service")
+            .expect("the unit was enabled");
+        let started_at = commands
+            .iter()
+            .position(|c| c == "systemctl start php8.3-fpm.service")
+            .expect("the unit was started");
+        assert!(enabled_at < started_at, "{commands:?}");
+    }
+
+    #[tokio::test]
+    async fn test_pattern_no_match_policy() {
+        // (state, enabled, check_mode, requested outcome that needs a unit)
+        let cases = [
+            (Some("started"), None, false, Some("state=started")),
+            (Some("started"), None, true, Some("state=started")),
+            (Some("restarted"), None, false, Some("state=restarted")),
+            (Some("reloaded"), None, false, Some("state=reloaded")),
+            (None, Some(true), false, Some("enabled=true")),
+            (Some("stopped"), Some(true), false, Some("enabled=true")),
+            (Some("stopped"), None, false, None),
+            (Some("stopped"), Some(false), false, None),
+            (None, Some(false), false, None),
+            (None, None, false, None),
+        ];
+
+        for (state, enabled, check_mode, outcome) in cases {
+            let case = format!("state={state:?} enabled={enabled:?} check_mode={check_mode}");
+            let conn = MockConnection::new(|cmd| {
+                respond_systemd(cmd, "", "")
+                    .unwrap_or_else(|| panic!("no unit should be touched, got: {cmd}"))
+            });
+
+            let output =
+                run_pattern(conn.clone(), pattern_params(state, enabled), check_mode).await;
+
+            assert!(
+                output
+                    .msg
+                    .contains("No services matched pattern 'php*-fpm.service'"),
+                "{case}: {}",
+                output.msg
+            );
+            assert!(!output.changed, "{case}");
+            assert_eq!(output.data["matched_count"], 0, "{case}");
+            assert_eq!(output.data["services"], serde_json::json!([]), "{case}");
+            match outcome {
+                Some(outcome) => {
+                    assert_eq!(output.status, ModuleStatus::Failed, "{case}");
+                    assert!(
+                        output
+                            .msg
+                            .contains(&format!("but {outcome} needs at least one matching unit")),
+                        "{case}: {}",
+                        output.msg
+                    );
+                }
+                None => assert_eq!(output.status, ModuleStatus::Ok, "{case}: {}", output.msg),
+            }
+            // Only the init probe and the two expansion queries ran
+            assert_eq!(conn.commands().len(), 3, "{case}: {:?}", conn.commands());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pattern_mixed_results_fail_with_both_messages() {
+        // The failing unit comes first, so the loop has to carry on past it
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "php8.3-fpm.service\nphp8.2-fpm.service\n", "").unwrap_or_else(
+                || match cmd {
+                    "systemctl start php8.3-fpm.service" => start_failure("php8.3-fpm.service"),
+                    "systemctl start php8.2-fpm.service" => {
+                        CommandResult::success(String::new(), String::new())
+                    }
+                    other => panic!("unexpected command: {other}"),
+                },
+            )
+        });
+
+        let output = run_pattern(conn.clone(), pattern_params(Some("started"), None), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Failed);
+        assert!(output.changed, "the unit that did start is still a change");
+        assert!(
+            output
+                .msg
+                .contains("1 of 2 services matching 'php*-fpm.service' failed"),
+            "{}",
+            output.msg
+        );
+        assert!(
+            output.msg.contains(
+                "php8.3-fpm.service: FAILED - Execution failed: Failed to start service \
+                 'php8.3-fpm.service': Job for php8.3-fpm.service failed"
+            ),
+            "{}",
+            output.msg
+        );
+        assert!(
+            output
+                .msg
+                .contains("php8.2-fpm.service: Started service 'php8.2-fpm.service'"),
+            "{}",
+            output.msg
+        );
+        assert_eq!(output.data["matched_count"], 2);
+        let services = &output.data["services"];
+        assert_eq!(services[0]["name"], "php8.3-fpm.service");
+        assert_eq!(services[0]["failed"], true);
+        assert_eq!(services[1]["name"], "php8.2-fpm.service");
+        assert_eq!(services[1]["changed"], true);
+        assert_eq!(
+            services[1]["message"],
+            "Started service 'php8.2-fpm.service'"
+        );
+
+        let commands = conn.commands();
+        let failed_at = commands
+            .iter()
+            .position(|c| c == "systemctl start php8.3-fpm.service")
+            .expect("the failing unit was started");
+        let started_at = commands
+            .iter()
+            .position(|c| c == "systemctl start php8.2-fpm.service")
+            .expect("the remaining unit was still started");
+        assert!(failed_at < started_at, "{commands:?}");
+    }
+
+    #[tokio::test]
+    async fn test_pattern_sleeping_restart_stop_is_kept_when_start_fails() {
+        // A restart with `sleep` stops the active unit first; that stop is a
+        // change even when the following start fails
+        let conn = MockConnection::new(|cmd| {
+            if cmd.contains("systemctl is-active") {
+                return CommandResult::success("active\n".to_string(), String::new());
+            }
+            respond_systemd(cmd, "php8.3-fpm.service\n", "").unwrap_or_else(|| match cmd {
+                "systemctl stop php8.3-fpm.service" => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                "systemctl start php8.3-fpm.service" => start_failure("php8.3-fpm.service"),
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+        let mut params = pattern_params(Some("restarted"), None);
+        params.insert("sleep".to_string(), serde_json::json!(0));
+
+        let output = run_pattern(conn.clone(), params, false).await;
+
+        assert_eq!(output.status, ModuleStatus::Failed);
+        assert!(output.changed, "the stop already modified the unit");
+        assert_eq!(output.data["services"][0]["changed"], true);
+        assert_eq!(output.data["services"][0]["failed"], true);
+        assert!(
+            output
+                .msg
+                .contains("Failed to restart service 'php8.3-fpm.service'"),
+            "{}",
+            output.msg
+        );
+        let commands = conn.commands();
+        let stopped_at = commands
+            .iter()
+            .position(|c| c == "systemctl stop php8.3-fpm.service")
+            .expect("the unit was stopped");
+        let started_at = commands
+            .iter()
+            .position(|c| c == "systemctl start php8.3-fpm.service")
+            .expect("the unit was started");
+        assert!(stopped_at < started_at, "{commands:?}");
+    }
+
+    #[tokio::test]
+    async fn test_pattern_sleeping_restart_of_inactive_unit_is_not_a_change() {
+        // Stopping an inactive unit changes nothing, so a failed start after it
+        // leaves the unit and the task unchanged
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "php8.3-fpm.service\n", "").unwrap_or_else(|| match cmd {
+                "systemctl stop php8.3-fpm.service" => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                "systemctl start php8.3-fpm.service" => start_failure("php8.3-fpm.service"),
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+        let mut params = pattern_params(Some("restarted"), None);
+        params.insert("sleep".to_string(), serde_json::json!(0));
+
+        let output = run_pattern(conn, params, false).await;
+
+        assert_eq!(output.status, ModuleStatus::Failed);
+        assert!(!output.changed, "{}", output.msg);
+        assert_eq!(output.data["services"][0]["changed"], false);
+        assert_eq!(output.data["services"][0]["failed"], true);
+    }
+
+    #[tokio::test]
+    async fn test_pattern_unloaded_unit_is_found_through_unit_files() {
+        // Nothing matching is in memory, but a unit file is installed; the
+        // template file has no default instance and is skipped
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "", "php8.3-fpm.service\nphp-fpm@.service\n").unwrap_or_else(
+                || match cmd {
+                    "systemctl cat --no-pager 'php-fpm@.service'" => {
+                        unit_file("/usr/lib/systemd/system/php-fpm@.service", None)
+                    }
+                    "systemctl start php8.3-fpm.service" => {
+                        CommandResult::success(String::new(), String::new())
+                    }
+                    other => panic!("unexpected command: {other}"),
+                },
+            )
+        });
+
+        let output = run_pattern(conn.clone(), pattern_params(Some("started"), None), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert_eq!(output.data["matched_count"], 1);
+        assert_eq!(output.data["services"][0]["name"], "php8.3-fpm.service");
+        assert_eq!(output.data["services"][0]["changed"], true);
+        assert!(conn
+            .commands()
+            .iter()
+            .any(|c| c.contains("systemctl list-unit-files")));
+    }
+
+    #[tokio::test]
+    async fn test_pattern_merges_loaded_and_installed_units() {
+        // One unit is in memory, another is only installed; both are acted on
+        // once, the template without a default instance is skipped, and the
+        // in-memory query must not parse systemctl's bullet marker as a name
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(
+                cmd,
+                "php8.2-fpm.service\n",
+                "php8.2-fpm.service\nphp8.3-fpm.service\nphp-fpm@.service\n",
+            )
+            .unwrap_or_else(|| match cmd {
+                "systemctl cat --no-pager 'php-fpm@.service'" => {
+                    unit_file("/usr/lib/systemd/system/php-fpm@.service", None)
+                }
+                _ if cmd.starts_with("systemctl start php8.") => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+
+        let output = run_pattern(conn.clone(), pattern_params(Some("started"), None), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert_eq!(output.data["matched_count"], 2);
+        assert_eq!(output.data["services"][0]["name"], "php8.2-fpm.service");
+        assert_eq!(output.data["services"][1]["name"], "php8.3-fpm.service");
+        let commands = conn.commands();
+        let list_units = commands
+            .iter()
+            .find(|c| c.contains("systemctl list-units"))
+            .expect("units in memory were queried");
+        assert!(list_units.contains("--plain"), "{list_units}");
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|c| c.starts_with("systemctl start "))
+                .count(),
+            2,
+            "{commands:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pattern_alias_is_resolved_to_its_unit() {
+        // Only an alias file matches the glob; the unit it names is acted on
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "", "kmod.service alias\n").unwrap_or_else(|| match cmd {
+                "systemctl show -p Id --no-pager kmod.service" => CommandResult::success(
+                    "Id=systemd-modules-load.service\n".to_string(),
+                    String::new(),
+                ),
+                "systemctl start systemd-modules-load.service" => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+
+        let output = run_pattern(conn, pattern_params(Some("started"), None), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert_eq!(output.data["matched_count"], 1);
+        assert_eq!(
+            output.data["services"][0]["name"],
+            "systemd-modules-load.service"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pattern_alias_and_its_unit_are_restarted_once() {
+        // `ssh*` matches the loaded unit, its unit file, the `sshd` alias and a
+        // template without a default instance; the unit is restarted once
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(
+                cmd,
+                "ssh.service\n",
+                "ssh.service enabled\nsshd.service alias\nsshd@.service indirect\n",
+            )
+            .unwrap_or_else(|| match cmd {
+                "systemctl show -p Id --no-pager sshd.service" => {
+                    CommandResult::success("Id=ssh.service\n".to_string(), String::new())
+                }
+                "systemctl cat --no-pager 'sshd@.service'" => {
+                    unit_file("/usr/lib/systemd/system/sshd@.service", None)
+                }
+                "systemctl restart ssh.service" => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+        let mut params = pattern_params(Some("restarted"), None);
+        params.insert("name".to_string(), serde_json::json!("ssh*"));
+
+        let output = run_pattern(conn.clone(), params, false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert_eq!(output.data["matched_count"], 1);
+        assert_eq!(output.data["services"][0]["name"], "ssh.service");
+        let restarts = conn
+            .commands()
+            .iter()
+            .filter(|c| c.starts_with("systemctl restart "))
+            .count();
+        assert_eq!(restarts, 1, "{:?}", conn.commands());
+    }
+
+    #[tokio::test]
+    async fn test_pattern_template_default_instance_is_acted_on() {
+        // A template with a default instance is enabled through that instance,
+        // and an alias of the template resolves to the same unit
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "", "getty@.service enabled\nautovt@.service alias\n")
+                .unwrap_or_else(|| match cmd {
+                    "systemctl cat --no-pager 'getty@.service'"
+                    | "systemctl cat --no-pager 'autovt@.service'" => {
+                        unit_file("/usr/lib/systemd/system/getty@.service", Some("tty1"))
+                    }
+                    "systemctl enable 'getty@tty1.service'" => {
+                        CommandResult::success(String::new(), String::new())
+                    }
+                    other => panic!("unexpected command: {other}"),
+                })
+        });
+
+        let output = run_pattern(conn.clone(), pattern_params(None, Some(true)), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert_eq!(output.data["matched_count"], 1);
+        assert_eq!(output.data["services"][0]["name"], "getty@tty1.service");
+        let enables = conn
+            .commands()
+            .iter()
+            .filter(|c| c.starts_with("systemctl enable "))
+            .count();
+        assert_eq!(enables, 1, "{:?}", conn.commands());
+    }
+
+    #[tokio::test]
+    async fn test_pattern_template_without_default_instance_is_skipped() {
+        // A bare template can neither be enabled nor started, so it is no match
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "", "sshd@.service indirect\n").unwrap_or_else(|| match cmd {
+                "systemctl cat --no-pager 'sshd@.service'" => {
+                    unit_file("/usr/lib/systemd/system/sshd@.service", None)
+                }
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+
+        let output = run_pattern(conn.clone(), pattern_params(None, Some(true)), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Failed);
+        assert_eq!(output.data["matched_count"], 0);
+        assert!(
+            output.msg.contains("No services matched pattern"),
+            "{}",
+            output.msg
+        );
+        assert!(!conn
+            .commands()
+            .iter()
+            .any(|c| c.starts_with("systemctl enable ")));
+    }
+
+    #[tokio::test]
+    async fn test_pattern_all_matched_services_succeed() {
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "php8.3-fpm.service\nphp8.2-fpm.service\n", "").unwrap_or_else(
+                || {
+                    assert!(
+                        cmd.starts_with("systemctl start php8."),
+                        "unexpected command: {cmd}"
+                    );
+                    CommandResult::success(String::new(), String::new())
+                },
+            )
+        });
+
+        let output = run_pattern(conn, pattern_params(Some("started"), None), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert!(output.changed);
+        assert!(
+            output
+                .msg
+                .starts_with("Processed 2 services matching 'php*-fpm.service': "),
+            "{}",
+            output.msg
+        );
+        assert_eq!(output.data["matched_count"], 2);
+        let services = output.data["services"].as_array().expect("services array");
+        assert_eq!(services.len(), 2);
+        assert!(services
+            .iter()
+            .all(|s| s["changed"] == true && s.get("failed").is_none()));
+    }
 }
