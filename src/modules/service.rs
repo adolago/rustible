@@ -27,9 +27,10 @@
 //!
 //! A `name` containing `*`, `?` or `[` is a systemd unit glob. It is expanded
 //! against both the units systemd has loaded (`systemctl list-units --all`) and
-//! the installed unit files (`systemctl list-unit-files`, template units
-//! skipped, alias files counted as the unit they name), merged without
-//! duplicates, and every matched unit is processed on its own.
+//! the installed unit files (`systemctl list-unit-files`; alias files count as
+//! the unit they name, template files as their default instance or not at all
+//! without one), merged without duplicates, and every matched unit is
+//! processed on its own.
 //! The result carries `pattern`, `matched_count` and a `services` array with one
 //! entry per unit (`name` and `changed`, plus `message`, or `failed` and `error`).
 //!
@@ -370,10 +371,11 @@ impl ServiceModule {
     /// `systemctl list-units` only knows units systemd has in memory and
     /// `list-unit-files` only knows installed unit files, so both are queried
     /// and merged without duplicates. Units in memory count only while `loaded`
-    /// (a missing unit that is merely referenced shows up as `not-found`),
-    /// template unit files (`name@.service`) are skipped because they cannot be
-    /// acted on without an instance name, and alias unit files are resolved to
-    /// the unit they name so that unit is acted on once.
+    /// (a missing unit that is merely referenced shows up as `not-found`).
+    /// Among the unit files, aliases are resolved to the unit they name, and
+    /// templates (`name@.service`) to their default instance, or dropped when
+    /// they have none, because a bare template can neither be started nor
+    /// enabled.
     async fn expand_service_pattern(
         connection: &dyn Connection,
         pattern: &str,
@@ -401,26 +403,32 @@ impl ServiceModule {
         );
         let result = Self::execute_command(connection, &cmd, context).await?;
         let mut aliases = Vec::new();
+        let mut templates = Vec::new();
         for line in result.stdout.lines() {
             let mut fields = line.split_whitespace();
             let Some(unit) = fields.next() else {
                 continue;
             };
             if unit.ends_with("@.service") {
-                continue;
-            }
-            if fields.next() == Some("alias") {
+                templates.push(unit.to_string());
+            } else if fields.next() == Some("alias") {
                 aliases.push(unit.to_string());
             } else if !services.iter().any(|known| known.as_str() == unit) {
                 services.push(unit.to_string());
             }
         }
 
-        if !aliases.is_empty() {
-            for unit in Self::resolve_unit_ids(connection, &aliases, context).await? {
-                if !services.contains(&unit) {
-                    services.push(unit);
-                }
+        let mut resolved = if aliases.is_empty() {
+            Vec::new()
+        } else {
+            Self::resolve_unit_ids(connection, &aliases, context).await?
+        };
+        for template in &templates {
+            resolved.extend(Self::resolve_template(connection, template, context).await?);
+        }
+        for unit in resolved {
+            if !services.contains(&unit) {
+                services.push(unit);
             }
         }
 
@@ -451,6 +459,52 @@ impl ServiceModule {
         } else {
             Ok(ids)
         }
+    }
+
+    /// Resolve a template unit file to its default instance
+    ///
+    /// `foo@.service` with `DefaultInstance=main` becomes `foo@main.service`,
+    /// the unit that `systemctl enable foo@.service` would enable. Without a
+    /// default instance there is nothing to start or enable, so `None` is
+    /// returned. The unit file that `systemctl cat` prints first is taken as
+    /// the template's real name, which resolves an alias such as
+    /// `autovt@.service` to `getty@tty1.service`.
+    async fn resolve_template(
+        connection: &dyn Connection,
+        template: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<Option<String>> {
+        let cmd = format!("systemctl cat --no-pager {}", shell_escape(template));
+        let result = Self::execute_command(connection, &cmd, context).await?;
+        if !result.success {
+            return Ok(None);
+        }
+
+        let mut name = template.to_string();
+        let mut instance = None;
+        for line in result.stdout.lines() {
+            let line = line.trim();
+            if let Some(path) = line.strip_prefix("# /") {
+                // File headers name the unit file; drop-ins sit in a `.d`
+                // directory and keep the name of the template they extend
+                let file = path.rsplit('/').next().unwrap_or(path);
+                if file.ends_with("@.service") {
+                    name = file.to_string();
+                }
+            } else if let Some(value) = line.strip_prefix("DefaultInstance=") {
+                // Later files override earlier ones, so the last value wins
+                let value = value.trim();
+                instance = (!value.is_empty()).then(|| value.to_string());
+            }
+        }
+
+        Ok(instance.map(|instance| {
+            format!(
+                "{}@{}.service",
+                name.trim_end_matches("@.service"),
+                instance
+            )
+        }))
     }
 
     /// One unit name per non-empty line of `systemctl` output
@@ -1819,6 +1873,18 @@ mod tests {
         CommandResult::failure(1, String::new(), format!("Job for {} failed", unit))
     }
 
+    /// `systemctl cat` output for the unit file at `path`, optionally with a
+    /// default instance in its `[Install]` section
+    fn unit_file(path: &str, default_instance: Option<&str>) -> CommandResult {
+        let mut text = format!(
+            "# {path}\n[Unit]\nDescription=test\n\n[Install]\nWantedBy=multi-user.target\n"
+        );
+        if let Some(instance) = default_instance {
+            text.push_str(&format!("DefaultInstance={instance}\n"));
+        }
+        CommandResult::success(text, String::new())
+    }
+
     fn pattern_params(state: Option<&str>, enabled: Option<bool>) -> ModuleParams {
         let mut params = ModuleParams::new();
         params.insert("name".to_string(), serde_json::json!(PATTERN));
@@ -2115,12 +2181,17 @@ mod tests {
     #[tokio::test]
     async fn test_pattern_unloaded_unit_is_found_through_unit_files() {
         // Nothing matching is in memory, but a unit file is installed; the
-        // template file cannot be started and is skipped
+        // template file has no default instance and is skipped
         let conn = MockConnection::new(|cmd| {
             respond_systemd(cmd, "", "php8.3-fpm.service\nphp-fpm@.service\n").unwrap_or_else(
-                || {
-                    assert_eq!(cmd, "systemctl start php8.3-fpm.service");
-                    CommandResult::success(String::new(), String::new())
+                || match cmd {
+                    "systemctl cat --no-pager 'php-fpm@.service'" => {
+                        unit_file("/usr/lib/systemd/system/php-fpm@.service", None)
+                    }
+                    "systemctl start php8.3-fpm.service" => {
+                        CommandResult::success(String::new(), String::new())
+                    }
+                    other => panic!("unexpected command: {other}"),
                 },
             )
         });
@@ -2140,20 +2211,22 @@ mod tests {
     #[tokio::test]
     async fn test_pattern_merges_loaded_and_installed_units() {
         // One unit is in memory, another is only installed; both are acted on
-        // once, the template file is skipped, and the in-memory query must not
-        // parse systemctl's bullet marker as a unit name
+        // once, the template without a default instance is skipped, and the
+        // in-memory query must not parse systemctl's bullet marker as a name
         let conn = MockConnection::new(|cmd| {
             respond_systemd(
                 cmd,
                 "php8.2-fpm.service\n",
                 "php8.2-fpm.service\nphp8.3-fpm.service\nphp-fpm@.service\n",
             )
-            .unwrap_or_else(|| {
-                assert!(
-                    cmd.starts_with("systemctl start php8."),
-                    "unexpected command: {cmd}"
-                );
-                CommandResult::success(String::new(), String::new())
+            .unwrap_or_else(|| match cmd {
+                "systemctl cat --no-pager 'php-fpm@.service'" => {
+                    unit_file("/usr/lib/systemd/system/php-fpm@.service", None)
+                }
+                _ if cmd.starts_with("systemctl start php8.") => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                other => panic!("unexpected command: {other}"),
             })
         });
 
@@ -2207,8 +2280,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_pattern_alias_and_its_unit_are_restarted_once() {
-        // `ssh*` matches the loaded unit, its unit file and the `sshd` alias;
-        // the unit must be restarted a single time
+        // `ssh*` matches the loaded unit, its unit file, the `sshd` alias and a
+        // template without a default instance; the unit is restarted once
         let conn = MockConnection::new(|cmd| {
             respond_systemd(
                 cmd,
@@ -2218,6 +2291,9 @@ mod tests {
             .unwrap_or_else(|| match cmd {
                 "systemctl show -p Id --no-pager sshd.service" => {
                     CommandResult::success("Id=ssh.service\n".to_string(), String::new())
+                }
+                "systemctl cat --no-pager 'sshd@.service'" => {
+                    unit_file("/usr/lib/systemd/system/sshd@.service", None)
                 }
                 "systemctl restart ssh.service" => {
                     CommandResult::success(String::new(), String::new())
@@ -2239,6 +2315,64 @@ mod tests {
             .filter(|c| c.starts_with("systemctl restart "))
             .count();
         assert_eq!(restarts, 1, "{:?}", conn.commands());
+    }
+
+    #[tokio::test]
+    async fn test_pattern_template_default_instance_is_acted_on() {
+        // A template with a default instance is enabled through that instance,
+        // and an alias of the template resolves to the same unit
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "", "getty@.service enabled\nautovt@.service alias\n")
+                .unwrap_or_else(|| match cmd {
+                    "systemctl cat --no-pager 'getty@.service'"
+                    | "systemctl cat --no-pager 'autovt@.service'" => {
+                        unit_file("/usr/lib/systemd/system/getty@.service", Some("tty1"))
+                    }
+                    "systemctl enable 'getty@tty1.service'" => {
+                        CommandResult::success(String::new(), String::new())
+                    }
+                    other => panic!("unexpected command: {other}"),
+                })
+        });
+
+        let output = run_pattern(conn.clone(), pattern_params(None, Some(true)), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Changed);
+        assert_eq!(output.data["matched_count"], 1);
+        assert_eq!(output.data["services"][0]["name"], "getty@tty1.service");
+        let enables = conn
+            .commands()
+            .iter()
+            .filter(|c| c.starts_with("systemctl enable "))
+            .count();
+        assert_eq!(enables, 1, "{:?}", conn.commands());
+    }
+
+    #[tokio::test]
+    async fn test_pattern_template_without_default_instance_is_skipped() {
+        // A bare template can neither be enabled nor started, so it is no match
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "", "sshd@.service indirect\n").unwrap_or_else(|| match cmd {
+                "systemctl cat --no-pager 'sshd@.service'" => {
+                    unit_file("/usr/lib/systemd/system/sshd@.service", None)
+                }
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+
+        let output = run_pattern(conn.clone(), pattern_params(None, Some(true)), false).await;
+
+        assert_eq!(output.status, ModuleStatus::Failed);
+        assert_eq!(output.data["matched_count"], 0);
+        assert!(
+            output.msg.contains("No services matched pattern"),
+            "{}",
+            output.msg
+        );
+        assert!(!conn
+            .commands()
+            .iter()
+            .any(|c| c.starts_with("systemctl enable ")));
     }
 
     #[tokio::test]
