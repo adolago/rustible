@@ -34,7 +34,8 @@
 //!   disabled fails the task. The remaining units are still processed, the
 //!   message lists every unit's outcome and `changed` reports whether anything
 //!   was modified before the failure, per unit and overall (a unit that was
-//!   enabled and then failed to start counts as changed).
+//!   enabled, or stopped by a sleeping restart, before a later step on it
+//!   failed counts as changed).
 //! - A pattern that matches nothing fails when the requested outcome needs a
 //!   unit to exist: `state=started`, `state=restarted`, `state=reloaded` or
 //!   `enabled=true`, just as Ansible fails for an unknown service.
@@ -836,6 +837,9 @@ impl ServiceModule {
     }
 
     /// Perform restart with optional sleep between stop and start
+    ///
+    /// `changed` is set as soon as the stop of a sleeping restart succeeded, so a
+    /// caller still learns that the unit went down when the following start fails.
     async fn restart_with_sleep(
         connection: &dyn Connection,
         init: &InitSystem,
@@ -843,6 +847,7 @@ impl ServiceModule {
         sleep_secs: Option<u64>,
         arguments: Option<&str>,
         context: &ModuleContext,
+        changed: &mut bool,
     ) -> ModuleResult<(bool, String, String)> {
         if let Some(secs) = sleep_secs {
             // Stop, sleep, start
@@ -852,6 +857,8 @@ impl ServiceModule {
             if !stop_ok {
                 return Ok((false, stop_out, stop_err));
             }
+            // The unit is down from here on, whatever the start below does
+            *changed = true;
 
             Self::sleep_seconds(secs).await;
 
@@ -1072,6 +1079,7 @@ impl ServiceModule {
                             config.sleep,
                             config.arguments.as_deref(),
                             context,
+                            changed,
                         )
                         .await?;
 
@@ -1965,6 +1973,47 @@ mod tests {
             .position(|c| c == "systemctl start php8.2-fpm.service")
             .expect("the remaining unit was still started");
         assert!(failed_at < started_at, "{commands:?}");
+    }
+
+    #[tokio::test]
+    async fn test_pattern_sleeping_restart_stop_is_kept_when_start_fails() {
+        // A restart with `sleep` stops the unit first; that stop is a change even
+        // when the following start fails
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "php8.3-fpm.service\n").unwrap_or_else(|| match cmd {
+                "systemctl stop php8.3-fpm.service" => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                "systemctl start php8.3-fpm.service" => start_failure("php8.3-fpm.service"),
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+        let mut params = pattern_params(Some("restarted"), None);
+        params.insert("sleep".to_string(), serde_json::json!(0));
+
+        let output = run_pattern(conn.clone(), params, false).await;
+
+        assert_eq!(output.status, ModuleStatus::Failed);
+        assert!(output.changed, "the stop already modified the unit");
+        assert_eq!(output.data["services"][0]["changed"], true);
+        assert_eq!(output.data["services"][0]["failed"], true);
+        assert!(
+            output
+                .msg
+                .contains("Failed to restart service 'php8.3-fpm.service'"),
+            "{}",
+            output.msg
+        );
+        let commands = conn.commands();
+        let stopped_at = commands
+            .iter()
+            .position(|c| c == "systemctl stop php8.3-fpm.service")
+            .expect("the unit was stopped");
+        let started_at = commands
+            .iter()
+            .position(|c| c == "systemctl start php8.3-fpm.service")
+            .expect("the unit was started");
+        assert!(stopped_at < started_at, "{commands:?}");
     }
 
     #[tokio::test]
