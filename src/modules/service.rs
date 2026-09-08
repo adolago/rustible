@@ -28,12 +28,13 @@
 //! A `name` containing `*`, `?` or `[` is a systemd unit glob. It is expanded with
 //! `systemctl list-units --all` and every matched unit is processed on its own.
 //! The result carries `pattern`, `matched_count` and a `services` array with one
-//! entry per unit (`name`, `changed` and `message`, or `failed` and `error`).
+//! entry per unit (`name` and `changed`, plus `message`, or `failed` and `error`).
 //!
 //! - A unit that cannot be started, stopped, restarted, reloaded, enabled or
 //!   disabled fails the task. The remaining units are still processed, the
-//!   message lists every unit's outcome and `changed` reports whether any unit
-//!   was changed before the failure.
+//!   message lists every unit's outcome and `changed` reports whether anything
+//!   was modified before the failure, per unit and overall (a unit that was
+//!   enabled and then failed to start counts as changed).
 //! - A pattern that matches nothing fails when the requested outcome needs a
 //!   unit to exist: `state=started`, `state=restarted`, `state=reloaded` or
 //!   `enabled=true`, just as Ansible fails for an unknown service.
@@ -909,8 +910,25 @@ impl ServiceModule {
         connection: Arc<dyn Connection + Send + Sync>,
         init: &InitSystem,
     ) -> ModuleResult<ModuleOutput> {
-        let service = &config.name;
         let mut changed = false;
+        self.apply_single_service(config, context, connection, init, &mut changed)
+            .await
+    }
+
+    /// Apply the requested state to one service
+    ///
+    /// `changed` records whether the service was modified so far, so a caller
+    /// still learns about a partial change (for example a unit enabled before it
+    /// failed to start) when this returns an error.
+    async fn apply_single_service(
+        &self,
+        config: &ServiceConfig,
+        context: &ModuleContext,
+        connection: Arc<dyn Connection + Send + Sync>,
+        init: &InitSystem,
+        changed: &mut bool,
+    ) -> ModuleResult<ModuleOutput> {
+        let service = &config.name;
         let mut messages = Vec::new();
 
         // Handle daemon-reexec for systemd (must come before daemon-reload)
@@ -920,7 +938,7 @@ impl ServiceModule {
             } else {
                 Self::systemd_daemon_reexec(connection.as_ref(), context).await?;
                 messages.push("Re-executed systemd daemon".to_string());
-                changed = true;
+                *changed = true;
             }
         }
 
@@ -931,7 +949,7 @@ impl ServiceModule {
             } else {
                 Self::systemd_daemon_reload(connection.as_ref(), context).await?;
                 messages.push("Reloaded systemd daemon".to_string());
-                changed = true;
+                *changed = true;
             }
         }
 
@@ -947,7 +965,7 @@ impl ServiceModule {
                 if context.check_mode {
                     let action = if should_enable { "enable" } else { "disable" };
                     messages.push(format!("Would {} service '{}'", action, service));
-                    changed = true;
+                    *changed = true;
                 } else {
                     let action_word = if should_enable { "enable" } else { "disable" };
                     let (success, _, stderr) = Self::set_enabled(
@@ -968,7 +986,7 @@ impl ServiceModule {
                     }
 
                     messages.push(format!("{}d service '{}'", action_word, service));
-                    changed = true;
+                    *changed = true;
                 }
             }
         }
@@ -984,7 +1002,7 @@ impl ServiceModule {
                     if !is_active {
                         if context.check_mode {
                             messages.push(format!("Would start service '{}'", service));
-                            changed = true;
+                            *changed = true;
                         } else {
                             let (success, _, stderr) = Self::service_action(
                                 connection.as_ref(),
@@ -1004,7 +1022,7 @@ impl ServiceModule {
                             }
 
                             messages.push(format!("Started service '{}'", service));
-                            changed = true;
+                            *changed = true;
                         }
                     } else {
                         messages.push(format!("Service '{}' is already running", service));
@@ -1015,7 +1033,7 @@ impl ServiceModule {
                     if is_active {
                         if context.check_mode {
                             messages.push(format!("Would stop service '{}'", service));
-                            changed = true;
+                            *changed = true;
                         } else {
                             let (success, _, stderr) = Self::service_action(
                                 connection.as_ref(),
@@ -1035,7 +1053,7 @@ impl ServiceModule {
                             }
 
                             messages.push(format!("Stopped service '{}'", service));
-                            changed = true;
+                            *changed = true;
                         }
                     } else {
                         messages.push(format!("Service '{}' is already stopped", service));
@@ -1045,7 +1063,7 @@ impl ServiceModule {
                 ServiceState::Restarted => {
                     if context.check_mode {
                         messages.push(format!("Would restart service '{}'", service));
-                        changed = true;
+                        *changed = true;
                     } else {
                         let (success, _, stderr) = Self::restart_with_sleep(
                             connection.as_ref(),
@@ -1065,14 +1083,14 @@ impl ServiceModule {
                         }
 
                         messages.push(format!("Restarted service '{}'", service));
-                        changed = true;
+                        *changed = true;
                     }
                 }
 
                 ServiceState::Reloaded => {
                     if context.check_mode {
                         messages.push(format!("Would reload service '{}'", service));
-                        changed = true;
+                        *changed = true;
                     } else {
                         let (success, _, _stderr) = Self::service_action(
                             connection.as_ref(),
@@ -1121,7 +1139,7 @@ impl ServiceModule {
                                     "Restarted service '{}' (reload not supported)",
                                     service
                                 ));
-                                changed = true;
+                                *changed = true;
                                 // Skip the normal reload message
                                 return self
                                     .build_output(
@@ -1129,7 +1147,7 @@ impl ServiceModule {
                                         init,
                                         connection.as_ref(),
                                         context,
-                                        changed,
+                                        *changed,
                                         messages,
                                     )
                                     .await;
@@ -1137,7 +1155,7 @@ impl ServiceModule {
                         }
 
                         messages.push(format!("Reloaded service '{}'", service));
-                        changed = true;
+                        *changed = true;
                     }
                 }
             }
@@ -1148,7 +1166,7 @@ impl ServiceModule {
             init,
             connection.as_ref(),
             context,
-            changed,
+            *changed,
             messages,
         )
         .await
@@ -1156,8 +1174,8 @@ impl ServiceModule {
 
     /// Execute module for pattern/wildcard service names
     ///
-    /// Each matched unit runs through `execute_single_service_async`; the module
-    /// docs describe how per-unit failures and empty matches are reported.
+    /// Each matched unit runs through `apply_single_service`; the module docs
+    /// describe how per-unit failures and empty matches are reported.
     async fn execute_pattern_async(
         &self,
         config: &ServiceConfig,
@@ -1199,8 +1217,15 @@ impl ServiceModule {
                 arguments: config.arguments.clone(),
             };
 
+            let mut unit_changed = false;
             match self
-                .execute_single_service_async(&service_config, context, connection.clone(), init)
+                .apply_single_service(
+                    &service_config,
+                    context,
+                    connection.clone(),
+                    init,
+                    &mut unit_changed,
+                )
                 .await
             {
                 Ok(output) => {
@@ -1215,10 +1240,14 @@ impl ServiceModule {
                     }));
                 }
                 Err(e) => {
+                    // A unit can be modified before a later step on it fails,
+                    // for example enabled and then unable to start
                     failed_count += 1;
+                    total_changed |= unit_changed;
                     all_messages.push(format!("{}: FAILED - {}", service, e));
                     service_results.push(serde_json::json!({
                         "name": service,
+                        "changed": unit_changed,
                         "failed": true,
                         "error": e.to_string()
                     }));
@@ -1770,10 +1799,54 @@ mod tests {
         assert_eq!(output.data["pattern"], PATTERN);
         assert_eq!(output.data["matched_count"], 1);
         assert_eq!(output.data["services"][0]["name"], "php8.3-fpm.service");
+        assert_eq!(output.data["services"][0]["changed"], false);
         assert_eq!(output.data["services"][0]["failed"], true);
         assert!(conn
             .commands()
             .contains(&"systemctl start php8.3-fpm.service".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_pattern_partial_change_before_failure_is_reported() {
+        // The unit gets enabled and then fails to start: that is still a change
+        let conn = MockConnection::new(|cmd| {
+            respond_systemd(cmd, "php8.3-fpm.service\n").unwrap_or_else(|| match cmd {
+                "systemctl enable php8.3-fpm.service" => {
+                    CommandResult::success(String::new(), String::new())
+                }
+                "systemctl start php8.3-fpm.service" => start_failure("php8.3-fpm.service"),
+                other => panic!("unexpected command: {other}"),
+            })
+        });
+
+        let output = run_pattern(
+            conn.clone(),
+            pattern_params(Some("started"), Some(true)),
+            false,
+        )
+        .await;
+
+        assert_eq!(output.status, ModuleStatus::Failed);
+        assert!(output.changed, "the enable step already modified the unit");
+        assert_eq!(output.data["services"][0]["changed"], true);
+        assert_eq!(output.data["services"][0]["failed"], true);
+        assert!(
+            output
+                .msg
+                .contains("Failed to start service 'php8.3-fpm.service'"),
+            "{}",
+            output.msg
+        );
+        let commands = conn.commands();
+        let enabled_at = commands
+            .iter()
+            .position(|c| c == "systemctl enable php8.3-fpm.service")
+            .expect("the unit was enabled");
+        let started_at = commands
+            .iter()
+            .position(|c| c == "systemctl start php8.3-fpm.service")
+            .expect("the unit was started");
+        assert!(enabled_at < started_at, "{commands:?}");
     }
 
     #[tokio::test]
