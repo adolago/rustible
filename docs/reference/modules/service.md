@@ -225,6 +225,12 @@ Some legacy services don't have a working status command. Use `pattern` to check
     state: stopped
 ```
 
+Every matched unit is handled on its own and listed in the result's `services`
+array. If any unit fails, the task fails and the message reports every unit's
+outcome. A pattern that matches nothing fails for `state: started`, `restarted`,
+`reloaded` and `enabled: yes`, and is a no-op for `state: stopped` and
+`enabled: no`.
+
 ### Force use of systemctl
 
 On systems with both `service` and `systemctl` commands:
