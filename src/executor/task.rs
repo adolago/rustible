@@ -1342,9 +1342,12 @@ impl Task {
             ));
         }
         if !local && ctx.connection.is_none() {
-            return Ok(TaskResult::unreachable(
-                "Remote execution requires an established connection; local fallback is disabled",
-            ));
+            return Ok(TaskResult::unreachable(match &ctx.connection_error {
+                Some(error) => format!("Failed to connect: {}", error),
+                None => "Remote execution requires an established connection; local fallback is \
+disabled"
+                    .to_string(),
+            }));
         }
         // These implementations have a reviewed transport path. Classification alone
         // is not sufficient: several filesystem modules ignore ModuleContext.connection.

@@ -225,6 +225,8 @@ pub struct ExecutionContext {
     pub become_password: Option<String>,
     /// Cross-run task state cache, when `--cache-state` is enabled
     pub state_cache: Option<std::sync::Arc<crate::state::StateHashCache>>,
+    /// Why this host has no connection, when one could not be established
+    pub connection_error: Option<String>,
 }
 
 impl std::fmt::Debug for ExecutionContext {
@@ -262,6 +264,7 @@ impl ExecutionContext {
             become_method: "sudo".to_string(),
             become_password: None,
             state_cache: None,
+            connection_error: None,
         }
     }
 
@@ -271,6 +274,12 @@ impl ExecutionContext {
         cache: Option<std::sync::Arc<crate::state::StateHashCache>>,
     ) -> Self {
         self.state_cache = cache;
+        self
+    }
+
+    /// Record why no connection could be established for this host.
+    pub fn with_connection_error(mut self, error: Option<String>) -> Self {
+        self.connection_error = error;
         self
     }
 

@@ -215,6 +215,49 @@ fn save_task_cache(
     }
 }
 
+/// Build transport configuration for every inventory host.
+///
+/// The executor reaches hosts through a [`ConnectionFactory`]; without one
+/// every remote task reports "requires an established connection". Inventory
+/// values win over the command line, matching how `ansible_user` overrides
+/// `--user`.
+fn build_connection_config(
+    inventory: &rustible::inventory::Inventory,
+    cli_user: Option<&str>,
+    cli_private_key: Option<&Path>,
+    timeout: u64,
+) -> rustible::connection::ConnectionConfig {
+    use rustible::connection::HostConfig;
+
+    let mut config = rustible::connection::ConnectionConfig::default();
+    if let Some(user) = cli_user {
+        config.defaults.user = user.to_string();
+    }
+    config.defaults.timeout = timeout;
+
+    for host in inventory.hosts() {
+        let ssh = &host.connection.ssh;
+        let host_config = HostConfig {
+            hostname: host.ansible_host.clone(),
+            port: Some(ssh.port),
+            user: ssh
+                .user
+                .clone()
+                .or_else(|| cli_user.map(|user| user.to_string())),
+            identity_file: ssh
+                .private_key_file
+                .clone()
+                .or_else(|| cli_private_key.map(|path| path.to_string_lossy().to_string())),
+            connect_timeout: Some(timeout),
+            connection: Some(host.connection.connection.to_string()),
+            ..Default::default()
+        };
+        config.add_host(host.name.clone(), host_config);
+    }
+
+    config
+}
+
 fn task_cache_path(playbook: &Path) -> PathBuf {
     state_dir_for_playbook(playbook).join("task-cache.json")
 }
@@ -811,6 +854,20 @@ impl RunArgs {
             self.tags.clone(),
             self.skip_tags.clone(),
             self.start_at_task.clone(),
+        );
+
+        // Give the executor a transport for every inventory host.
+        let connection_config = build_connection_config(
+            &inventory,
+            self.user.as_deref(),
+            self.private_key.as_deref(),
+            ctx.timeout,
+        );
+        executor = executor.with_connection_factory(
+            rustible::connection::ConnectionFactory::with_pool_size(
+                connection_config,
+                ctx.forks.max(1),
+            ),
         );
 
         // Cross-run task state cache, persisted next to the playbook. Check

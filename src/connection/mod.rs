@@ -53,6 +53,9 @@
 //! ```
 
 /// Connection configuration types.
+/// Agent-backed connection that runs commands through the rustible-agent binary
+pub mod agent;
+
 pub mod config;
 
 /// Docker container connection implementation.
@@ -701,8 +704,10 @@ impl ConnectionFactory {
             self.pool.remove(&pool_key).await;
         }
 
-        // Create new connection
-        let conn = self.create_connection(&conn_type).await?;
+        // Create new connection. The inventory name is the configuration key:
+        // resolving it to a hostname first would lose that host's identity
+        // file, timeouts and jump host.
+        let conn = self.create_connection(host, &conn_type).await?;
 
         // Add to pool
         let pooled = self.pool.put(pool_key, conn.clone()).await;
@@ -715,6 +720,56 @@ impl ConnectionFactory {
 
     /// Resolve a host name to a connection type
     fn resolve_connection_type(&self, host: &str) -> ConnectionResult<ConnectionType> {
+        // An explicit transport for this host wins over its name: an inventory
+        // entry may be called anything and still say `ansible_connection: local`
+        // (or docker/podman/winrm).
+        if let Some(configured) = self
+            .config
+            .get_host(host)
+            .and_then(|host_config| host_config.connection.clone())
+        {
+            let target = self
+                .config
+                .get_host(host)
+                .and_then(|host_config| host_config.hostname.clone())
+                .unwrap_or_else(|| host.to_string());
+
+            match configured.as_str() {
+                "local" => return Ok(ConnectionType::Local),
+                "docker" => return Ok(ConnectionType::Docker { container: target }),
+                "podman" => return Ok(ConnectionType::Podman { container: target }),
+                "winrm" => {
+                    let (port, user) = self
+                        .config
+                        .get_host(host)
+                        .map(|host_config| {
+                            (
+                                host_config.port.unwrap_or(5985),
+                                host_config
+                                    .user
+                                    .clone()
+                                    .unwrap_or_else(|| self.config.defaults.user.clone()),
+                            )
+                        })
+                        .unwrap_or_else(|| (5985, self.config.defaults.user.clone()));
+                    #[cfg(feature = "winrm")]
+                    return Ok(ConnectionType::WinRm {
+                        host: target,
+                        port,
+                        user,
+                    });
+                    #[cfg(not(feature = "winrm"))]
+                    {
+                        let _ = (target, port, user);
+                        return Err(ConnectionError::InvalidConfig(
+                            "WinRM support not available. Enable 'winrm' feature.".to_string(),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Check for special connection types
         if host == "localhost" || host == "127.0.0.1" || host == "local" {
             // Check if we should use local connection
@@ -810,8 +865,12 @@ impl ConnectionFactory {
     }
 
     /// Create a new connection based on type
+    ///
+    /// `host_key` is the name the caller asked for, used to look up
+    /// host-specific configuration.
     async fn create_connection(
         &self,
+        host_key: &str,
         conn_type: &ConnectionType,
     ) -> ConnectionResult<Arc<dyn Connection + Send + Sync>> {
         match conn_type {
@@ -820,7 +879,11 @@ impl ConnectionFactory {
                 Ok(Arc::new(conn))
             }
             ConnectionType::Ssh { host, port, user } => {
-                let host_config = self.config.get_host(host).cloned();
+                let host_config = self
+                    .config
+                    .get_host(host_key)
+                    .or_else(|| self.config.get_host(host))
+                    .cloned();
                 // Prefer russh (pure Rust) when available, fall back to ssh2
                 #[cfg(feature = "russh")]
                 {

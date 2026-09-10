@@ -148,14 +148,12 @@ impl Connection for AgentConnection {
         let request = AgentRequest {
             id: uuid::Uuid::new_v4().to_string(),
             method: AgentMethod::Execute,
-            params: Some(
-                serde_json::to_value(&params).map_err(|e| {
-                    ConnectionError::ExecutionFailed(format!(
-                        "Failed to serialize execute params: {}",
-                        e
-                    ))
-                })?,
-            ),
+            params: Some(serde_json::to_value(&params).map_err(|e| {
+                ConnectionError::ExecutionFailed(format!(
+                    "Failed to serialize execute params: {}",
+                    e
+                ))
+            })?),
             auth_token: None,
         };
 

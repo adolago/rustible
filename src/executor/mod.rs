@@ -685,16 +685,26 @@ impl Executor {
         &self,
         host: &str,
     ) -> Option<Arc<dyn crate::connection::Connection + Send + Sync>> {
-        if let Some(factory) = &self.connection_factory {
-            match factory.get_connection(host).await {
-                Ok(conn) => Some(conn),
-                Err(e) => {
-                    warn!("Failed to get connection for host {}: {}", host, e);
-                    None
-                }
+        self.connect_host(host).await.0
+    }
+
+    /// Connect to a host, keeping the failure reason for the task result.
+    async fn connect_host(
+        &self,
+        host: &str,
+    ) -> (
+        Option<Arc<dyn crate::connection::Connection + Send + Sync>>,
+        Option<String>,
+    ) {
+        let Some(factory) = &self.connection_factory else {
+            return (None, None);
+        };
+        match factory.get_connection(host).await {
+            Ok(conn) => (Some(conn), None),
+            Err(e) => {
+                warn!("Failed to get connection for host {}: {}", host, e);
+                (None, Some(e.to_string()))
             }
-        } else {
-            None
         }
     }
 
@@ -1327,7 +1337,7 @@ impl Executor {
             };
 
             // Get connection for host once before running tasks
-            let host_connection = self.get_connection_for_host(host).await;
+            let (host_connection, connection_error) = self.connect_host(host).await;
 
             for task in tasks {
                 if host_result.failed || host_result.unreachable {
@@ -1343,7 +1353,8 @@ impl Executor {
                     .with_check_mode(self.config.check_mode)
                     .with_diff_mode(self.config.diff_mode)
                     .with_verbosity(self.config.verbosity)
-                    .with_state_cache(self.state_cache.clone());
+                    .with_state_cache(self.state_cache.clone())
+                    .with_connection_error(connection_error.clone());
 
                 // Set connection if available
                 if let Some(ref conn) = host_connection {
@@ -1486,18 +1497,20 @@ impl Executor {
                         unreachable: false,
                     };
 
-                    // Get connection for host
-                    let host_connection = if let Some(ref factory) = connection_factory {
-                        match factory.get_connection(&host).await {
-                            Ok(conn) => Some(conn),
-                            Err(e) => {
-                                warn!("Failed to get connection for host {}: {}", host, e);
-                                None
+                    // Get connection for host, keeping the failure reason so a
+                    // task can report why the host is unreachable.
+                    let (host_connection, connection_error) =
+                        if let Some(ref factory) = connection_factory {
+                            match factory.get_connection(&host).await {
+                                Ok(conn) => (Some(conn), None),
+                                Err(e) => {
+                                    warn!("Failed to get connection for host {}: {}", host, e);
+                                    (None, Some(e.to_string()))
+                                }
                             }
-                        }
-                    } else {
-                        None
-                    };
+                        } else {
+                            (None, None)
+                        };
 
                     for task in tasks.iter() {
                         if host_result.failed || host_result.unreachable {
@@ -1515,7 +1528,8 @@ impl Executor {
                             .with_check_mode(check_mode)
                             .with_diff_mode(diff_mode)
                             .with_verbosity(verbosity)
-                            .with_state_cache(state_cache.clone());
+                            .with_state_cache(state_cache.clone())
+                            .with_connection_error(connection_error.clone());
 
                         // Set connection if available
                         if let Some(ref conn) = host_connection {
@@ -1778,7 +1792,7 @@ impl Executor {
             let _permit = self.semaphore.acquire().await.unwrap();
 
             // Get connection for host
-            let host_connection = self.get_connection_for_host(host).await;
+            let (host_connection, connection_error) = self.connect_host(host).await;
 
             self.emit_event(ExecutionEvent::TaskStart {
                 task: task.name.clone(),
@@ -1789,7 +1803,8 @@ impl Executor {
                 .with_check_mode(self.config.check_mode)
                 .with_diff_mode(self.config.diff_mode)
                 .with_verbosity(self.config.verbosity)
-                .with_state_cache(self.state_cache.clone());
+                .with_state_cache(self.state_cache.clone())
+                .with_connection_error(connection_error.clone());
 
             // Set connection if available
             if let Some(conn) = host_connection {
@@ -1910,18 +1925,20 @@ impl Executor {
                 tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.unwrap();
 
-                    // Get connection for host
-                    let host_connection = if let Some(ref factory) = connection_factory {
-                        match factory.get_connection(&host).await {
-                            Ok(conn) => Some(conn),
-                            Err(e) => {
-                                warn!("Failed to get connection for host {}: {}", host, e);
-                                None
+                    // Get connection for host, keeping the failure reason so a
+                    // task can report why the host is unreachable.
+                    let (host_connection, connection_error) =
+                        if let Some(ref factory) = connection_factory {
+                            match factory.get_connection(&host).await {
+                                Ok(conn) => (Some(conn), None),
+                                Err(e) => {
+                                    warn!("Failed to get connection for host {}: {}", host, e);
+                                    (None, Some(e.to_string()))
+                                }
                             }
-                        }
-                    } else {
-                        None
-                    };
+                        } else {
+                            (None, None)
+                        };
 
                     if let Some(cb) = &event_callback {
                         cb(ExecutionEvent::TaskStart {
@@ -1934,7 +1951,8 @@ impl Executor {
                         .with_check_mode(check_mode)
                         .with_diff_mode(diff_mode)
                         .with_verbosity(verbosity)
-                        .with_state_cache(state_cache.clone());
+                        .with_state_cache(state_cache.clone())
+                        .with_connection_error(connection_error.clone());
 
                     // Set connection if available
                     if let Some(conn) = host_connection {
