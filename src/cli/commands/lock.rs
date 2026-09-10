@@ -904,33 +904,150 @@ impl LockArgs {
             .unwrap_or_else(|| Lockfile::default_path(&self.playbook))
     }
 
-    /// Scan playbook for dependencies and add them to lockfile
-    async fn scan_dependencies(&self, _lockfile: &mut Lockfile) -> anyhow::Result<()> {
-        // In a real implementation, this would:
-        // 1. Parse the playbook
-        // 2. Find role and collection references
-        // 3. Query Galaxy for versions and checksums
-        // 4. Add them to the lockfile
+    /// Scan the playbook for files it depends on and lock their checksums.
+    ///
+    /// Local sources handed to `template`, `copy` and `script` are what make a
+    /// run reproducible: the same playbook with an edited template is a
+    /// different run. Roles and collections are not locked yet — that needs
+    /// Galaxy resolution, and `lock verify` refuses to claim it verified an
+    /// artifact it cannot check.
+    async fn scan_dependencies(&self, lockfile: &mut Lockfile) -> anyhow::Result<()> {
+        use rustible::lockfile::{LockedResource, ResourceType};
 
-        // For now, we just log what would happen
-        println!("  Scanning for roles and collections...");
+        println!("  Scanning the playbook for local file dependencies...");
 
-        // Example: detect roles from requirements.yml if present
-        let req_path = self
+        let content = std::fs::read_to_string(&self.playbook)
+            .with_context(|| format!("Failed to read {}", self.playbook.display()))?;
+        let plays: Vec<serde_yaml::Value> = rustible::utils::yaml::from_str(&content)
+            .with_context(|| format!("Failed to parse {}", self.playbook.display()))?;
+
+        let base = self
             .playbook
             .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join("requirements.yml");
-        if req_path.exists() {
-            println!("  Found requirements.yml, scanning...");
-            // Would parse requirements.yml and lock versions
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
+        let mut sources: Vec<(String, PathBuf)> = Vec::new();
+        for play in &plays {
+            for key in ["pre_tasks", "tasks", "post_tasks", "handlers"] {
+                if let Some(tasks) = play.get(key).and_then(|value| value.as_sequence()) {
+                    Self::collect_task_sources(tasks, &base, &mut sources);
+                }
+            }
         }
 
-        // Example: detect roles from playbook
-        // This is a placeholder - real implementation would parse YAML
-        println!("  Detected 0 roles, 0 collections (stub implementation)");
+        sources.sort();
+        sources.dedup();
 
+        let mut locked = 0;
+        for (name, path) in sources {
+            match Self::file_checksum(&path) {
+                Ok(checksum) => {
+                    lockfile.add_resource(LockedResource {
+                        name,
+                        resource_type: ResourceType::File,
+                        location: path.to_string_lossy().to_string(),
+                        checksum: Some(checksum),
+                        git_ref: None,
+                    });
+                    locked += 1;
+                }
+                Err(error) => {
+                    println!("  Skipping {}: {}", path.display(), error);
+                }
+            }
+        }
+
+        let requirements = base.join("requirements.yml");
+        if requirements.exists() {
+            println!(
+                "  Found requirements.yml; roles and collections are not locked yet, so its \
+entries are not recorded."
+            );
+        }
+
+        println!("  Locked {} local file dependency(ies).", locked);
         Ok(())
+    }
+
+    /// Collect local sources from a task list, descending into blocks.
+    fn collect_task_sources(
+        tasks: &[serde_yaml::Value],
+        base: &Path,
+        sources: &mut Vec<(String, PathBuf)>,
+    ) {
+        for task in tasks {
+            let Some(mapping) = task.as_mapping() else {
+                continue;
+            };
+
+            for key in ["block", "rescue", "always"] {
+                if let Some(nested) = task.get(key).and_then(|value| value.as_sequence()) {
+                    Self::collect_task_sources(nested, base, sources);
+                }
+            }
+
+            for (module, args) in mapping {
+                let Some(module) = module.as_str() else {
+                    continue;
+                };
+                // `script: path args...` is a bare string; template and copy
+                // take a src argument.
+                let source = match module {
+                    "script" => args
+                        .as_str()
+                        .and_then(|value| value.split_whitespace().next())
+                        .map(str::to_string),
+                    "template" | "copy" | "ansible.builtin.template" | "ansible.builtin.copy" => {
+                        args.get("src")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string)
+                    }
+                    _ => None,
+                };
+                let Some(source) = source else { continue };
+
+                // A templated source is only known at run time.
+                if source.contains("{{") {
+                    continue;
+                }
+
+                if let Some(path) = Self::resolve_source(base, module, &source) {
+                    sources.push((source, path));
+                }
+            }
+        }
+    }
+
+    /// Resolve a source the way Ansible looks one up from a playbook.
+    fn resolve_source(base: &Path, module: &str, source: &str) -> Option<PathBuf> {
+        let candidate = Path::new(source);
+        if candidate.is_absolute() {
+            return candidate.is_file().then(|| candidate.to_path_buf());
+        }
+
+        let subdir = if module.ends_with("template") {
+            "templates"
+        } else {
+            "files"
+        };
+        [
+            base.join(source),
+            base.join(subdir).join(source),
+            base.join("files").join(source),
+        ]
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+    }
+
+    /// SHA-256 of a local file.
+    fn file_checksum(path: &Path) -> anyhow::Result<String> {
+        use sha2::{Digest, Sha256};
+
+        let mut file = std::fs::File::open(path)?;
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut file, &mut hasher)?;
+        Ok(format!("{:x}", hasher.finalize()))
     }
 }
 
