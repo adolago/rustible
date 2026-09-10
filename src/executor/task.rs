@@ -1323,6 +1323,60 @@ impl Task {
                 && matches!(ctx.host.as_str(), "localhost" | "127.0.0.1" | "::1"))
     }
 
+    /// Modules exercised against a live remote target.
+    ///
+    /// `tests/remote_modules_ssh_tests.rs` applies these through a real SSH
+    /// connection and checks the effect on the target.
+    const REMOTE_VERIFIED_MODULES: &'static [&'static str] = &[
+        "apt",
+        "authorized_key",
+        "command",
+        "copy",
+        "cron",
+        "file",
+        "gather_facts",
+        "git",
+        "group",
+        "lineinfile",
+        "package",
+        "script",
+        "setup",
+        "shell",
+        "stat",
+        "template",
+        "timezone",
+        "user",
+    ];
+
+    /// Modules whose implementation is connection-only but which no test
+    /// environment here can exercise end to end (they need systemd, a
+    /// firewall, an RPM distribution, mount privileges, and so on).
+    ///
+    /// Each one fails without a connection and performs every operation
+    /// through it, so it cannot fall back to the control node; what is missing
+    /// is live confirmation of the behavior, not the transport.
+    const REMOTE_CONNECTION_ONLY_MODULES: &'static [&'static str] = &[
+        "dnf",
+        "firewalld",
+        "get_url",
+        "hostname",
+        "locale",
+        "mount",
+        "pip",
+        "selinux",
+        "service",
+        "sysctl",
+        "systemd_unit",
+        "ufw",
+        "yum",
+    ];
+
+    /// Whether a module may run against a remote target.
+    fn has_remote_transport(module_name: &str) -> bool {
+        Self::REMOTE_VERIFIED_MODULES.contains(&module_name)
+            || Self::REMOTE_CONNECTION_ONLY_MODULES.contains(&module_name)
+    }
+
     /// Native modules may run locally only for an explicitly local inventory target.
     /// A missing or unsupported remote connection must never become a local fallback.
     async fn execute_native(
@@ -1349,36 +1403,10 @@ disabled"
                     .to_string(),
             }));
         }
-        // These implementations have a reviewed transport path. Classification
-        // alone is not sufficient: several filesystem modules operate on
-        // std::fs and would silently act on the control node. Every module
-        // below fails without a connection and runs all of its work through
-        // it.
-        if !local
-            && !matches!(
-                module_name,
-                "command"
-                    | "shell"
-                    | "copy"
-                    | "template"
-                    | "gather_facts"
-                    | "setup"
-                    | "apt"
-                    | "cron"
-                    | "group"
-                    | "hostname"
-                    | "package"
-                    | "service"
-                    | "sysctl"
-                    | "timezone"
-                    | "user"
-                    | "file"
-                    | "stat"
-                    | "lineinfile"
-                    | "authorized_key"
-                    | "script"
-            )
-        {
+        // Classification alone is not sufficient: several modules operate on
+        // std::fs and would silently act on the control node, so a module may
+        // only run remotely once its transport path has been reviewed.
+        if !local && !Self::has_remote_transport(module_name) {
             return Ok(TaskResult::failed(format!(
                 "Module '{module_name}' does not have a verified remote transport"
             )));

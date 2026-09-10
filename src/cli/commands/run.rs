@@ -215,6 +215,19 @@ fn save_task_cache(
     }
 }
 
+/// Read an inventory value that may be written as a YAML bool or a string.
+fn yaml_bool(value: &serde_yaml::Value) -> Option<bool> {
+    match value {
+        serde_yaml::Value::Bool(value) => Some(*value),
+        serde_yaml::Value::String(text) => match text.to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => Some(true),
+            "false" | "no" | "off" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Build transport configuration for every inventory host.
 ///
 /// The executor reaches hosts through a [`ConnectionFactory`]; without one
@@ -237,6 +250,8 @@ fn build_connection_config(
 
     for host in inventory.hosts() {
         let ssh = &host.connection.ssh;
+        // Group variables matter here too, so read the merged set.
+        let vars = inventory.get_host_vars(host);
         let host_config = HostConfig {
             hostname: host.ansible_host.clone(),
             port: Some(ssh.port),
@@ -250,6 +265,11 @@ fn build_connection_config(
                 .or_else(|| cli_private_key.map(|path| path.to_string_lossy().to_string())),
             connect_timeout: Some(timeout),
             connection: Some(host.connection.connection.to_string()),
+            strict_host_key_checking: vars.get("ansible_host_key_checking").and_then(yaml_bool),
+            user_known_hosts_file: vars
+                .get("ansible_ssh_known_hosts_file")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
             ..Default::default()
         };
         config.add_host(host.name.clone(), host_config);

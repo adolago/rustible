@@ -74,7 +74,7 @@ impl SshTarget {
         fs::write(
             dir.path().join("Dockerfile"),
             r#"FROM debian:13-slim
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-server cron tzdata \
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-server cron tzdata git \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /root/.ssh /run/sshd \
     && sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
@@ -126,6 +126,8 @@ CMD ["/usr/sbin/sshd", "-D", "-e"]
 
     fn write_inventory(&self) -> PathBuf {
         let path = self.dir.path().join("inventory.yml");
+        // Each container generates its own host key, so the run gets a
+        // throwaway known_hosts file instead of touching the user's.
         fs::write(
             &path,
             format!(
@@ -137,9 +139,11 @@ all:
       ansible_port: {}
       ansible_user: root
       ansible_ssh_private_key_file: {}
+      ansible_ssh_known_hosts_file: {}
 "#,
                 SSH_PORT,
-                self.key_path().display()
+                self.key_path().display(),
+                self.dir.path().join("known_hosts").display()
             ),
         )
         .expect("write inventory");
@@ -425,6 +429,64 @@ fn file_editing_modules_act_on_the_target() {
     assert!(
         second.contains("changed=1") && second.contains("failed=0"),
         "second run should be idempotent apart from the script:\n{}",
+        second
+    );
+}
+
+#[test]
+fn git_clones_on_the_target() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+
+    let target = SshTarget::start();
+    let inventory = target.write_inventory();
+
+    // Seed a bare repository inside the container so the clone needs no
+    // network access.
+    target.exec(
+        "git init -q --bare /srv/origin/demo.git \
+         && git clone -q /srv/origin/demo.git /tmp/seed \
+         && cd /tmp/seed \
+         && git config user.email t@example.com && git config user.name test \
+         && echo hello > README && git add README && git commit -qm init \
+         && git push -q origin HEAD:main",
+    );
+
+    let playbook = target.write_playbook(
+        r#"---
+- name: Clone a repository
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Clone
+      git:
+        repo: /srv/origin/demo.git
+        dest: /opt/demo
+        version: main
+"#,
+    );
+
+    let first = run_playbook(&inventory, &playbook);
+    assert!(
+        first.contains("changed=1") && first.contains("failed=0"),
+        "the clone should happen on the target:\n{}",
+        first
+    );
+    assert!(
+        target.exec("cat /opt/demo/README").contains("hello"),
+        "the working tree should exist inside the container"
+    );
+    assert!(
+        !Path::new("/opt/demo").exists(),
+        "nothing should have been cloned on the control node"
+    );
+
+    let second = run_playbook(&inventory, &playbook);
+    assert!(
+        second.contains("changed=0"),
+        "a second clone of the same version should report no change:\n{}",
         second
     );
 }
