@@ -298,6 +298,9 @@ is satisfied on a candidate commit.
 | Task | Status | Notes |
 |------|--------|-------|
 | Docs/source-of-truth cleanup | :construction: In progress | Consolidate status in `FEATURE_STATUS.md`, then keep README and roadmap aligned. |
+| CLI transport for remote hosts | :white_check_mark: Complete | `rustible run` builds a connection factory from the inventory; before this every remote task reported "requires an established connection". |
+| Remote module coverage | :test_tube: Partial | 18 modules verified against a live SSH target; the rest are refused remotely or listed as connection-only. See `FEATURE_STATUS.md`. |
+| Privilege escalation | :test_tube: Partial | `become` reaches the target for modules that pass it into their commands; transfer-based modules and control-node escalation are refused. |
 | Default CI baseline | :construction: In progress | The remaining beta gate is a consistently green default CI/test suite. |
 | CLI smoke coverage | :white_check_mark: Complete | `scripts/smoke_tests.sh` and `tests/cli_smoke_tests.rs` exercise `run`, `check`, and `vault`, and the default CI path runs them explicitly. |
 | Lock rollback execution | :test_tube: Implemented (Beta quality) | `rustible lock rollback` uses snapshot-backed checkpoints, supports dry-run, and executes live rollback actions. |
@@ -330,7 +333,9 @@ is satisfied on a candidate commit.
 
 ### State Management
 
-**Drift Detection:**
+**Drift Detection:** :white_check_mark: Implemented as `rustible drift detect`,
+checking each host through its own connection. An unreachable host reports
+unknown rather than "in sync".
 
 ```bash
 rustible drift-check -i inventory.yml
@@ -343,7 +348,9 @@ web2.example.com: DRIFTED
 db1.example.com: OK
 ```
 
-**State Caching:**
+**State Caching:** :white_check_mark: Implemented as `rustible run --cache-state`.
+A task whose module, arguments, host and local sources hash the same as a
+previous no-op run is skipped; the cache lives in `.rustible/state/task-cache.json`.
 
 ```rust
 pub struct StateCache {
@@ -362,7 +369,9 @@ pub struct StateKey {
 - On re-run: compare hash, skip if unchanged
 - **Target**: "Instant" re-runs for unchanged configurations
 
-**Lockfile Support:**
+**Lockfile Support:** :test_tube: Partial. `rustible lock` records the local
+files a playbook depends on with their checksums, and `lock verify` detects an
+edit. Roles and collections need Galaxy resolution and are not locked yet.
 
 ```yaml
 # rustible.lock
@@ -378,7 +387,11 @@ variables:
 
 ### Advanced Execution
 
-**Dependency Graph Execution (DAG):**
+**Dependency Graph Execution (DAG):** :white_check_mark: Implemented. Tasks
+declare `provides` and `requires`; the play is reordered with a stable
+topological sort, blocks move as one unit, and a missing provider or a cycle
+fails the play before anything runs. Independent tasks keep their authored
+order rather than running concurrently within a host.
 
 ```yaml
 - name: Install database
@@ -399,7 +412,10 @@ variables:
   requires: [db_config, app]
 ```
 
-**Transactional Rollback:**
+**Transactional Rollback:** :white_check_mark: Implemented. `rustible run
+--checkpoint [NAME]` records each managed resource's prior state, and
+`rustible lock <playbook> rollback <NAME>` undoes file, package, service, user
+and group changes (with `--dry-run` to see the plan first).
 
 ```bash
 rustible run playbook.yml --checkpoint
@@ -413,7 +429,11 @@ rustible checkpoints web1.example.com
 
 ### Performance Enhancements
 
-**Pipelined SSH:**
+**Pipelined SSH:** :test_tube: Partial. Fact gathering, which dominates the
+cost of touching a host, now sends its ~20 commands as one batched script
+instead of one round trip each. General task pipelining is not implemented;
+the pipelined executor in `src/connection/pipelining.rs` is available to
+callers but the executor does not use it.
 
 ```rust
 // Current: 1 command = 1 round-trip
@@ -430,7 +450,11 @@ ssh.pipeline(&[
 
 Expected: 2-3x improvement on top of existing 11x (total: 20-30x)
 
-**Native Module Bindings:**
+**Native Module Bindings:** :test_tube: Partial. On the control node, user,
+group and package checks read `/etc/passwd`, `/etc/group` and the dpkg status
+file directly instead of spawning `id`, `getent` and `dpkg-query`. Remote
+targets still shell out, and systemd still goes through `systemctl` rather
+than D-Bus.
 
 | Module | Current | Target | Expected Gain |
 |--------|---------|--------|---------------|
@@ -438,7 +462,11 @@ Expected: 2-3x improvement on top of existing 11x (total: 20-30x)
 | systemctl | Shell out | D-Bus bindings | 2x |
 | user/group | Shell out | Native /etc/passwd | 1.5x |
 
-**Binary Agent Mode:**
+**Binary Agent Mode:** :test_tube: Partial. `rustible agent build`, `deploy`,
+`status` and `stop` manage the agent binary, and `rustible run --agent-mode`
+routes command execution through it. The deployed agent answers one request per
+invocation; the persistent listening runtime exists in the library but is not
+what `deploy` installs.
 
 ```bash
 # Compile small Rust binary for target
@@ -453,12 +481,12 @@ rustible run --agent-mode playbook.yml
 | Feature | Status | Target |
 |---------|--------|--------|
 | Playbook syntax | :white_check_mark: Complete | 100% |
-| Module compatibility | ~90% | 95%+ |
+| Module compatibility | Local: broad; remote: 18 verified modules | 95%+ |
 | Ansible Galaxy | :white_check_mark: Complete | Full support |
 | Callback plugins | :white_check_mark: Complete | Native + Python support |
 | Dynamic inventory | :white_check_mark: Complete | Full plugin system |
 | Lookup plugins | :white_check_mark: Complete | Full support |
-| Filter plugins | Partial | Full Jinja2 filters |
+| Filter plugins | :white_check_mark: Complete | Registered in the production engine; `json_query`, `vault`/`unvault` and advanced `ipaddr` queries remain out |
 
 ### Connection Enhancements
 
@@ -492,8 +520,9 @@ We track community requests and prioritize based on demand and alignment with pr
 | [Provider ecosystem](architecture/provider-ecosystem.md) | - | :construction: Design tracked in architecture docs | Medium |
 | [Declarative resource graph](architecture/resource-graph-model.md) | - | :construction: Design tracked in architecture docs | Medium |
 | [Compatibility gap plan](architecture/ansible-compat-gap.md) | - | Under consideration | Medium |
-| YAML anchor/alias support | - | Investigating | Medium |
+| YAML anchor/alias support | - | :white_check_mark: Complete | Medium |
 | Parallel role execution | - | Investigating | Medium |
+| Remote execution for the remaining modules | - | :construction: In progress | High |
 | Database modules (MySQL/PostgreSQL) | - | :white_check_mark: Complete | High |
 
 ### Feature Request Template
@@ -692,8 +721,8 @@ Brief description of changes.
 | Speed | Slow | Fast | **11x faster** | 20-30x faster |
 | Idempotency | Honor system | Guaranteed | Trait-enforced | + State tracking |
 | Reproducibility | Best effort | Perfect | Basic | Lockfile-based |
-| Rollback | Manual | Built-in | Not yet | Checkpoints |
-| Drift detection | None | Implicit | Not yet | Explicit |
+| Rollback | Manual | Built-in | Checkpoints (`run --checkpoint`) | Checkpoints |
+| Drift detection | None | Implicit | `drift detect` | Explicit |
 | Learning curve | Low | High | **Low** | Low |
 | Existing infra | Works | Needs NixOS | **Works** | Works |
 
@@ -712,6 +741,6 @@ Brief description of changes.
 
 ---
 
-*Last updated: April 2026*
+*Last updated: September 2026*
 
 *For the latest updates, see [GitHub Releases](https://github.com/rustible/rustible/releases)*
