@@ -45,14 +45,38 @@ fn run(program: &str, args: &[&str]) -> (bool, String, String) {
     )
 }
 
-fn rustible_binary() -> PathBuf {
-    // The integration test binary lives next to the CLI binary.
+fn binary_dir() -> PathBuf {
+    // The integration test binary lives next to the CLI binaries.
     let mut path = std::env::current_exe().expect("test binary path");
     path.pop();
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join("rustible")
+    path
+}
+
+fn rustible_binary() -> PathBuf {
+    binary_dir().join("rustible")
+}
+
+fn agent_binary() -> PathBuf {
+    binary_dir().join("rustible-agent")
+}
+
+/// Run a rustible subcommand and return its combined output.
+fn run_cli(args: &[&str]) -> (bool, String) {
+    let output = Command::new(rustible_binary())
+        .args(args)
+        .output()
+        .expect("failed to run rustible");
+    (
+        output.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
 }
 
 /// A disposable sshd container with a key-based root login.
@@ -618,5 +642,114 @@ fn become_is_refused_for_modules_that_cannot_escalate() {
             .trim()
             .is_empty(),
         "the refused task must not have written to the target"
+    );
+}
+
+#[test]
+fn agent_deploys_and_reports_status() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+    let agent = agent_binary();
+    assert!(
+        agent.is_file(),
+        "the rustible-agent binary should be built alongside the CLI"
+    );
+
+    let target = SshTarget::start();
+    let inventory = target.write_inventory();
+
+    let (ok, output) = run_cli(&[
+        "agent",
+        "deploy",
+        "-i",
+        inventory.to_str().unwrap(),
+        "--binary",
+        agent.to_str().unwrap(),
+    ]);
+    assert!(ok, "agent deploy should succeed:\n{}", output);
+    assert!(
+        target
+            .exec("test -x /usr/local/bin/rustible-agent && echo present")
+            .contains("present"),
+        "the agent binary should be executable on the target"
+    );
+
+    let (ok, output) = run_cli(&["agent", "status", "-i", inventory.to_str().unwrap()]);
+    assert!(ok, "agent status should succeed:\n{}", output);
+    assert!(
+        output.contains("version"),
+        "status should report the agent version:\n{}",
+        output
+    );
+
+    // Stopping with no listening agent is a no-op, not a failure.
+    let (ok, output) = run_cli(&["agent", "stop", "-i", inventory.to_str().unwrap()]);
+    assert!(ok, "agent stop should succeed:\n{}", output);
+}
+
+#[test]
+fn agent_mode_runs_tasks_through_the_agent() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+
+    let target = SshTarget::start();
+    let inventory = target.write_inventory();
+
+    let (ok, output) = run_cli(&[
+        "agent",
+        "deploy",
+        "-i",
+        inventory.to_str().unwrap(),
+        "--binary",
+        agent_binary().to_str().unwrap(),
+    ]);
+    assert!(ok, "agent deploy should succeed:\n{}", output);
+
+    let playbook = target.write_playbook(
+        r#"---
+- name: Agent mode
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Run a command through the agent
+      command: hostname
+
+    - name: Create a marker
+      file:
+        path: /tmp/agent-mode-marker
+        state: touch
+"#,
+    );
+
+    let (ok, output) = run_cli(&[
+        "run",
+        "-i",
+        inventory.to_str().unwrap(),
+        playbook.to_str().unwrap(),
+        "--agent-mode",
+    ]);
+    assert!(ok, "the agent-mode run should succeed:\n{}", output);
+    assert!(
+        output.contains("failed=0") && output.contains("unreachable=0"),
+        "no task should fail in agent mode:\n{}",
+        output
+    );
+    assert!(
+        target
+            .exec("test -e /tmp/agent-mode-marker && echo present")
+            .contains("present"),
+        "the task should have run on the target"
+    );
+    // The agent counts what it executed, which is how we know commands went
+    // through it rather than straight over SSH.
+    let status = target.exec("/usr/local/bin/rustible-agent --status");
+    assert!(
+        status.contains("\"tasks_executed\""),
+        "the agent should report its own status:\n{}",
+        status
     );
 }

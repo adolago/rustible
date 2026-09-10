@@ -487,6 +487,13 @@ impl ErrorCodeRegistry {
     pub fn get(&self, code: &str) -> Option<&ErrorCodeInfo> {
         self.codes.get(code)
     }
+
+    /// Every known code, ordered by code.
+    pub fn all(&self) -> Vec<&ErrorCodeInfo> {
+        let mut codes: Vec<&ErrorCodeInfo> = self.codes.values().collect();
+        codes.sort_by(|left, right| left.code.cmp(&right.code));
+        codes
+    }
 }
 
 fn insert_code(

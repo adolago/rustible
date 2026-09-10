@@ -249,17 +249,28 @@ pub struct ExecuteParams {
     /// Command to execute
     pub command: String,
     /// Working directory
+    #[serde(default)]
     pub cwd: Option<String>,
     /// Environment variables
+    #[serde(default)]
     pub env: HashMap<String, String>,
     /// Requested timeout in seconds (currently not enforced by the runtime).
+    #[serde(default)]
     pub timeout: Option<u64>,
     /// Requested user; any supplied value is unsupported and rejected.
+    #[serde(default)]
     pub user: Option<String>,
     /// Requested group; any supplied value is unsupported and rejected.
+    #[serde(default)]
     pub group: Option<String>,
     /// Use shell (vs direct exec)
+    #[serde(default = "default_shell")]
     pub shell: bool,
+}
+
+/// Requests default to shell execution, as the connection layer sends.
+fn default_shell() -> bool {
+    true
 }
 
 /// Command execution result
@@ -351,10 +362,17 @@ impl AgentBuilder {
         // Ensure output directory exists
         std::fs::create_dir_all(&self.config.output_dir)?;
 
+        // Building for the host triple deliberately omits --target: cargo then
+        // reuses the ordinary target directory instead of rebuilding every
+        // dependency under target/<triple>.
+        let cross_compiling = self.config.target != current_target();
+
         let mut cmd = Command::new("cargo");
         cmd.arg("build");
         cmd.arg("--bin").arg("rustible-agent");
-        cmd.arg("--target").arg(&self.config.target);
+        if cross_compiling {
+            cmd.arg("--target").arg(&self.config.target);
+        }
 
         if self.config.release {
             cmd.arg("--release");
@@ -382,10 +400,15 @@ impl AgentBuilder {
         } else {
             "rustible-agent"
         };
-        let src_path = PathBuf::from("target")
-            .join(&self.config.target)
-            .join(profile)
-            .join(binary_name);
+        let target_dir = std::env::var("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("target"));
+        let src_path = if cross_compiling {
+            target_dir.join(&self.config.target).join(profile)
+        } else {
+            target_dir.join(profile)
+        }
+        .join(binary_name);
 
         let dest_path = self
             .config
@@ -777,11 +800,20 @@ impl AgentRuntime {
             c
         };
 
-        // Set working directory
-        if let Some(cwd) = &params.cwd {
-            cmd.current_dir(cwd);
-        } else {
-            cmd.current_dir(&self.config.work_dir);
+        // Set working directory. A one-shot invocation never went through
+        // start(), so the configured work directory may not exist yet; create
+        // it, and fall back to the current directory rather than failing every
+        // command with "No such file or directory".
+        match &params.cwd {
+            Some(cwd) => {
+                cmd.current_dir(cwd);
+            }
+            None => {
+                let work_dir = &self.config.work_dir;
+                if work_dir.is_dir() || std::fs::create_dir_all(work_dir).is_ok() {
+                    cmd.current_dir(work_dir);
+                }
+            }
         }
 
         // Set environment variables
@@ -1034,12 +1066,10 @@ impl AgentClient {
 
 /// Get the current target triple
 pub fn current_target() -> String {
-    format!(
-        "{}-{}-{}",
-        std::env::consts::ARCH,
-        std::env::consts::OS,
-        "gnu" // Simplified; could be more precise
-    )
+    // Rust triples are <arch>-<vendor>-<os>[-<env>]; building one from the
+    // arch and OS alone produced strings cargo rejects, such as
+    // "x86_64-linux-gnu". The compiler records the real triple at build time.
+    env!("RUSTIBLE_HOST_TARGET").to_string()
 }
 
 /// Collect host information

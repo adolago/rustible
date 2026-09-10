@@ -107,6 +107,20 @@ pub struct RunArgs {
     #[arg(long)]
     pub no_pipelining: bool,
 
+    /// Run commands through the rustible-agent binary on each target
+    ///
+    /// Deploy it first with `rustible agent deploy`.
+    #[arg(long)]
+    pub agent_mode: bool,
+
+    /// Path of the agent binary on the target
+    #[arg(
+        long,
+        value_name = "PATH",
+        default_value = "/usr/local/bin/rustible-agent"
+    )]
+    pub agent_path: String,
+
     /// Skip tasks whose inputs are unchanged since the last run
     ///
     /// A task is skipped only when an earlier run with identical module
@@ -883,12 +897,18 @@ impl RunArgs {
             self.private_key.as_deref(),
             ctx.timeout,
         );
-        executor = executor.with_connection_factory(
-            rustible::connection::ConnectionFactory::with_pool_size(
-                connection_config,
-                ctx.forks.max(1),
-            ),
+        let mut connection_factory = rustible::connection::ConnectionFactory::with_pool_size(
+            connection_config,
+            ctx.forks.max(1),
         );
+        if self.agent_mode {
+            ctx.output.info(&format!(
+                "Agent mode: commands run through {}",
+                self.agent_path
+            ));
+            connection_factory = connection_factory.with_agent_path(self.agent_path.clone());
+        }
+        executor = executor.with_connection_factory(connection_factory);
 
         // Cross-run task state cache, persisted next to the playbook. Check
         // mode has to report what a real run would do, so it never reuses a

@@ -70,14 +70,8 @@ async fn main() -> Result<()> {
         }
         Commands::Provider(args) => cli::commands::provider::execute(args, &ctx).await?,
         Commands::State(args) => args.execute(&mut ctx).await?,
-        Commands::Explain(_args) => {
-            ctx.output.error("Not yet implemented");
-            1
-        }
-        Commands::Agent(_args) => {
-            ctx.output.error("Not yet implemented");
-            1
-        }
+        Commands::Explain(args) => explain_error_code(args, &mut ctx),
+        Commands::Agent(args) => cli::commands::agent::execute(&args.command, &mut ctx).await?,
         Commands::Fleet(args) => args.execute(&mut ctx).await?,
         #[cfg(feature = "provisioning")]
         Commands::Migrate(args) => args.execute(&mut ctx).await?,
@@ -107,6 +101,51 @@ fn init_logging(verbosity: u8) {
         .with(fmt::layer().with_target(verbosity >= 3))
         .with(env_filter)
         .init();
+}
+
+/// Explain an error code, or list the known codes.
+fn explain_error_code(args: &cli::ExplainArgs, ctx: &mut CommandContext) -> i32 {
+    use rustible::diagnostics::rich_errors::ErrorCodeRegistry;
+
+    let registry = ErrorCodeRegistry::new();
+
+    if args.list {
+        ctx.output.banner("RUSTIBLE ERROR CODES");
+        for info in registry.all() {
+            // `plan` prints unconditionally; `info` is verbosity-gated and the
+            // whole point of this command is the output.
+            ctx.output.plan(&format!("{}  {}", info.code, info.title));
+        }
+        return 0;
+    }
+
+    let Some(code) = args.code.as_deref() else {
+        ctx.output
+            .error("Provide an error code (for example E0001) or --list");
+        return 1;
+    };
+
+    // Accept both `E0001` and `e0001`.
+    let code = code.to_ascii_uppercase();
+    let Some(info) = registry.get(&code) else {
+        ctx.output.error(&format!("Unknown error code '{}'", code));
+        ctx.output
+            .info("Run `rustible explain --list` to see the known codes.");
+        return 1;
+    };
+
+    ctx.output.banner(&format!("{}: {}", info.code, info.title));
+    ctx.output.plan(&info.explanation);
+
+    if !info.causes.is_empty() {
+        ctx.output.list("Common causes", &info.causes);
+    }
+
+    if !info.fixes.is_empty() {
+        ctx.output.list("Suggested fixes", &info.fixes);
+    }
+
+    0
 }
 
 /// Initialize a new Rustible project

@@ -62,6 +62,8 @@ The `run` command executes an Ansible-compatible playbook against the specified 
 | `--ssh-common-args <ARGS>` | - | Additional SSH arguments | - |
 | `--cache-state` | - | Skip tasks whose inputs are unchanged since the last run | false |
 | `--cache-state-ttl <SECONDS>` | - | How long a cached task result stays valid | 3600 |
+| `--agent-mode` | - | Run commands through the agent binary on each target | false |
+| `--agent-path <PATH>` | - | Path of the agent binary on the target | `/usr/local/bin/rustible-agent` |
 
 ### Examples
 
@@ -629,6 +631,75 @@ privilege_escalation:
   become_method: sudo
   become_user: root
 ```
+
+---
+
+## rustible agent
+
+Build, deploy and inspect the agent binary that can run tasks on a target.
+
+### Synopsis
+
+```bash
+rustible agent build [--target <TRIPLE>] [--debug] [-o <DIR>]
+rustible agent deploy -i <INVENTORY> (--binary <PATH> | --build) [--remote-path <PATH>]
+rustible agent status -i <INVENTORY> [--detailed]
+rustible agent stop -i <INVENTORY> [--force]
+```
+
+### Description
+
+`rustible run --agent-mode` sends each command to the agent on the target
+instead of running it directly over the transport. File transfers keep using
+the transport itself.
+
+### Examples
+
+**Build for the host and deploy to an inventory:**
+```bash
+rustible agent build --debug -o /tmp/agent
+rustible agent deploy -i inventory.yml --binary /tmp/agent/rustible-agent-x86_64-unknown-linux-gnu
+```
+
+**Check which hosts have an agent:**
+```bash
+rustible agent status -i inventory.yml --detailed
+```
+
+**Run a playbook through the deployed agents:**
+```bash
+rustible run -i inventory.yml site.yml --agent-mode
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | A host could not be reached, or has no agent |
+
+---
+
+## rustible explain
+
+Explain a Rustible error code.
+
+### Synopsis
+
+```bash
+rustible explain <CODE>
+rustible explain --list
+```
+
+### Examples
+
+```bash
+rustible explain E0003
+rustible explain --list
+```
+
+Each entry gives the meaning of the code, its common causes and suggested
+fixes.
 
 ---
 

@@ -667,6 +667,8 @@ pub struct ConnectionFactory {
     config: Arc<ConnectionConfig>,
     /// Connection pool
     pool: AsyncConnectionPool,
+    /// Path of the agent binary on the target, when agent mode is enabled
+    agent_path: Option<String>,
 }
 
 impl ConnectionFactory {
@@ -675,6 +677,7 @@ impl ConnectionFactory {
         Self {
             config: Arc::new(config),
             pool: AsyncConnectionPool::new(10), // Default pool size of 10
+            agent_path: None,
         }
     }
 
@@ -683,6 +686,27 @@ impl ConnectionFactory {
         Self {
             config: Arc::new(config),
             pool: AsyncConnectionPool::new(pool_size),
+            agent_path: None,
+        }
+    }
+
+    /// Route commands through the agent binary at `path` on each target.
+    ///
+    /// File transfers keep using the underlying transport; only command
+    /// execution goes through the agent.
+    pub fn with_agent_path(mut self, path: impl Into<String>) -> Self {
+        self.agent_path = Some(path.into());
+        self
+    }
+
+    /// Wrap a transport in the agent when agent mode is enabled.
+    fn apply_agent_mode(
+        &self,
+        connection: Arc<dyn Connection + Send + Sync>,
+    ) -> Arc<dyn Connection + Send + Sync> {
+        match &self.agent_path {
+            Some(path) => Arc::new(agent::AgentConnection::new(connection, path.clone(), None)),
+            None => connection,
         }
     }
 
@@ -699,7 +723,7 @@ impl ConnectionFactory {
 
         if let Some(conn) = pooled_conn {
             if conn.is_alive().await {
-                return Ok(conn);
+                return Ok(self.apply_agent_mode(conn));
             }
             self.pool.remove(&pool_key).await;
         }
@@ -709,13 +733,14 @@ impl ConnectionFactory {
         // file, timeouts and jump host.
         let conn = self.create_connection(host, &conn_type).await?;
 
-        // Add to pool
+        // Add to pool. The pool holds the plain transport so the agent
+        // wrapper is applied per handout.
         let pooled = self.pool.put(pool_key, conn.clone()).await;
         if !pooled {
             tracing::debug!("Connection pool full, returning unpooled connection");
         }
 
-        Ok(conn)
+        Ok(self.apply_agent_mode(conn))
     }
 
     /// Resolve a host name to a connection type
