@@ -1349,12 +1349,29 @@ disabled"
                     .to_string(),
             }));
         }
-        // These implementations have a reviewed transport path. Classification alone
-        // is not sufficient: several filesystem modules ignore ModuleContext.connection.
+        // These implementations have a reviewed transport path. Classification
+        // alone is not sufficient: several filesystem modules operate on
+        // std::fs and would silently act on the control node. Every module
+        // below fails without a connection and runs all of its work through
+        // it.
         if !local
             && !matches!(
                 module_name,
-                "command" | "shell" | "copy" | "template" | "gather_facts" | "setup"
+                "command"
+                    | "shell"
+                    | "copy"
+                    | "template"
+                    | "gather_facts"
+                    | "setup"
+                    | "apt"
+                    | "cron"
+                    | "group"
+                    | "hostname"
+                    | "package"
+                    | "service"
+                    | "sysctl"
+                    | "timezone"
+                    | "user"
             )
         {
             return Ok(TaskResult::failed(format!(
