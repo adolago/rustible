@@ -259,8 +259,260 @@ fn test_select_reject_map_filters() {
         render_expr_json("items | rejectattr('enabled')", context.clone()),
         json!([{"name": "b", "enabled": false}])
     );
+    // Jinja2 semantics: `map(attribute=...)` extracts a member, while
+    // `map('filter')` applies a named filter to every element.
     assert_eq!(
-        render_expr_json("items | map('name')", context),
+        render_expr_json("items | map(attribute='name')", context.clone()),
         json!(["a", "b"])
+    );
+    assert_eq!(
+        render_expr_json(
+            "items | map(attribute='name') | map('upper')",
+            context.clone()
+        ),
+        json!(["A", "B"])
+    );
+    assert_eq!(
+        render_expr_json("items | selectattr('name', 'equalto', 'b')", context),
+        json!([{"name": "b", "enabled": false}])
+    );
+}
+
+// ============================================================================
+// Tests: filter plugins reachable from the production engine
+//
+// These filters live in `src/plugins/filter` and are registered through
+// `FilterRegistry`; the cases below pin the behavior playbooks see.
+// ============================================================================
+
+#[test]
+fn test_regex_plugin_filters() {
+    assert_eq!(
+        render_expr_json(r#""a1b22c333"|regex_findall("\\d+")"#, json!({})),
+        json!(["1", "22", "333"])
+    );
+    assert_eq!(
+        render_expr_json(r#""a.b"|regex_escape"#, json!({})),
+        json!("a\\.b")
+    );
+    assert_eq!(
+        render_expr_json(r#""a1b2"|regex_split("\\d")"#, json!({})),
+        json!(["a", "b", ""])
+    );
+}
+
+#[test]
+fn test_hash_filters() {
+    assert_eq!(
+        render_expr_json(r#""hello"|hash("md5")"#, json!({})),
+        json!("5d41402abc4b2a76b9719d911017c592")
+    );
+    assert_eq!(
+        render_expr_json(r#""hello"|checksum"#, json!({})),
+        json!("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
+    );
+    // crypt(3)-compatible output, verified against `openssl passwd -6`.
+    assert_eq!(
+        render_expr_json(
+            r#""Hello world!"|password_hash("sha512", "saltstring")"#,
+            json!({})
+        ),
+        json!("$6$saltstring$svn8UoSVapNtMuq1ukKS4tPQd8iKwSMHWjl/O817G3uBnIFNjnQJuesI68u4OTLiBFdcbYEdFCoEOfaS35inz1")
+    );
+}
+
+#[test]
+fn test_set_filters() {
+    assert_eq!(
+        render_expr_json("[1, 2, 3] | union([3, 4])", json!({})),
+        json!([1, 2, 3, 4])
+    );
+    assert_eq!(
+        render_expr_json("[1, 2, 3] | difference([3])", json!({})),
+        json!([1, 2])
+    );
+    assert_eq!(
+        render_expr_json("[1, 2, 3] | intersect([2, 3, 5])", json!({})),
+        json!([2, 3])
+    );
+    assert_eq!(
+        render_expr_json("[1, 2] | symmetric_difference([2, 3])", json!({})),
+        json!([1, 3])
+    );
+}
+
+#[test]
+fn test_path_plugin_filters() {
+    // Ansible's path_join takes the segments as a list.
+    assert_eq!(
+        render_expr_json(r#"["/etc", "nginx.conf"]|path_join"#, json!({})),
+        json!("/etc/nginx.conf")
+    );
+    assert_eq!(
+        render_expr_json(r#""/tmp/file.txt"|splitext"#, json!({})),
+        json!(["/tmp/file", ".txt"])
+    );
+    assert_eq!(
+        render_expr_json(r#""C:\\dir\\file.txt"|win_basename"#, json!({})),
+        json!("file.txt")
+    );
+}
+
+#[test]
+fn test_math_plugin_filters() {
+    assert_eq!(render_expr_json("8 | log(2)", json!({})), json!(3.0));
+    assert_eq!(render_expr_json("2 | pow(10)", json!({})), json!(1024.0));
+    assert_eq!(render_expr_json("8 | root(3)", json!({})), json!(2.0));
+    assert_eq!(
+        render_expr_json("1269730 | human_readable", json!({})),
+        json!("1.21 MB")
+    );
+    assert_eq!(
+        render_expr_json(r#""1.5 GB"|human_to_bytes"#, json!({})),
+        json!(1610612736i64)
+    );
+}
+
+#[test]
+fn test_network_filters() {
+    assert_eq!(
+        render_expr_json(r#""192.168.0.5/24"|ipaddr("network")"#, json!({})),
+        json!("192.168.0.0")
+    );
+    assert_eq!(
+        render_expr_json(r#"["10.0.0.1", "bogus"]|ipaddr"#, json!({})),
+        json!(["10.0.0.1"])
+    );
+    assert_eq!(
+        render_expr_json(r#""10.0.0.0/8"|nthhost(305)"#, json!({})),
+        json!("10.0.1.49")
+    );
+    assert_eq!(
+        render_expr_json(r#""192.168.0.0/16"|ipsubnet(20, 1)"#, json!({})),
+        json!("192.168.16.0/20")
+    );
+}
+
+#[test]
+fn test_string_plugin_filters() {
+    assert_eq!(
+        render_expr_json(r#""ab"|center(6)"#, json!({})),
+        json!("  ab  ")
+    );
+    assert_eq!(
+        render_expr_json(r#""hello wonderful world"|truncate(12)"#, json!({})),
+        json!("hello...")
+    );
+    assert_eq!(
+        render_expr_json(r#""notice"|comment"#, json!({})),
+        json!("#\n# notice\n#")
+    );
+    assert_eq!(
+        render_expr_json(r#""example"|to_uuid"#, json!({})),
+        json!("0cd629ef-c3f7-5d62-98fc-b4270497b261")
+    );
+    assert_eq!(
+        render_expr_json(r#"[1, 2]|type_debug"#, json!({})),
+        json!("list")
+    );
+}
+
+#[test]
+fn test_datetime_filters() {
+    assert_eq!(
+        render_expr_json(r#""%Y-%m-%d"|strftime(1666011400, true)"#, json!({})),
+        json!("2022-10-17")
+    );
+    assert_eq!(
+        render_expr_json(r#""12/12/2019"|to_datetime("%m/%d/%Y")"#, json!({})),
+        json!("2019-12-12 00:00:00")
+    );
+}
+
+#[test]
+fn test_collection_plugin_filters() {
+    assert_eq!(
+        render_expr_json("[1, 2, 3] | permutations(2) | length", json!({})),
+        json!(6)
+    );
+    assert_eq!(
+        render_expr_json("[1, 2, 3] | combinations(2) | length", json!({})),
+        json!(3)
+    );
+    assert_eq!(
+        render_expr_json("[0, 2] | map('extract', ['a', 'b', 'c']) | list", json!({})),
+        json!(["a", "c"])
+    );
+    assert_eq!(
+        render_expr_json(
+            "[{'name': 'a', 'port': 80}] | rekey_on_member('name')",
+            json!({})
+        ),
+        json!({"a": {"name": "a", "port": 80}})
+    );
+    assert_eq!(
+        render_expr_json("[1, none, [2, none]] | flatten", json!({})),
+        json!([1, 2])
+    );
+}
+
+#[test]
+fn test_encoding_plugin_filters() {
+    assert_eq!(
+        render_expr_json(r#""a b"|quote"#, json!({})),
+        json!("'a b'")
+    );
+    assert_eq!(
+        render_expr_json(
+            r#""https://example.com/a?b=1"|urlsplit("hostname")"#,
+            json!({})
+        ),
+        json!("example.com")
+    );
+}
+
+#[test]
+fn test_jinja_builtin_collection_filters_are_available() {
+    // These come from MiniJinja rather than Rustible, but playbooks rely on
+    // them, so a registration mistake must fail here.
+    assert_eq!(
+        render_expr_json("[3, 1, 2] | sort(reverse=true)", json!({})),
+        json!([3, 2, 1])
+    );
+    assert_eq!(render_expr_json("[1, 2, 3] | sum", json!({})), json!(6));
+    assert_eq!(render_expr_json("[1, 2, 3] | min", json!({})), json!(1));
+    assert_eq!(render_expr_json("[1, 2, 3] | max", json!({})), json!(3));
+    assert_eq!(
+        render_expr_json("[1, 2, 3, 4] | batch(2) | length", json!({})),
+        json!(2)
+    );
+    assert_eq!(
+        render_expr_json("[1, 2, 3, 4] | slice(2) | length", json!({})),
+        json!(2)
+    );
+    assert_eq!(
+        render_expr_json("['a', 'b'] | zip([1, 2]) | list | length", json!({})),
+        json!(2)
+    );
+    assert_eq!(
+        render_expr_json("{'b': 2, 'a': 1} | dictsort | first", json!({})),
+        json!(["a", 1])
+    );
+}
+
+#[test]
+fn test_default_filter_boolean_argument() {
+    // `default(value, true)` also replaces falsy values, as in Ansible.
+    assert_eq!(
+        render_expr_json("'' | default('fallback', true)", json!({})),
+        json!("fallback")
+    );
+    assert_eq!(
+        render_expr_json("'set' | default('fallback', true)", json!({})),
+        json!("set")
+    );
+    assert_eq!(
+        render_expr_json("'' | default('fallback')", json!({})),
+        json!("")
     );
 }

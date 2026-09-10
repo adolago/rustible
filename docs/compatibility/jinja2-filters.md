@@ -1,318 +1,231 @@
 # Jinja2 Filter Compatibility
 
-> **Last Updated:** 2026-01-26
+> **Last Updated:** 2026-09-10
 > **Rustible Version:** 0.1.x
 
-This document tracks the compatibility between Ansible's Jinja2 filters and Rustible's MiniJinja-based template engine.
+This document tracks the compatibility between Ansible's Jinja2 filters and
+Rustible's MiniJinja-based template engine.
+
+Every filter listed as available is exercised from the production engine in
+`tests/jinja2_filter_parity_tests.rs`. Filters come from three places:
+
+- MiniJinja's Jinja2 built-ins (`min`, `max`, `sum`, `batch`, `slice`,
+  `groupby`, `zip`, `select`, `reject`, `selectattr`, `rejectattr`, `map`,
+  `dictsort`, `indent`, ...).
+- Rustible's filter plugins in `src/plugins/filter`, registered through
+  `FilterRegistry::register_all`.
+- Engine-local filters in `src/template.rs`, which override a name only when
+  Ansible's semantics differ from Jinja2's (for example `bool`).
 
 ---
 
 ## Summary
 
-| Category | Ansible | Rustible | Coverage |
-|----------|---------|----------|----------|
-| String Filters | 25+ | 11 | ~44% |
-| List Filters | 20+ | 10 | ~50% |
-| Dict Filters | 10+ | 5 | ~50% |
-| Math Filters | 10+ | Built-in | MiniJinja native |
-| Type Conversion | 6 | 5 | 83% |
-| Path Filters | 6 | 4 | 67% |
-| Encoding Filters | 6 | 8 | 100%+ |
-| Ansible-Specific | 15+ | 8 | ~53% |
+| Category | Available | Notes |
+|----------|-----------|-------|
+| String | Yes | Jinja2 set plus `comment`, `to_uuid`, `quote` |
+| List / set | Yes | Ansible set operations plus Jinja2 built-ins |
+| Dict | Yes | `combine`, `dict2items`, `items2dict`, `rekey_on_member`, `dictsort` |
+| Math | Yes | `log`, `pow`, `root`, `human_readable`, `human_to_bytes` |
+| Type conversion | Yes | Ansible truthy semantics for `bool` |
+| Path | Yes | POSIX and Windows paths |
+| Encoding / hashing | Yes | Includes crypt(3)-compatible `password_hash` |
+| Network (`ipaddr` family) | Partial | Common queries; see the gaps section |
+| Date / time | Partial | `strftime`, `to_datetime` (returns a string) |
+| JMESPath (`json_query`) | No | Not implemented |
 
 ---
 
-## Implemented Filters
+## Available Filters
 
-### String Filters
+### String
 
-| Filter | Ansible | Rustible | Notes |
-|--------|---------|----------|-------|
-| `default` / `d` | Yes | Yes | Full support including boolean parameter |
-| `lower` | Yes | Yes | |
-| `upper` | Yes | Yes | |
-| `capitalize` | Yes | Yes | |
-| `title` | Yes | Yes | |
-| `trim` | Yes | Yes | |
-| `replace` | Yes | Yes | |
-| `regex_replace` | Yes | Yes | |
-| `regex_search` | Yes | Yes | |
-| `split` | Yes | Yes | |
-| `join` | Yes | Yes | |
-| `quote` | Yes | Yes | Shell quoting |
-| `systemd_escape` | Yes | Yes | Rustible-specific |
+| Filter | Source | Notes |
+|--------|--------|-------|
+| `default` / `d` | Rustible | Supports `default(value, true)` and `value=` |
+| `lower`, `upper`, `capitalize`, `title`, `trim` | Rustible | |
+| `replace` | Rustible | |
+| `split`, `join` | Rustible | |
+| `regex_replace`, `regex_search` | Rustible | |
+| `regex_findall`, `regex_escape`, `regex_split`, `regex_match` | Plugin | |
+| `center`, `truncate`, `wordwrap`, `wordcount` | Plugin | Jinja2 semantics, including `truncate`'s leeway |
+| `indent`, `lines`, `format`, `pprint` | MiniJinja | |
+| `comment` | Plugin | Styles `plain`, `c`, `cblock`, `erlang`, `xml` |
+| `quote`, `unquote` | Plugin | Shell quoting |
+| `to_uuid` | Plugin | UUIDv5 in Ansible's namespace |
+| `type_debug` | Plugin | Python-style type names |
+| `mandatory` | Rustible | Fails when undefined |
+| `ternary` | Rustible | |
 
-### Not Yet Implemented (String)
+### List and set
 
-| Filter | Priority | Notes |
-|--------|----------|-------|
-| `center` | Low | Text centering |
-| `ljust` / `rjust` | Low | Text justification |
-| `wordwrap` | Low | Word wrapping |
-| `truncate` | Medium | Truncate with ellipsis |
-| `urlsplit` | Medium | URL parsing |
-| `urlencode` / `urldecode` | Medium | URL encoding |
-| `indent` | Medium | Text indentation |
-| `comment` | Low | Add comment markers |
-| `human_readable` | Low | Human-readable sizes |
-| `human_to_bytes` | Low | Parse human sizes |
+| Filter | Source | Notes |
+|--------|--------|-------|
+| `first`, `last`, `length`, `count`, `reverse`, `sort` | MiniJinja | `sort` supports `attribute=`, `reverse=`, `case_sensitive=` |
+| `min`, `max`, `sum`, `batch`, `slice`, `groupby`, `zip`, `chain` | MiniJinja | |
+| `select`, `reject`, `selectattr`, `rejectattr`, `map` | MiniJinja | Every registered test works; `map('filter')` and `map(attribute=)` both supported |
+| `unique` | Plugin | Case-sensitive by default; `attribute=`, `case_sensitive=` |
+| `flatten` | Plugin | `levels`, `skip_nulls` (nulls dropped by default, as in Ansible) |
+| `union`, `difference`, `intersect`, `symmetric_difference` | Plugin | |
+| `product`, `permutations`, `combinations` | Plugin | |
+| `zip_longest`, `subelements` | Plugin | |
+| `extract` | Plugin | Pairs with `map('extract', container)` |
+| `random`, `shuffle` | Plugin | `seed=` is reproducible, but not Python's sequence |
+| `list` | Rustible | Also converts lazy iterables and strings |
 
-### List/Sequence Filters
+### Dictionary
 
-| Filter | Ansible | Rustible | Notes |
-|--------|---------|----------|-------|
-| `first` | Yes | Yes | |
-| `last` | Yes | Yes | |
-| `length` / `count` | Yes | Yes | |
-| `unique` | Yes | Yes | |
-| `sort` | Yes | Yes | |
-| `reverse` | Yes | Yes | |
-| `flatten` | Yes | Yes | |
-| `list` | Yes | Yes | Convert to list |
-| `selectattr` | Yes | Yes | |
-| `rejectattr` | Yes | Yes | |
-| `map` | Yes | Yes | Attribute mapping |
+| Filter | Source | Notes |
+|--------|--------|-------|
+| `combine` | Rustible | Recursive merge |
+| `dict2items`, `items2dict` | Rustible | |
+| `rekey_on_member` | Plugin | `duplicates='error'` (default) or `'overwrite'` |
+| `dictsort`, `items`, `attr` | MiniJinja | |
 
-### Not Yet Implemented (List)
+### Math
 
-| Filter | Priority | Notes |
-|--------|----------|-------|
-| `min` | High | MiniJinja built-in available |
-| `max` | High | MiniJinja built-in available |
-| `sum` | High | MiniJinja built-in available |
-| `batch` | Low | Batch items |
-| `slice` | Low | Slice list |
-| `zip` | Medium | Zip lists |
-| `zip_longest` | Low | Zip with fill |
-| `product` | Low | Cartesian product |
-| `permutations` | Low | Permutations |
-| `combinations` | Low | Combinations |
-| `groupby` | Medium | Group by attribute |
-| `random` | Medium | Random element |
-| `shuffle` | Low | Shuffle list |
+| Filter | Source | Notes |
+|--------|--------|-------|
+| `int`, `float`, `abs`, `round` | Rustible / MiniJinja | |
+| `log`, `pow`, `root` | Plugin | |
+| `human_readable` | Plugin | `human_readable(isbits, unit)`; `precision=` is a Rustible extension |
+| `human_to_bytes` | Plugin | 1024-based, accepts `default_unit` and `isbits` |
 
-### Dictionary Filters
+### Type conversion
 
-| Filter | Ansible | Rustible | Notes |
-|--------|---------|----------|-------|
-| `combine` | Yes | Yes | Deep merge dictionaries |
-| `dict2items` | Yes | Yes | Convert dict to list of items |
-| `items2dict` | Yes | Yes | Convert list to dict |
+| Filter | Source | Notes |
+|--------|--------|-------|
+| `bool` | Rustible | Ansible truthy strings (`yes`, `on`, `1`, ...) |
+| `string`, `int`, `float`, `list` | Rustible | |
+| `type_debug` | Plugin | |
 
-### Not Yet Implemented (Dict)
+### Path
 
-| Filter | Priority | Notes |
-|--------|----------|-------|
-| `dictsort` | Medium | Sort dictionary |
-| `difference` | Medium | Set difference |
-| `intersect` | Medium | Set intersection |
-| `union` | Medium | Set union |
-| `symmetric_difference` | Low | Symmetric difference |
+| Filter | Source | Notes |
+|--------|--------|-------|
+| `basename`, `dirname`, `expanduser`, `realpath` | Rustible | |
+| `path_join` | Plugin | Takes the segments as a list, as in Ansible |
+| `splitext`, `relpath`, `expandvars` | Plugin | |
+| `win_basename`, `win_dirname`, `win_splitdrive` | Plugin | |
 
-### Type Conversion Filters
+### Encoding, serialization and hashing
 
-| Filter | Ansible | Rustible | Notes |
-|--------|---------|----------|-------|
-| `int` | Yes | Yes | |
-| `float` | Yes | Yes | |
-| `string` | Yes | Yes | |
-| `bool` | Yes | Yes | Ansible truthy semantics |
-| `list` | Yes | Yes | |
+| Filter | Source | Notes |
+|--------|--------|-------|
+| `b64encode`, `b64decode` | Rustible | |
+| `to_json`, `to_nice_json`, `from_json` | Rustible | |
+| `to_yaml`, `to_nice_yaml`, `from_yaml`, `from_yaml_all` | Rustible | |
+| `urlencode`, `urldecode`, `urlsplit` | Plugin | |
+| `hash` | Plugin | md5, sha1 (default), sha256, sha384, sha512; unknown algorithms are an error |
+| `checksum` | Plugin | SHA-1, as in Ansible |
+| `md5`, `sha1`, `sha256`, `sha512` | Plugin | |
+| `password_hash` | Plugin | Real SHA-crypt: `$6$` (default) and `$5$`, `rounds=` and explicit salts supported |
 
-### Not Yet Implemented (Type)
+### Network
 
-| Filter | Priority | Notes |
-|--------|----------|-------|
-| `type_debug` | Low | Debug type info |
+| Filter | Source | Notes |
+|--------|--------|-------|
+| `ipaddr` | Plugin | Validation, list filtering, integer index, and the queries below |
+| `ipv4`, `ipv6` | Plugin | Family filtering with the same queries |
+| `ipsubnet` | Plugin | Subnet count and nth subnet |
+| `ipmath`, `nthhost` | Plugin | |
+| `network_in_usable` | Plugin | |
+| `cidr_merge` | Plugin | `merge` (default) and `span` |
+| `ipwrap` | Plugin | Brackets IPv6 addresses |
 
-### Path Filters
+`ipaddr` queries: `address`, `ip`, `address/prefix`, `host`, `prefix`,
+`netmask`, `hostmask`, `wildcard`, `network`, `broadcast`, `net`, `subnet`,
+`size`, `first_usable`, `last_usable`, `version`, `4`/`ipv4`, `6`/`ipv6`,
+`public`, `private`, `loopback`, `multicast`, `link-local`, `unspecified`.
+An integer query selects the nth address in the network. Unsupported queries
+raise an error rather than returning a wrong answer.
 
-| Filter | Ansible | Rustible | Notes |
-|--------|---------|----------|-------|
-| `basename` | Yes | Yes | |
-| `dirname` | Yes | Yes | |
-| `expanduser` | Yes | Yes | |
-| `realpath` | Yes | Yes | |
+### Date and time
 
-### Not Yet Implemented (Path)
+| Filter | Source | Notes |
+|--------|--------|-------|
+| `strftime` | Plugin | Format string is the input; optional epoch second and `utc` flag |
+| `to_datetime` | Plugin | Returns a normalized `%Y-%m-%d %H:%M:%S` string |
 
-| Filter | Priority | Notes |
-|--------|----------|-------|
-| `relpath` | Medium | Relative path |
-| `splitext` | Medium | Split extension |
-| `win_basename` | Low | Windows paths |
-| `win_dirname` | Low | Windows paths |
+---
 
-### Encoding Filters
+## Known Gaps
 
-| Filter | Ansible | Rustible | Notes |
-|--------|---------|----------|-------|
-| `b64encode` | Yes | Yes | |
-| `b64decode` | Yes | Yes | |
-| `to_json` | Yes | Yes | |
-| `to_nice_json` | Yes | Yes | Pretty-printed |
-| `from_json` | Yes | Yes | |
-| `to_yaml` | Yes | Yes | |
-| `to_nice_yaml` | Yes | Yes | Pretty-printed |
-| `from_yaml` | Yes | Yes | |
-| `from_yaml_all` | Yes | Yes | Multi-document YAML |
-
-### Not Yet Implemented (Encoding)
-
-| Filter | Priority | Notes |
-|--------|----------|-------|
-| `to_uuid` | Low | Generate UUID |
-| `hash` | Medium | Various hash algorithms |
-| `checksum` | Medium | File checksum |
-| `password_hash` | High | Password hashing |
-
-### Ansible-Specific Filters
-
-| Filter | Ansible | Rustible | Notes |
-|--------|---------|----------|-------|
-| `mandatory` | Yes | Yes | Fail if undefined |
-| `ternary` | Yes | Yes | Conditional value |
-
-### Not Yet Implemented (Ansible-Specific)
-
-| Filter | Priority | Notes |
-|--------|----------|-------|
-| `ipaddr` | High | IP address manipulation |
-| `regex_findall` | High | Find all regex matches |
-| `subelements` | Medium | Nested loop helper |
-| `extract` | Medium | Extract from mapping |
-| `json_query` | Medium | JMESPath queries |
-| `community.general.json_query` | Medium | JMESPath queries |
-| `to_datetime` | Low | Date/time parsing |
-| `strftime` | Low | Date formatting |
+| Filter | Status | Notes |
+|--------|--------|-------|
+| `json_query` | Not implemented | Requires a JMESPath engine; no dependency added yet |
+| `vault`, `unvault` | Not implemented | Vault operations are available through the `vault` CLI and lookups |
+| `ipaddr` advanced queries | Not implemented | `next_usable`, `previous_usable`, `range_usable`, `peer`, `6to4`, `teredo` |
+| `password_hash` schemes | Partial | Only `sha512` and `sha256` crypt; `bcrypt`, `md5_crypt` and `des_crypt` raise an error |
+| `hash` algorithms | Partial | No `blake2b`/`blake2s` |
+| `to_datetime` return type | Different | Ansible returns a `datetime` object supporting arithmetic; Rustible returns a string, so date arithmetic must go through `strftime` and epoch seconds |
+| `random` / `shuffle` seeding | Different | Deterministic per seed, but not Python's `random` sequence |
+| Collection filters | Out of scope | `k8s_config_resource_name`, `parse_cli`, `parse_xml` and other collection-provided filters |
 
 ---
 
 ## Jinja2 Tests
 
-### Implemented Tests
+All Ansible-documented tests are available. Rustible registers `defined`,
+`undefined`, `none`/`null`, `truthy`, `falsy`, `boolean`, `integer`, `float`,
+`number`, `string`, `mapping`/`dict`, `iterable`, `sequence`/`list`, `sameas`,
+`contains`, `match`, `search`, `startswith`, `endswith`, `file`, `directory`,
+`link`, `exists`, `abs`, `success`, `failed`, `changed`, `skipped`, `odd`,
+`even`, `divisibleby`, `in`, `subset`, `superset`, `callable` and `escaped`.
 
-| Test | Ansible | Rustible | Notes |
-|------|---------|----------|-------|
-| `defined` | Yes | Yes | |
-| `undefined` | Yes | Yes | |
-| `none` | Yes | Yes | |
-| `truthy` | Yes | Yes | |
-| `falsy` | Yes | Yes | |
-| `boolean` | Yes | Yes | |
-| `integer` | Yes | Yes | |
-| `float` | Yes | Yes | |
-| `number` | Yes | Yes | |
-| `string` | Yes | Yes | |
-| `mapping` | Yes | Yes | |
-| `iterable` | Yes | Yes | |
-| `sequence` | Yes | Yes | |
-| `sameas` | Yes | Yes | |
-| `contains` | Yes | Yes | |
-| `match` | Yes | Yes | Regex match |
-| `search` | Yes | Yes | Regex search |
-| `startswith` | Yes | Yes | |
-| `endswith` | Yes | Yes | |
-| `file` | Yes | Yes | Is file |
-| `directory` | Yes | Yes | Is directory |
-| `link` | Yes | Yes | Is symlink |
-| `exists` | Yes | Yes | Path exists |
-| `abs` | Yes | Yes | Is absolute path |
-| `success` | Yes | Yes | Task result |
-| `failed` | Yes | Yes | Task result |
-| `changed` | Yes | Yes | Task result |
-| `skipped` | Yes | Yes | Task result |
-
-### Not Yet Implemented (Tests)
-
-| Test | Priority | Notes |
-|------|----------|-------|
-| `callable` | Low | Is callable |
-| `even` / `odd` | Low | Number parity |
-| `divisibleby` | Low | Divisibility |
-| `equalto` | Low | Equality test |
-| `greaterthan` / `lessthan` | Low | Comparisons |
-| `subset` / `superset` | Medium | Set relations |
-| `all` / `any` | Medium | List predicates |
+MiniJinja adds the comparison tests `eq`/`equalto`/`==`, `ne`/`!=`,
+`lt`/`lessthan`/`<`, `le`/`<=`, `gt`/`greaterthan`/`>`, `ge`/`>=`, plus
+`startingwith`, `endingwith`, `lower`, `upper` and `safe`.
 
 ---
 
 ## Known Differences
 
-### 1. Boolean Handling
+### 1. Boolean handling
 
-Ansible accepts various truthy strings (`yes`, `no`, `true`, `false`, `on`, `off`). Rustible's `bool` filter handles these correctly:
+Ansible accepts various truthy strings (`yes`, `no`, `true`, `false`, `on`,
+`off`). Rustible's `bool` filter handles these:
 
 ```yaml
-# Both work in Rustible
 - when: "{{ 'yes' | bool }}"
 - when: "{{ enable_feature | bool }}"
 ```
 
-### 2. Undefined Variable Behavior
+### 2. Undefined variable behavior
 
-Rustible uses MiniJinja's `Chainable` undefined behavior, matching Ansible's default:
+Rustible uses MiniJinja's `Chainable` undefined behavior, matching Ansible's
+default:
 
 ```yaml
-# Both return empty string, not error
 - debug: msg="{{ undefined_var }}"
 ```
 
-### 3. Filter Chaining
+### 3. `default` and null
 
-Filter chaining works identically:
-
-```yaml
-- debug: msg="{{ items | sort | unique | join(', ') }}"
-```
+`{{ null_var | default('x') }}` returns `x` in Rustible. Jinja2 replaces only
+undefined values, so Ansible would return the null. Pass `default('x', true)`
+when you want falsy values replaced in both tools.
 
 ---
 
-## Adding Missing Filters
+## Adding a Missing Filter
 
-To implement a missing filter, add it to `src/template.rs`:
+Filters live in `src/plugins/filter`, one module per category:
 
 ```rust
-// 1. Implement the filter function
-fn filter_myfilter(value: &str) -> String {
-    // Implementation
+// 1. Implement the filter in the matching module, e.g. src/plugins/filter/strings.rs
+fn my_filter(value: Value, arg: Option<String>) -> Result<String, Error> {
+    // Implementation; return Err for input the filter cannot handle.
 }
 
-// 2. Register in register_filters()
-env.add_filter("myfilter", filter_myfilter);
-
-// 3. Add tests in tests/ansible_compat/jinja2_filters.rs
-#[test]
-fn test_filter_myfilter() {
-    let result = render("{{ 'input' | myfilter }}", json!({}));
-    assert_eq!(result, "expected");
-}
+// 2. Register it in that module's register_filters()
+env.add_filter("my_filter", my_filter);
 ```
 
----
+Add unit tests next to the implementation and an engine-level case in
+`tests/jinja2_filter_parity_tests.rs`, which renders through the production
+`TemplateEngine`. Update this document in the same change.
 
-## Priority Roadmap
-
-### v0.2 (High Priority)
-
-- [ ] `min` / `max` / `sum` (expose MiniJinja builtins)
-- [ ] `regex_findall`
-- [ ] `password_hash`
-- [ ] `ipaddr` (basic support)
-
-### v0.3 (Medium Priority)
-
-- [ ] `hash` / `checksum`
-- [ ] `groupby`
-- [ ] `zip`
-- [ ] `json_query`
-
-### v1.0 (Full Parity)
-
-- [ ] All remaining string filters
-- [ ] All remaining list filters
-- [ ] Full `ipaddr` support
-
----
-
-*For the latest filter implementations, see `src/template.rs`*
+Engine-local overrides in `src/template.rs` are reserved for names where
+Ansible and Jinja2 disagree; adding one there shadows MiniJinja's built-in for
+every playbook, so prefer a plugin module.

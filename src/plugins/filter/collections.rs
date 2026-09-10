@@ -3,6 +3,11 @@
 //! This module provides filters for working with lists, dictionaries, and
 //! performing set operations, compatible with Ansible's Jinja2 collection filters.
 //!
+//! Filters that Jinja2 itself defines (`batch`, `slice`, `groupby`, `zip`,
+//! `selectattr`, `rejectattr`) are left to MiniJinja's built-ins so their
+//! semantics — every registered test, dotted attribute paths — stay
+//! Jinja2-compatible.
+//!
 //! # Available Filters
 //!
 //! - `combine`: Merge dictionaries together
@@ -12,15 +17,15 @@
 //! - `symmetric_difference`: Elements in either list but not both
 //! - `unique`: Remove duplicates from a list
 //! - `flatten`: Flatten nested lists
-//! - `zip`: Combine multiple lists element-wise
 //! - `zip_longest`: Like zip, but uses fillvalue for shorter lists
 //! - `dict2items`: Convert dictionary to list of key-value pairs
 //! - `items2dict`: Convert list of key-value pairs to dictionary
 //! - `subelements`: Create combinations of items with subelements
-//! - `groupby`: Group items by attribute
 //! - `map_attribute`: Extract attribute from list of objects
-//! - `selectattr`: Filter by attribute value
-//! - `rejectattr`: Reject items by attribute value
+//! - `permutations` / `combinations`: Ordered and unordered selections
+//! - `extract`: Look a key up in a container (pairs with `map`)
+//! - `rekey_on_member`: Turn a list of dicts into a dict keyed by a member
+//! - `random` / `shuffle`: Random selection and ordering, optionally seeded
 //!
 //! # Examples
 //!
@@ -31,7 +36,7 @@
 //! {{ data | dict2items }}
 //! ```
 
-use minijinja::value::ValueKind;
+use minijinja::value::{Kwargs, ValueKind};
 use minijinja::{Environment, Value};
 use std::collections::{BTreeMap, HashSet};
 
@@ -57,18 +62,18 @@ pub fn register_filters(env: &mut Environment<'static>) {
     env.add_filter("symmetric_difference", symmetric_difference);
     env.add_filter("unique", unique);
     env.add_filter("flatten", flatten);
-    env.add_filter("zip", zip_filter);
     env.add_filter("zip_longest", zip_longest);
     env.add_filter("dict2items", dict2items);
     env.add_filter("items2dict", items2dict);
     env.add_filter("subelements", subelements);
-    env.add_filter("groupby", groupby);
     env.add_filter("map_attribute", map_attribute);
-    env.add_filter("selectattr", selectattr);
-    env.add_filter("rejectattr", rejectattr);
     env.add_filter("product", product);
-    env.add_filter("batch", batch);
-    env.add_filter("slice", slice_filter);
+    env.add_filter("permutations", permutations);
+    env.add_filter("combinations", combinations);
+    env.add_filter("extract", extract);
+    env.add_filter("rekey_on_member", rekey_on_member);
+    env.add_filter("random", random_filter);
+    env.add_filter("shuffle", shuffle);
 }
 
 /// Merge dictionaries together.
@@ -360,17 +365,49 @@ fn symmetric_difference(list1: Value, list2: Value) -> Vec<Value> {
 /// # Ansible Compatibility
 ///
 /// Compatible with Ansible's `unique` filter.
-fn unique(list: Value, case_sensitive: Option<bool>) -> Vec<Value> {
-    let case_sensitive = case_sensitive.unwrap_or(true);
+/// Follow a dotted attribute path, as Jinja2's `attribute=` arguments do.
+fn get_path(value: &Value, path: &str) -> Value {
+    let mut current = value.clone();
+    for segment in path.split('.') {
+        if current.is_undefined() {
+            return current;
+        }
+        current = match segment.parse::<usize>() {
+            Ok(index) => current.get_item_by_index(index).unwrap_or(Value::UNDEFINED),
+            Err(_) => current
+                .get_item(&Value::from(segment))
+                .unwrap_or(Value::UNDEFINED),
+        };
+    }
+    current
+}
+
+fn unique(
+    list: Value,
+    case_sensitive: Option<bool>,
+    kwargs: Kwargs,
+) -> Result<Vec<Value>, minijinja::Error> {
+    let attribute: Option<String> = kwargs.get("attribute")?;
+    let case_sensitive = match kwargs.get::<Option<bool>>("case_sensitive")? {
+        Some(from_kwargs) => from_kwargs,
+        None => case_sensitive.unwrap_or(true),
+    };
+    kwargs.assert_all_used()?;
+
     let mut seen = HashSet::new();
     let mut result = Vec::new();
 
     if let Some(seq) = list.as_seq() {
         for item in seq.iter() {
+            // With an attribute, uniqueness is decided by that member only.
+            let compared = match &attribute {
+                Some(attribute) => get_path(item, attribute),
+                None => item.clone(),
+            };
             let key = if case_sensitive {
-                item.to_string()
+                compared.to_string()
             } else {
-                item.to_string().to_lowercase()
+                compared.to_string().to_lowercase()
             };
             if seen.insert(key) {
                 result.push(item.clone());
@@ -378,7 +415,7 @@ fn unique(list: Value, case_sensitive: Option<bool>) -> Vec<Value> {
         }
     }
 
-    result
+    Ok(result)
 }
 
 /// Flatten nested lists.
@@ -395,7 +432,11 @@ fn unique(list: Value, case_sensitive: Option<bool>) -> Vec<Value> {
 /// # Ansible Compatibility
 ///
 /// Compatible with Ansible's `flatten` filter.
-fn flatten(list: Value, levels: Option<i64>) -> Vec<Value> {
+fn flatten(
+    list: Value,
+    levels: Option<i64>,
+    kwargs: Kwargs,
+) -> Result<Vec<Value>, minijinja::Error> {
     fn flatten_recursive(
         value: &Value,
         depth: i64,
@@ -418,37 +459,16 @@ fn flatten(list: Value, levels: Option<i64>) -> Vec<Value> {
         }
     }
 
+    // Ansible's flatten drops nulls unless asked to keep them.
+    let skip_nulls: bool = kwargs.get::<Option<bool>>("skip_nulls")?.unwrap_or(true);
+    kwargs.assert_all_used()?;
+
     let mut result = Vec::new();
     flatten_recursive(&list, 0, levels, &mut result);
-    result
-}
-
-/// Combine lists element-wise.
-///
-/// # Arguments
-///
-/// * `list1` - First list
-/// * `list2` - Second list
-///
-/// # Returns
-///
-/// A list of pairs, stopping at the shorter list.
-///
-/// # Ansible Compatibility
-///
-/// Compatible with Ansible's `zip` filter.
-fn zip_filter(list1: Value, list2: Value) -> Vec<Value> {
-    let seq1 = list1.as_seq();
-    let seq2 = list2.as_seq();
-
-    match (seq1, seq2) {
-        (Some(s1), Some(s2)) => s1
-            .iter()
-            .zip(s2.iter())
-            .map(|(a, b)| Value::from(vec![a.clone(), b.clone()]))
-            .collect(),
-        _ => Vec::new(),
+    if skip_nulls {
+        result.retain(|item| !item.is_none() && !item.is_undefined());
     }
+    Ok(result)
 }
 
 /// Combine lists element-wise, filling shorter lists.
@@ -580,49 +600,6 @@ fn subelements(list: Value, key: String) -> Vec<Value> {
     result
 }
 
-/// Group items by attribute.
-///
-/// # Arguments
-///
-/// * `list` - List of objects
-/// * `attr` - Attribute to group by
-///
-/// # Returns
-///
-/// A list of objects with `grouper` and `list` fields.
-///
-/// # Ansible Compatibility
-///
-/// Compatible with Ansible's `groupby` filter.
-fn groupby(list: Value, attr: String) -> Vec<Value> {
-    if let Some(seq) = list.as_seq() {
-        let mut groups: indexmap::IndexMap<String, Vec<Value>> = indexmap::IndexMap::new();
-
-        for item in seq.iter() {
-            let key = if let Some(obj) = item.as_object() {
-                obj.get_value(&Value::from(attr.clone()))
-                    .map(|v| v.to_string())
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            groups.entry(key).or_default().push(item.clone());
-        }
-
-        groups
-            .into_iter()
-            .map(|(k, v)| {
-                Value::from_iter([
-                    ("grouper".to_string(), Value::from(k)),
-                    ("list".to_string(), Value::from(v)),
-                ])
-            })
-            .collect()
-    } else {
-        Vec::new()
-    }
-}
-
 /// Extract attribute from list of objects.
 ///
 /// # Arguments
@@ -653,118 +630,6 @@ fn map_attribute(list: Value, attr: String, default: Option<Value>) -> Vec<Value
     }
 }
 
-/// Filter items by attribute value.
-///
-/// # Arguments
-///
-/// * `list` - List of objects
-/// * `attr` - Attribute to test
-/// * `test` - Optional test to apply (default: truthy)
-/// * `value` - Optional value to compare against
-///
-/// # Returns
-///
-/// Items where the attribute passes the test.
-///
-/// # Ansible Compatibility
-///
-/// Compatible with Ansible's `selectattr` filter.
-fn selectattr(list: Value, attr: String, test: Option<String>, value: Option<Value>) -> Vec<Value> {
-    if let Some(seq) = list.as_seq() {
-        seq.iter()
-            .filter(|item| {
-                if let Some(obj) = item.as_object() {
-                    if let Some(attr_val) = obj.get_value(&Value::from(attr.clone())) {
-                        apply_test(&attr_val, test.as_deref(), value.as_ref())
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            })
-            .cloned()
-            .collect()
-    } else {
-        Vec::new()
-    }
-}
-
-/// Reject items by attribute value.
-///
-/// # Arguments
-///
-/// * `list` - List of objects
-/// * `attr` - Attribute to test
-/// * `test` - Optional test to apply (default: truthy)
-/// * `value` - Optional value to compare against
-///
-/// # Returns
-///
-/// Items where the attribute fails the test.
-///
-/// # Ansible Compatibility
-///
-/// Compatible with Ansible's `rejectattr` filter.
-fn rejectattr(list: Value, attr: String, test: Option<String>, value: Option<Value>) -> Vec<Value> {
-    if let Some(seq) = list.as_seq() {
-        seq.iter()
-            .filter(|item| {
-                if let Some(obj) = item.as_object() {
-                    if let Some(attr_val) = obj.get_value(&Value::from(attr.clone())) {
-                        !apply_test(&attr_val, test.as_deref(), value.as_ref())
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                }
-            })
-            .cloned()
-            .collect()
-    } else {
-        Vec::new()
-    }
-}
-
-fn apply_test(val: &Value, test: Option<&str>, compare: Option<&Value>) -> bool {
-    match test {
-        Some("equalto" | "==" | "eq") => compare
-            .map(|c| val.to_string() == c.to_string())
-            .unwrap_or(false),
-        Some("ne" | "!=") => compare
-            .map(|c| val.to_string() != c.to_string())
-            .unwrap_or(true),
-        Some("defined") => !val.is_undefined(),
-        Some("undefined") => val.is_undefined(),
-        Some("none" | "null") => val.is_none(),
-        Some("true" | "truthy") => val.is_true(),
-        Some("false" | "falsy") => !val.is_true(),
-        Some("in") => {
-            if let Some(list) = compare.and_then(|c| c.as_seq()) {
-                list.iter().any(|item| item.to_string() == val.to_string())
-            } else {
-                false
-            }
-        }
-        Some("contains") => {
-            if let Some(seq) = val.as_seq() {
-                compare
-                    .map(|c| seq.iter().any(|item| item.to_string() == c.to_string()))
-                    .unwrap_or(false)
-            } else if let Some(s) = val.as_str() {
-                compare
-                    .and_then(|c| c.as_str())
-                    .map(|substr| s.contains(substr))
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        }
-        None | Some(_) => val.is_true(),
-    }
-}
-
 /// Compute Cartesian product of lists.
 ///
 /// # Arguments
@@ -788,77 +653,431 @@ fn product(list1: Value, list2: Value) -> Vec<Value> {
     result
 }
 
-/// Split list into fixed-size batches.
+/// Ordered selections of length `count` from a list.
 ///
-/// # Arguments
+/// # Ansible Compatibility
 ///
-/// * `list` - The list to batch
-/// * `size` - Batch size
-/// * `fill` - Optional value to fill incomplete batches
-///
-/// # Returns
-///
-/// A list of batches.
-fn batch(list: Value, size: i64, fill: Option<Value>) -> Vec<Value> {
-    let size = size.max(1) as usize;
+/// Matches `ansible.builtin.permutations`. With no length, permutations of the
+/// full list are returned.
+fn permutations(list: Value, count: Option<usize>) -> Vec<Value> {
+    let Some(items) = list.as_seq() else {
+        return Vec::new();
+    };
+    let count = count.unwrap_or(items.len());
+    if count > items.len() {
+        return Vec::new();
+    }
 
-    if let Some(seq) = list.as_seq() {
-        let items = seq;
-        let mut result = Vec::new();
+    let mut result = Vec::new();
+    let mut used = vec![false; items.len()];
+    let mut current = Vec::with_capacity(count);
+    permute(&items, count, &mut used, &mut current, &mut result);
+    result
+}
 
-        for chunk in items.chunks(size) {
-            let mut batch_items: Vec<Value> = chunk.to_vec();
-            if let Some(ref fill_val) = fill {
-                while batch_items.len() < size {
-                    batch_items.push(fill_val.clone());
-                }
-            }
-            result.push(Value::from(batch_items));
+fn permute(
+    items: &[Value],
+    count: usize,
+    used: &mut Vec<bool>,
+    current: &mut Vec<Value>,
+    result: &mut Vec<Value>,
+) {
+    if current.len() == count {
+        result.push(Value::from(current.clone()));
+        return;
+    }
+    for index in 0..items.len() {
+        if used[index] {
+            continue;
         }
-
-        result
-    } else {
-        Vec::new()
+        used[index] = true;
+        current.push(items[index].clone());
+        permute(items, count, used, current, result);
+        current.pop();
+        used[index] = false;
     }
 }
 
-/// Extract a slice of a list.
+/// Unordered selections of length `count` from a list.
+///
+/// # Ansible Compatibility
+///
+/// Matches `ansible.builtin.combinations`.
+fn combinations(list: Value, count: usize) -> Vec<Value> {
+    let Some(items) = list.as_seq() else {
+        return Vec::new();
+    };
+    if count > items.len() {
+        return Vec::new();
+    }
+
+    let mut result = Vec::new();
+    let mut current = Vec::with_capacity(count);
+    combine_indices(&items, count, 0, &mut current, &mut result);
+    result
+}
+
+fn combine_indices(
+    items: &[Value],
+    count: usize,
+    start: usize,
+    current: &mut Vec<Value>,
+    result: &mut Vec<Value>,
+) {
+    if current.len() == count {
+        result.push(Value::from(current.clone()));
+        return;
+    }
+    for index in start..items.len() {
+        current.push(items[index].clone());
+        combine_indices(items, count, index + 1, current, result);
+        current.pop();
+    }
+}
+
+/// Look up a key in a container, following further keys into nested values.
+///
+/// # Ansible Compatibility
+///
+/// Matches `ansible.builtin.extract`, whose usual form is
+/// `{{ indexes | map('extract', container) | list }}`.
+fn extract(key: Value, container: Value, morekeys: Option<Value>) -> Value {
+    let mut current = lookup(&container, &key);
+    let Some(morekeys) = morekeys else {
+        return current;
+    };
+
+    let keys = match morekeys.as_seq() {
+        Some(keys) => keys,
+        None => vec![morekeys],
+    };
+    for key in keys {
+        if current.is_undefined() {
+            return current;
+        }
+        current = lookup(&current, &key);
+    }
+    current
+}
+
+fn lookup(container: &Value, key: &Value) -> Value {
+    if let Some(index) = key.as_i64() {
+        if matches!(container.kind(), ValueKind::Seq | ValueKind::Iterable) {
+            return container
+                .get_item_by_index(index.max(0) as usize)
+                .unwrap_or(Value::UNDEFINED);
+        }
+    }
+    container.get_item(key).unwrap_or(Value::UNDEFINED)
+}
+
+/// Turn a list of dicts into a dict keyed by one of their members.
 ///
 /// # Arguments
 ///
-/// * `list` - The list to slice
-/// * `start` - Start index
-/// * `end` - Optional end index
-/// * `step` - Optional step
+/// * `key` - Member whose value becomes the dictionary key
+/// * `duplicates` - `error` (default) or `overwrite`
 ///
-/// # Returns
+/// # Ansible Compatibility
 ///
-/// The sliced portion of the list.
-fn slice_filter(list: Value, start: i64, end: Option<i64>, step: Option<i64>) -> Vec<Value> {
-    if let Some(seq) = list.as_seq() {
-        let items = seq;
-        let len = items.len() as i64;
+/// Matches `ansible.builtin.rekey_on_member`, including its duplicate-key
+/// error.
+fn rekey_on_member(
+    list: Value,
+    key: String,
+    duplicates: Option<String>,
+) -> Result<Value, minijinja::Error> {
+    let duplicates = duplicates.unwrap_or_else(|| "error".to_string());
+    if duplicates != "error" && duplicates != "overwrite" {
+        return Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!(
+                "rekey_on_member: duplicates must be 'error' or 'overwrite', got '{}'",
+                duplicates
+            ),
+        ));
+    }
 
-        // Handle negative indices
-        let start = if start < 0 {
-            (len + start).max(0)
-        } else {
-            start.min(len)
-        } as usize;
-        let end = end
-            .map(|e| if e < 0 { (len + e).max(0) } else { e.min(len) } as usize)
-            .unwrap_or(len as usize);
-        let step = step.unwrap_or(1).max(1) as usize;
+    // Accept either a list of dicts or a dict of dicts, as Ansible does.
+    let entries: Vec<Value> = match list.kind() {
+        ValueKind::Map => list
+            .try_iter()
+            .map(|keys| {
+                keys.filter_map(|k| list.get_item(&k).ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        _ => list.as_seq().unwrap_or_default(),
+    };
 
-        items[start..end].iter().step_by(step).cloned().collect()
-    } else {
-        Vec::new()
+    let mut result: BTreeMap<String, Value> = BTreeMap::new();
+    for entry in entries {
+        if entry.kind() != ValueKind::Map {
+            return Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "rekey_on_member: every element must be a dictionary",
+            ));
+        }
+        let Ok(member) = entry.get_item(&Value::from(key.clone())) else {
+            return Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("rekey_on_member: element is missing key '{}'", key),
+            ));
+        };
+        if member.is_undefined() {
+            return Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("rekey_on_member: element is missing key '{}'", key),
+            ));
+        }
+        let member = member.to_string();
+        if result.contains_key(&member) && duplicates == "error" {
+            return Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("rekey_on_member: duplicate key '{}'", member),
+            ));
+        }
+        result.insert(member, entry);
+    }
+
+    Ok(Value::from_iter(result))
+}
+
+/// Pick a random element of a list, or a random number below a bound.
+///
+/// # Arguments
+///
+/// * `seed` - Makes the choice deterministic for a given seed
+/// * `start` - Lower bound when the input is a number (default 0)
+/// * `step` - Step between candidate numbers (default 1)
+///
+/// # Ansible Compatibility
+///
+/// Matches Ansible's `random` filter in shape and in being deterministic for a
+/// given seed. The sequence itself differs from Python's `random`, so a seeded
+/// run picks a stable value but not the same value Ansible would pick.
+fn random_filter(value: Value, kwargs: Kwargs) -> Result<Value, minijinja::Error> {
+    let seed: Option<Value> = kwargs.get("seed")?;
+    let start: Option<i64> = kwargs.get("start")?;
+    let step: Option<i64> = kwargs.get("step")?;
+    kwargs.assert_all_used()?;
+
+    let mut rng = SeededRng::new(seed.as_ref());
+
+    if let Some(items) = value.as_seq() {
+        if items.is_empty() {
+            return Ok(Value::UNDEFINED);
+        }
+        let index = rng.next_below(items.len() as u64) as usize;
+        return Ok(items[index].clone());
+    }
+
+    let end = value.as_i64().ok_or_else(|| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            "random: input must be a list or a number",
+        )
+    })?;
+    let start = start.unwrap_or(0);
+    let step = step.unwrap_or(1).max(1);
+    if end <= start {
+        return Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("random: start {} is not below end {}", start, end),
+        ));
+    }
+
+    let candidates = ((end - start) as u64).div_ceil(step as u64);
+    let offset = rng.next_below(candidates) as i64;
+    Ok(Value::from(start + offset * step))
+}
+
+/// Shuffle a list.
+///
+/// # Ansible Compatibility
+///
+/// Matches Ansible's `shuffle` filter, with the same seeding caveat as
+/// `random`: seeded runs are stable but not identical to Python's ordering.
+fn shuffle(value: Value, kwargs: Kwargs) -> Result<Value, minijinja::Error> {
+    let seed: Option<Value> = kwargs.get("seed")?;
+    kwargs.assert_all_used()?;
+
+    let Some(mut items) = value.as_seq() else {
+        // Ansible returns non-sequences unchanged.
+        return Ok(value);
+    };
+
+    let mut rng = SeededRng::new(seed.as_ref());
+    for index in (1..items.len()).rev() {
+        let swap = rng.next_below(index as u64 + 1) as usize;
+        items.swap(index, swap);
+    }
+    Ok(Value::from(items))
+}
+
+/// SplitMix64, used so seeded `random`/`shuffle` results are reproducible
+/// across runs and platforms.
+struct SeededRng {
+    state: u64,
+}
+
+impl SeededRng {
+    fn new(seed: Option<&Value>) -> Self {
+        let state = match seed {
+            Some(seed) => {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                seed.to_string().hash(&mut hasher);
+                hasher.finish()
+            }
+            None => {
+                use rand::Rng;
+                rand::rng().random()
+            }
+        };
+        Self { state }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn next_below(&mut self, bound: u64) -> u64 {
+        if bound == 0 {
+            return 0;
+        }
+        self.next_u64() % bound
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn render(template: &str) -> String {
+        let mut env = Environment::new();
+        register_filters(&mut env);
+        env.template_from_str(template)
+            .unwrap()
+            .render(Value::UNDEFINED)
+            .unwrap()
+    }
+
+    fn render_err(template: &str) -> String {
+        let mut env = Environment::new();
+        register_filters(&mut env);
+        env.template_from_str(template)
+            .unwrap()
+            .render(Value::UNDEFINED)
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn test_permutations() {
+        assert_eq!(render("{{ [1, 2, 3] | permutations(2) | length }}"), "6");
+        assert_eq!(
+            render("{{ [1, 2, 3] | permutations(2) | first | join('') }}"),
+            "12"
+        );
+        assert_eq!(render("{{ [1, 2] | permutations | length }}"), "2");
+        assert_eq!(render("{{ [1, 2] | permutations(3) | length }}"), "0");
+    }
+
+    #[test]
+    fn test_combinations() {
+        assert_eq!(render("{{ [1, 2, 3] | combinations(2) | length }}"), "3");
+        assert_eq!(
+            render("{{ [1, 2, 3] | combinations(2) | last | join('') }}"),
+            "23"
+        );
+    }
+
+    #[test]
+    fn test_extract() {
+        assert_eq!(
+            render("{{ [0, 2] | map('extract', ['a', 'b', 'c']) | join(',') }}"),
+            "a,c"
+        );
+        assert_eq!(
+            render("{{ 'x' | extract({'x': {'y': 'found'}}, 'y') }}"),
+            "found"
+        );
+    }
+
+    #[test]
+    fn test_rekey_on_member() {
+        let people = "[{'name': 'alice', 'age': 30}, {'name': 'bob', 'age': 40}]";
+        assert_eq!(
+            render(&format!(
+                "{{{{ {} | rekey_on_member('name') | length }}}}",
+                people
+            )),
+            "2"
+        );
+        assert_eq!(
+            render(&format!(
+                "{{{{ ({} | rekey_on_member('name')).alice.age }}}}",
+                people
+            )),
+            "30"
+        );
+    }
+
+    #[test]
+    fn test_rekey_on_member_reports_duplicates() {
+        let people = "[{'name': 'alice'}, {'name': 'alice'}]";
+        assert!(
+            render_err(&format!("{{{{ {} | rekey_on_member('name') }}}}", people))
+                .contains("duplicate key")
+        );
+        assert_eq!(
+            render(&format!(
+                "{{{{ {} | rekey_on_member('name', 'overwrite') | length }}}}",
+                people
+            )),
+            "1"
+        );
+    }
+
+    #[test]
+    fn test_rekey_on_member_requires_the_key() {
+        assert!(render_err("{{ [{'other': 1}] | rekey_on_member('name') }}")
+            .contains("missing key 'name'"));
+    }
+
+    #[test]
+    fn test_random_is_stable_for_a_seed() {
+        let first = render("{{ [1, 2, 3, 4, 5] | random(seed='host1') }}");
+        let again = render("{{ [1, 2, 3, 4, 5] | random(seed='host1') }}");
+        assert_eq!(first, again);
+        assert!(["1", "2", "3", "4", "5"].contains(&first.as_str()));
+    }
+
+    #[test]
+    fn test_random_number_bounds() {
+        for _ in 0..25 {
+            let value: i64 = render("{{ 10 | random }}").parse().unwrap();
+            assert!((0..10).contains(&value), "out of range: {}", value);
+        }
+        let stepped: i64 = render("{{ 30 | random(start=10, step=10) }}")
+            .parse()
+            .unwrap();
+        assert!([10, 20].contains(&stepped), "unexpected value: {}", stepped);
+    }
+
+    #[test]
+    fn test_shuffle_keeps_every_element() {
+        let shuffled = render("{{ [1, 2, 3, 4, 5] | shuffle(seed='host1') | sort | join(',') }}");
+        assert_eq!(shuffled, "1,2,3,4,5");
+        let first = render("{{ [1, 2, 3, 4, 5] | shuffle(seed='host1') | join(',') }}");
+        let again = render("{{ [1, 2, 3, 4, 5] | shuffle(seed='host1') | join(',') }}");
+        assert_eq!(first, again);
+    }
 
     #[test]
     fn test_combine_basic() {
@@ -914,37 +1133,43 @@ mod tests {
 
     #[test]
     fn test_unique() {
-        let list = Value::from(vec![
-            Value::from(1),
-            Value::from(2),
-            Value::from(2),
-            Value::from(3),
-            Value::from(1),
-        ]);
-
-        let result = unique(list, None);
-        assert_eq!(result.len(), 3);
+        assert_eq!(
+            render("{{ [1, 2, 2, 3, 1] | unique | join(',') }}"),
+            "1,2,3"
+        );
+        assert_eq!(render("{{ ['CA', 'ca'] | unique | join(',') }}"), "CA,ca");
+        assert_eq!(
+            render("{{ ['CA', 'ca'] | unique(case_sensitive=false) | join(',') }}"),
+            "CA"
+        );
+        assert_eq!(
+            render(
+                "{{ [{'k': 1, 'v': 'a'}, {'k': 1, 'v': 'b'}] | unique(attribute='k') | length }}"
+            ),
+            "1"
+        );
     }
 
     #[test]
     fn test_flatten() {
-        let nested = Value::from(vec![
-            Value::from(1),
-            Value::from(vec![Value::from(2), Value::from(3)]),
-            Value::from(vec![Value::from(4), Value::from(vec![Value::from(5)])]),
-        ]);
-
-        let result = flatten(nested, None);
-        assert_eq!(result.len(), 5);
-    }
-
-    #[test]
-    fn test_zip() {
-        let list1 = Value::from(vec![Value::from("a"), Value::from("b"), Value::from("c")]);
-        let list2 = Value::from(vec![Value::from(1), Value::from(2), Value::from(3)]);
-
-        let result = zip_filter(list1, list2);
-        assert_eq!(result.len(), 3);
+        assert_eq!(
+            render("{{ [1, [2, 3], [4, [5]]] | flatten | join(',') }}"),
+            "1,2,3,4,5"
+        );
+        assert_eq!(
+            render("{{ [1, [2, [3]]] | flatten(1) | length }}"),
+            "3",
+            "one level of flattening leaves the inner list intact"
+        );
+        assert_eq!(
+            render("{{ [1, none, [2, none]] | flatten | join(',') }}"),
+            "1,2",
+            "Ansible's flatten drops nulls by default"
+        );
+        assert_eq!(
+            render("{{ [1, none] | flatten(skip_nulls=false) | length }}"),
+            "2"
+        );
     }
 
     #[test]
@@ -973,55 +1198,6 @@ mod tests {
 
         let result = items2dict(items, None, None);
         assert!(!result.is_undefined());
-    }
-
-    #[test]
-    fn test_groupby() {
-        let items = Value::from(vec![
-            Value::from_iter([
-                ("name".to_string(), Value::from("alice")),
-                ("group".to_string(), Value::from("A")),
-            ]),
-            Value::from_iter([
-                ("name".to_string(), Value::from("bob")),
-                ("group".to_string(), Value::from("B")),
-            ]),
-            Value::from_iter([
-                ("name".to_string(), Value::from("charlie")),
-                ("group".to_string(), Value::from("A")),
-            ]),
-        ]);
-
-        let result = groupby(items, "group".to_string());
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn test_batch() {
-        let list = Value::from(vec![
-            Value::from(1),
-            Value::from(2),
-            Value::from(3),
-            Value::from(4),
-            Value::from(5),
-        ]);
-
-        let result = batch(list, 2, None);
-        assert_eq!(result.len(), 3); // [1,2], [3,4], [5]
-    }
-
-    #[test]
-    fn test_slice() {
-        let list = Value::from(vec![
-            Value::from(0),
-            Value::from(1),
-            Value::from(2),
-            Value::from(3),
-            Value::from(4),
-        ]);
-
-        let result = slice_filter(list, 1, Some(4), None);
-        assert_eq!(result.len(), 3); // [1, 2, 3]
     }
 
     #[test]
