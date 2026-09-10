@@ -220,6 +220,18 @@ fn remote_modules_apply_and_are_idempotent() {
       timezone:
         name: Europe/Lisbon
 
+    - name: Create a directory
+      file:
+        path: /opt/rustible-test/dir
+        state: directory
+        mode: "0750"
+
+    - name: Link the directory
+      file:
+        path: /opt/rustible-test/link
+        src: /opt/rustible-test/dir
+        state: link
+
     - name: Run a command
       command: id deployer
 "#,
@@ -254,7 +266,20 @@ fn remote_modules_apply_and_are_idempotent() {
         "the timezone should be set in the container"
     );
     assert!(
-        !Path::new("/home/deployer").exists(),
+        target
+            .exec("stat -c '%a' /opt/rustible-test/dir")
+            .trim()
+            .contains("750"),
+        "the directory mode should be applied on the target"
+    );
+    assert!(
+        target
+            .exec("readlink /opt/rustible-test/link")
+            .contains("/opt/rustible-test/dir"),
+        "the symlink should point at the directory"
+    );
+    assert!(
+        !Path::new("/home/deployer").exists() && !Path::new("/opt/rustible-test").exists(),
         "nothing should have been created on the control node"
     );
 
@@ -280,16 +305,19 @@ fn modules_without_a_verified_remote_transport_are_refused() {
 
     let target = SshTarget::start();
     let inventory = target.write_inventory();
+    // lineinfile still edits through std::fs, so it must be refused rather
+    // than editing a file on the control node.
     let playbook = target.write_playbook(
         r#"---
 - name: Unverified module
   hosts: all
   gather_facts: false
   tasks:
-    - name: Touch a remote file
-      file:
+    - name: Edit a remote file
+      lineinfile:
         path: /tmp/rustible-should-not-exist
-        state: touch
+        line: "written remotely"
+        create: true
 "#,
     );
 

@@ -8,9 +8,13 @@ use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
+use crate::connection::{Connection, ExecuteOptions};
+use crate::utils::shell_escape;
 use std::fs;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::runtime::Handle;
 
 /// Desired state for a file/directory
 #[derive(Debug, Clone, PartialEq)]
@@ -606,6 +610,441 @@ impl FileModule {
     }
 }
 
+// ============================================================================
+// Remote execution
+// ============================================================================
+
+/// What a path currently is on the target, with the attributes the module
+/// manages.
+#[derive(Debug, Clone, PartialEq)]
+struct RemoteEntry {
+    state: Option<FileState>,
+    mode: Option<String>,
+    owner: Option<String>,
+    group: Option<String>,
+    /// Target of a symbolic link.
+    link_target: Option<String>,
+}
+
+impl FileModule {
+    /// Run a command on the target, returning success, stdout and stderr.
+    fn remote_command(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        command: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<(bool, String, String)> {
+        let mut options = ExecuteOptions::new();
+        if context.r#become {
+            options = options
+                .with_escalation(Some(
+                    context
+                        .become_user
+                        .clone()
+                        .unwrap_or_else(|| "root".to_string()),
+                ))
+                .with_escalate_method(
+                    context
+                        .become_method
+                        .clone()
+                        .unwrap_or_else(|| "sudo".to_string()),
+                );
+        }
+
+        let result = Handle::current()
+            .block_on(async { connection.execute(command, Some(options)).await })
+            .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
+
+        Ok((result.success, result.stdout, result.stderr))
+    }
+
+    /// Inspect a path on the target.
+    fn remote_entry(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        path: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<RemoteEntry> {
+        // One round trip: kind, permissions, ownership and link target.
+        let quoted = shell_escape(path);
+        let command = format!(
+            "if [ -L {p} ]; then printf 'link\\n'; readlink {p}; \
+             elif [ -d {p} ]; then printf 'directory\\n\\n'; \
+             elif [ -e {p} ]; then printf 'file\\n\\n'; \
+             else printf 'absent\\n\\n'; fi; \
+             stat -c '%a %U %G' {p} 2>/dev/null || true",
+            p = quoted
+        );
+        let (_, stdout, _) = Self::remote_command(connection, &command, context)?;
+        Ok(Self::parse_remote_entry(&stdout))
+    }
+
+    /// Parse the probe output written by [`Self::remote_entry`].
+    ///
+    /// Line 1 is the kind, line 2 the link target (blank when not a link) and
+    /// line 3 the `stat` attributes (absent when the path does not exist).
+    fn parse_remote_entry(stdout: &str) -> RemoteEntry {
+        let mut lines = stdout.lines();
+        let kind = lines.next().unwrap_or("absent").trim().to_string();
+        let link_target = lines
+            .next()
+            .map(str::trim)
+            .filter(|target| !target.is_empty())
+            .map(str::to_string);
+        let attributes: Vec<String> = lines
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+
+        let state = match kind.as_str() {
+            "link" => Some(FileState::Link),
+            "directory" => Some(FileState::Directory),
+            "file" => Some(FileState::File),
+            _ => None,
+        };
+
+        RemoteEntry {
+            state,
+            mode: attributes.first().cloned(),
+            owner: attributes.get(1).cloned(),
+            group: attributes.get(2).cloned(),
+            link_target,
+        }
+    }
+
+    /// Apply mode and ownership on the target, reporting whether anything
+    /// changed.
+    fn remote_apply_attributes(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        path: &str,
+        mode: Option<u32>,
+        owner: Option<&str>,
+        group: Option<&str>,
+        entry: &RemoteEntry,
+        context: &ModuleContext,
+    ) -> ModuleResult<bool> {
+        let mut changed = false;
+        let quoted = shell_escape(path);
+
+        if let Some(mode) = mode {
+            let requested = format!("{:o}", mode & 0o7777);
+            // stat prints the mode without leading zeroes.
+            let current = entry.mode.as_deref().unwrap_or("");
+            if current.trim_start_matches('0') != requested.trim_start_matches('0') {
+                let command = format!("chmod {} {}", requested, quoted);
+                let (success, _, stderr) = Self::remote_command(connection, &command, context)?;
+                if !success {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Failed to set mode: {}",
+                        stderr.trim()
+                    )));
+                }
+                changed = true;
+            }
+        }
+
+        let owner_differs = owner.is_some_and(|owner| entry.owner.as_deref() != Some(owner));
+        let group_differs = group.is_some_and(|group| entry.group.as_deref() != Some(group));
+        if owner_differs || group_differs {
+            let spec = match (owner, group) {
+                (Some(owner), Some(group)) => format!("{}:{}", owner, group),
+                (Some(owner), None) => owner.to_string(),
+                (None, Some(group)) => format!(":{}", group),
+                (None, None) => unreachable!("at least one of owner/group differs"),
+            };
+            let command = format!("chown {} {}", shell_escape(&spec), quoted);
+            let (success, _, stderr) = Self::remote_command(connection, &command, context)?;
+            if !success {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "Failed to set ownership: {}",
+                    stderr.trim()
+                )));
+            }
+            changed = true;
+        }
+
+        Ok(changed)
+    }
+
+    /// Manage a path on a remote target.
+    ///
+    /// Covers the states playbooks use most (`file`, `directory`, `touch`,
+    /// `absent`, `link`, `hard`) together with `mode`, `owner` and `group`.
+    /// Options that would need a local filesystem view — SELinux contexts,
+    /// explicit timestamps, recursive attribute application and
+    /// `follow: false` — are refused rather than silently ignored.
+    fn execute_via_connection(
+        params: &ModuleParams,
+        context: &ModuleContext,
+        connection: &Arc<dyn Connection + Send + Sync>,
+    ) -> ModuleResult<ModuleOutput> {
+        let path = params.get_string_required("path")?;
+        let state_str = params
+            .get_string("state")?
+            .unwrap_or_else(|| "file".to_string());
+        let state = FileState::from_str(&state_str)?;
+        let mode = params.get_u32("mode")?;
+        // Remote ownership is applied with chown, which takes names or ids.
+        let owner = params.get_string("owner")?;
+        let group = params.get_string("group")?;
+        let force = params.get_bool_or("force", false);
+        let src = params.get_string("src")?;
+
+        for unsupported in [
+            "access_time",
+            "modification_time",
+            "seuser",
+            "serole",
+            "setype",
+            "selevel",
+        ] {
+            if params.get_string(unsupported)?.is_some() || params.get_i64(unsupported)?.is_some() {
+                return Err(ModuleError::Unsupported(format!(
+                    "file: '{}' is not implemented for remote targets",
+                    unsupported
+                )));
+            }
+        }
+        if !params.get_bool_or("follow", true) {
+            return Err(ModuleError::Unsupported(
+                "file: follow=false is not implemented for remote targets".into(),
+            ));
+        }
+        if params.get_bool_or("recurse", false)
+            && (mode.is_some() || owner.is_some() || group.is_some())
+        {
+            return Err(ModuleError::Unsupported(
+                "file: recursive attribute changes are not implemented for remote targets".into(),
+            ));
+        }
+
+        let quoted = shell_escape(&path);
+        let entry = Self::remote_entry(connection, &path, context)?;
+
+        match state {
+            FileState::Absent => {
+                if entry.state.is_none() {
+                    return Ok(ModuleOutput::ok(format!("Path '{}' already absent", path)));
+                }
+                if context.check_mode {
+                    return Ok(ModuleOutput::changed(format!("Would remove '{}'", path)));
+                }
+
+                let command = format!("rm -rf {}", quoted);
+                let (success, _, stderr) = Self::remote_command(connection, &command, context)?;
+                if !success {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Failed to remove '{}': {}",
+                        path,
+                        stderr.trim()
+                    )));
+                }
+                Ok(ModuleOutput::changed(format!("Removed '{}'", path)))
+            }
+
+            FileState::Directory => {
+                let exists = entry.state == Some(FileState::Directory);
+                if context.check_mode {
+                    if exists {
+                        return Ok(ModuleOutput::ok(format!(
+                            "Directory '{}' already exists",
+                            path
+                        )));
+                    }
+                    return Ok(ModuleOutput::changed(format!(
+                        "Would create directory '{}'",
+                        path
+                    )));
+                }
+
+                let mut created = false;
+                if !exists {
+                    let command = format!("mkdir -p {}", quoted);
+                    let (success, _, stderr) = Self::remote_command(connection, &command, context)?;
+                    if !success {
+                        return Err(ModuleError::ExecutionFailed(format!(
+                            "Failed to create directory '{}': {}",
+                            path,
+                            stderr.trim()
+                        )));
+                    }
+                    created = true;
+                }
+
+                let entry = if created {
+                    Self::remote_entry(connection, &path, context)?
+                } else {
+                    entry
+                };
+                let attributes_changed = Self::remote_apply_attributes(
+                    connection,
+                    &path,
+                    mode,
+                    owner.as_deref(),
+                    group.as_deref(),
+                    &entry,
+                    context,
+                )?;
+
+                if created {
+                    Ok(ModuleOutput::changed(format!(
+                        "Created directory '{}'",
+                        path
+                    )))
+                } else if attributes_changed {
+                    Ok(ModuleOutput::changed(format!(
+                        "Updated attributes on directory '{}'",
+                        path
+                    )))
+                } else {
+                    Ok(ModuleOutput::ok(format!(
+                        "Directory '{}' already exists with correct attributes",
+                        path
+                    )))
+                }
+            }
+
+            FileState::File | FileState::Touch => {
+                let exists = matches!(entry.state, Some(FileState::File) | Some(FileState::Link));
+
+                if context.check_mode {
+                    if state == FileState::Touch || !exists {
+                        return Ok(ModuleOutput::changed(format!(
+                            "Would {} '{}'",
+                            if exists { "touch" } else { "create" },
+                            path
+                        )));
+                    }
+                    return Ok(ModuleOutput::ok(format!("File '{}' already exists", path)));
+                }
+
+                // `state: file` manages an existing path; it never creates one,
+                // matching Ansible.
+                if state == FileState::File && !exists {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Path '{}' does not exist on the target; use state=touch to create it",
+                        path
+                    )));
+                }
+
+                let mut changed = false;
+                if state == FileState::Touch {
+                    let command = format!("touch {}", quoted);
+                    let (success, _, stderr) = Self::remote_command(connection, &command, context)?;
+                    if !success {
+                        return Err(ModuleError::ExecutionFailed(format!(
+                            "Failed to touch '{}': {}",
+                            path,
+                            stderr.trim()
+                        )));
+                    }
+                    // touch always updates the timestamps, so it always counts
+                    // as a change, exactly as Ansible reports it.
+                    changed = true;
+                }
+
+                let entry = if changed {
+                    Self::remote_entry(connection, &path, context)?
+                } else {
+                    entry
+                };
+                let attributes_changed = Self::remote_apply_attributes(
+                    connection,
+                    &path,
+                    mode,
+                    owner.as_deref(),
+                    group.as_deref(),
+                    &entry,
+                    context,
+                )?;
+
+                if changed {
+                    Ok(ModuleOutput::changed(format!("Touched '{}'", path)))
+                } else if attributes_changed {
+                    Ok(ModuleOutput::changed(format!(
+                        "Updated attributes on '{}'",
+                        path
+                    )))
+                } else {
+                    Ok(ModuleOutput::ok(format!(
+                        "File '{}' already exists with correct attributes",
+                        path
+                    )))
+                }
+            }
+
+            FileState::Link | FileState::Hard => {
+                let src = src.ok_or_else(|| {
+                    ModuleError::MissingParameter(format!(
+                        "src is required when state is {}",
+                        state_str
+                    ))
+                })?;
+
+                let already_correct = state == FileState::Link
+                    && entry.state == Some(FileState::Link)
+                    && entry.link_target.as_deref() == Some(src.as_str());
+                if already_correct {
+                    let attributes_changed = Self::remote_apply_attributes(
+                        connection,
+                        &path,
+                        mode,
+                        owner.as_deref(),
+                        group.as_deref(),
+                        &entry,
+                        context,
+                    )?;
+                    return Ok(if attributes_changed {
+                        ModuleOutput::changed(format!("Updated attributes on link '{}'", path))
+                    } else {
+                        ModuleOutput::ok(format!("Link '{}' already correct", path))
+                    });
+                }
+
+                if entry.state.is_some() && !force && entry.state != Some(FileState::Link) {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Path '{}' exists and is not a link; use force=true to replace it",
+                        path
+                    )));
+                }
+
+                let kind = if state == FileState::Link {
+                    "symbolic link"
+                } else {
+                    "hard link"
+                };
+                if context.check_mode {
+                    return Ok(ModuleOutput::changed(format!(
+                        "Would create {} '{}' -> '{}'",
+                        kind, path, src
+                    )));
+                }
+
+                let quoted_src = shell_escape(&src);
+                let command = if state == FileState::Link {
+                    // -n keeps an existing directory link from being followed.
+                    format!("ln -sfn {} {}", quoted_src, quoted)
+                } else {
+                    format!("ln -f {} {}", quoted_src, quoted)
+                };
+                let (success, _, stderr) = Self::remote_command(connection, &command, context)?;
+                if !success {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Failed to create link '{}': {}",
+                        path,
+                        stderr.trim()
+                    )));
+                }
+
+                Ok(ModuleOutput::changed(format!(
+                    "Created {} '{}' -> '{}'",
+                    kind, path, src
+                )))
+            }
+        }
+    }
+}
+
 impl Module for FileModule {
     fn name(&self) -> &'static str {
         "file"
@@ -628,6 +1067,14 @@ impl Module for FileModule {
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
+        // A remote target is managed through the connection; the local path
+        // below uses std::fs and would otherwise act on the control node.
+        if let Some(connection) = &context.connection {
+            if !connection.is_local() {
+                return Self::execute_via_connection(params, context, connection);
+            }
+        }
+
         let path_str = params.get_string_required("path")?;
         let path = Path::new(&path_str);
         let state_str = params
@@ -966,6 +1413,44 @@ impl Module for FileModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ------------------------------------------------------------------
+    // Remote target handling
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_remote_entry_directory() {
+        let entry = FileModule::parse_remote_entry("directory\n\n750 root root\n");
+        assert_eq!(entry.state, Some(FileState::Directory));
+        assert_eq!(entry.mode.as_deref(), Some("750"));
+        assert_eq!(entry.owner.as_deref(), Some("root"));
+        assert_eq!(entry.group.as_deref(), Some("root"));
+        assert_eq!(entry.link_target, None);
+    }
+
+    #[test]
+    fn test_parse_remote_entry_link() {
+        let entry = FileModule::parse_remote_entry("link\n/opt/target\n777 root root\n");
+        assert_eq!(entry.state, Some(FileState::Link));
+        assert_eq!(entry.link_target.as_deref(), Some("/opt/target"));
+    }
+
+    #[test]
+    fn test_parse_remote_entry_absent() {
+        // A missing path produces no stat line at all.
+        let entry = FileModule::parse_remote_entry("absent\n\n");
+        assert_eq!(entry.state, None);
+        assert_eq!(entry.mode, None);
+        assert_eq!(entry.owner, None);
+    }
+
+    #[test]
+    fn test_parse_remote_entry_file_without_stat() {
+        // BusyBox stat may not support the format string; the kind still holds.
+        let entry = FileModule::parse_remote_entry("file\n\n");
+        assert_eq!(entry.state, Some(FileState::File));
+        assert_eq!(entry.mode, None);
+    }
     use std::collections::HashMap;
     use tempfile::TempDir;
 

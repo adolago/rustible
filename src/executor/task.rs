@@ -1372,6 +1372,7 @@ disabled"
                     | "sysctl"
                     | "timezone"
                     | "user"
+                    | "file"
             )
         {
             return Ok(TaskResult::failed(format!(
