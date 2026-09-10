@@ -485,6 +485,16 @@ pub trait Connection: Send + Sync {
     /// Get the connection identifier (hostname or container name)
     fn identifier(&self) -> &str;
 
+    /// Whether this connection targets the machine Rustible runs on.
+    ///
+    /// Modules use this to answer questions from local system databases
+    /// (`/etc/passwd`, the dpkg status file, ...) instead of spawning a
+    /// command. Every transport that reaches another machine keeps the
+    /// default.
+    fn is_local(&self) -> bool {
+        false
+    }
+
     /// Check if the connection is still alive
     async fn is_alive(&self) -> bool;
 

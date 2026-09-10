@@ -19,6 +19,24 @@ use crate::connection::ExecuteOptions;
 use crate::utils::shell_escape;
 use std::collections::HashMap;
 
+/// Whether the local dpkg status file lists `package` as installed.
+///
+/// Returns `None` when the status file is unavailable, so the caller falls
+/// back to running dpkg.
+fn native_dpkg_installed(package: &str) -> Option<bool> {
+    let mut apt = crate::native::apt::AptNative::new().ok()?;
+    apt.is_installed(package).ok()
+}
+
+/// The installed version of `package` according to the local dpkg status file,
+/// or `None` when the file is unavailable.
+///
+/// The inner `Option` distinguishes "not installed" from "cannot tell".
+fn native_dpkg_version(package: &str) -> Option<Option<String>> {
+    let mut apt = crate::native::apt::AptNative::new().ok()?;
+    apt.get_version(package).ok()
+}
+
 /// Desired state for a package
 #[derive(Debug, Clone, PartialEq)]
 pub enum AptState {
@@ -295,6 +313,14 @@ impl AptModule {
     ) -> ModuleResult<bool> {
         // Extract package name without version specifier
         let pkg_name = package.split('=').next().unwrap_or(package);
+
+        // On the control node the dpkg status file answers this directly.
+        if conn.is_local() {
+            if let Some(installed) = native_dpkg_installed(pkg_name) {
+                return Ok(installed);
+            }
+        }
+
         let cmd = format!(
             "dpkg -s {} 2>/dev/null | grep -q '^Status:.*installed'",
             shell_escape(pkg_name)
@@ -313,6 +339,14 @@ impl AptModule {
     ) -> ModuleResult<Option<String>> {
         // Extract package name without version specifier
         let pkg_name = package.split('=').next().unwrap_or(package);
+
+        // On the control node the dpkg status file answers this directly.
+        if conn.is_local() {
+            if let Some(version) = native_dpkg_version(pkg_name) {
+                return Ok(version);
+            }
+        }
+
         let cmd = format!(
             "dpkg-query -W -f='${{Version}}' {} 2>/dev/null",
             shell_escape(pkg_name)

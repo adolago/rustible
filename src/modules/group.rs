@@ -89,6 +89,13 @@ impl GroupModule {
         name: &str,
         context: &ModuleContext,
     ) -> ModuleResult<bool> {
+        // On the control node the answer is in /etc/group; no process needed.
+        if connection.is_local() {
+            if let Ok(group) = crate::native::users::get_group_by_name(name) {
+                return Ok(group.is_some());
+            }
+        }
+
         let command = format!("getent group {}", shell_escape(name));
         let (success, _, _) = Self::execute_command(connection, &command, context)?;
         Ok(success)
@@ -100,6 +107,18 @@ impl GroupModule {
         name: &str,
         context: &ModuleContext,
     ) -> ModuleResult<Option<GroupInfo>> {
+        // On the control node, read /etc/group directly instead of spawning
+        // getent.
+        if connection.is_local() {
+            if let Ok(Some(group)) = crate::native::users::get_group_by_name(name) {
+                return Ok(Some(GroupInfo {
+                    name: group.name,
+                    gid: group.gid,
+                    members: group.members,
+                }));
+            }
+        }
+
         // Use getent to get group info
         let command = format!("getent group {}", shell_escape(name));
         let (success, stdout, _) = Self::execute_command(connection, &command, context)?;

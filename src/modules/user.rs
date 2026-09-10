@@ -110,6 +110,13 @@ impl UserModule {
         name: &str,
         context: &ModuleContext,
     ) -> ModuleResult<bool> {
+        // On the control node the answer is in /etc/passwd; no process needed.
+        if connection.is_local() {
+            if let Ok(user) = crate::native::users::get_user_by_name(name) {
+                return Ok(user.is_some());
+            }
+        }
+
         let command = format!("id {}", shell_escape(name));
         let (success, _, _) = Self::execute_command(connection, &command, context)?;
         Ok(success)
@@ -121,6 +128,23 @@ impl UserModule {
         name: &str,
         context: &ModuleContext,
     ) -> ModuleResult<Option<UserInfo>> {
+        // On the control node, read the user and group databases directly
+        // instead of spawning getent and groups.
+        if connection.is_local() {
+            if let Ok(Some(user)) = crate::native::users::get_user_by_name(name) {
+                let groups = crate::native::users::get_user_groups(name).unwrap_or_default();
+                return Ok(Some(UserInfo {
+                    name: user.name,
+                    uid: user.uid,
+                    gid: user.gid,
+                    comment: user.gecos,
+                    home: user.home,
+                    shell: user.shell,
+                    groups,
+                }));
+            }
+        }
+
         // Use getent to get passwd info
         let command = format!("getent passwd {}", shell_escape(name));
         let (success, stdout, _) = Self::execute_command(connection, &command, context)?;
