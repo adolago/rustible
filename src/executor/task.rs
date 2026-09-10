@@ -1373,6 +1373,10 @@ disabled"
                     | "timezone"
                     | "user"
                     | "file"
+                    | "stat"
+                    | "lineinfile"
+                    | "authorized_key"
+                    | "script"
             )
         {
             return Ok(TaskResult::failed(format!(

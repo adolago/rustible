@@ -305,7 +305,7 @@ fn modules_without_a_verified_remote_transport_are_refused() {
 
     let target = SshTarget::start();
     let inventory = target.write_inventory();
-    // lineinfile still edits through std::fs, so it must be refused rather
+    // blockinfile still edits through std::fs, so it must be refused rather
     // than editing a file on the control node.
     let playbook = target.write_playbook(
         r#"---
@@ -314,9 +314,9 @@ fn modules_without_a_verified_remote_transport_are_refused() {
   gather_facts: false
   tasks:
     - name: Edit a remote file
-      lineinfile:
+      blockinfile:
         path: /tmp/rustible-should-not-exist
-        line: "written remotely"
+        block: "written remotely"
         create: true
 "#,
     );
@@ -334,5 +334,97 @@ fn modules_without_a_verified_remote_transport_are_refused() {
             .trim()
             .is_empty(),
         "the refused task must not have touched the target"
+    );
+}
+
+#[test]
+fn file_editing_modules_act_on_the_target() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+
+    let target = SshTarget::start();
+    let inventory = target.write_inventory();
+
+    let script = target.dir.path().join("hello.sh");
+    fs::write(
+        &script,
+        "#!/bin/sh\ntouch /tmp/rustible-script-marker\necho ran\n",
+    )
+    .expect("write script");
+
+    let playbook = target.write_playbook(&format!(
+        r#"---
+- name: File editing modules
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Stat a known file
+      stat:
+        path: /etc/os-release
+      register: os_release
+
+    - name: The stat must come from the target
+      assert:
+        that:
+          - os_release.stat.exists
+
+    - name: Ensure a configuration line
+      lineinfile:
+        path: /etc/rustible-test.conf
+        line: "managed=true"
+        create: true
+
+    - name: Authorize a key
+      authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA rustible-test"
+        state: present
+
+    - name: Run a transferred script
+      script: {}
+"#,
+        script.display()
+    ));
+
+    let first = run_playbook(&inventory, &playbook);
+    assert!(
+        first.contains("failed=0") && first.contains("unreachable=0"),
+        "first run should succeed:\n{}",
+        first
+    );
+
+    assert!(
+        target
+            .exec("cat /etc/rustible-test.conf")
+            .contains("managed=true"),
+        "lineinfile should have written to the target"
+    );
+    assert!(
+        target
+            .exec("grep -c rustible-test /root/.ssh/authorized_keys")
+            .trim()
+            == "1",
+        "the key should be authorized exactly once on the target"
+    );
+    assert!(
+        target
+            .exec("test -e /tmp/rustible-script-marker && echo present")
+            .contains("present"),
+        "the script should have run on the target"
+    );
+    assert!(
+        !Path::new("/etc/rustible-test.conf").exists(),
+        "nothing should have been written on the control node"
+    );
+
+    // Only the script reports a change on a repeat run; scripts carry no
+    // idempotency contract, exactly as in Ansible.
+    let second = run_playbook(&inventory, &playbook);
+    assert!(
+        second.contains("changed=1") && second.contains("failed=0"),
+        "second run should be idempotent apart from the script:\n{}",
+        second
     );
 }
