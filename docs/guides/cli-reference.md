@@ -60,6 +60,8 @@ The `run` command executes an Ansible-compatible playbook against the specified 
 | `--user <USER>` | `-u` | Remote SSH user | current user |
 | `--private-key <PATH>` | - | Path to SSH private key | - |
 | `--ssh-common-args <ARGS>` | - | Additional SSH arguments | - |
+| `--cache-state` | - | Skip tasks whose inputs are unchanged since the last run | false |
+| `--cache-state-ttl <SECONDS>` | - | How long a cached task result stays valid | 3600 |
 
 ### Examples
 
@@ -92,6 +94,31 @@ rustible run playbook.yml --step --start-at-task "Install packages"
 ```bash
 rustible run playbook.yml --vault-password-file ~/.vault_pass
 ```
+
+**Skip work that is already done:**
+```bash
+rustible run site.yml --cache-state
+```
+
+With `--cache-state`, Rustible hashes each task's module, arguments, target
+host and any local source file, and records the hash when the task reports no
+change. A later run with the same hash skips the task without contacting the
+target, which makes a repeat run of an unchanged playbook close to instant.
+
+The cache lives in `.rustible/state/task-cache.json` next to the playbook, and
+entries expire after `--cache-state-ttl` seconds (one hour by default).
+
+Because a skipped task never inspects the target, drift introduced outside
+Rustible is invisible while the entry is valid. Guard rails:
+
+- Only tasks that reported **no change** are cached; a task that changed
+  something runs again next time.
+- Only idempotent modules are eligible (`file`, `copy`, `template`,
+  `lineinfile`, package, service, user and similar). Command-like modules,
+  fact-producing modules and `state: latest` package tasks always run.
+- Check mode never reads or writes the cache.
+- Delete `.rustible/state/task-cache.json`, or run without `--cache-state`, to
+  force a full run.
 
 ### Exit Codes
 

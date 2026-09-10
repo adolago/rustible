@@ -523,6 +523,8 @@ pub struct Executor {
     batch_processor: Arc<BatchProcessor>,
     /// Optional event callback for execution telemetry
     event_callback: Option<EventCallback>,
+    /// Optional cross-run task state cache (`--cache-state`)
+    state_cache: Option<Arc<crate::state::StateHashCache>>,
 }
 
 impl Executor {
@@ -546,6 +548,7 @@ impl Executor {
             changed_tasks: Arc::new(Mutex::new(Vec::new())),
             batch_processor: Arc::new(BatchProcessor::new(BatchConfig::default())),
             event_callback: None,
+            state_cache: None,
         }
     }
 
@@ -569,6 +572,7 @@ impl Executor {
             changed_tasks: Arc::new(Mutex::new(Vec::new())),
             batch_processor: Arc::new(BatchProcessor::new(BatchConfig::default())),
             event_callback: None,
+            state_cache: None,
         }
     }
 
@@ -606,6 +610,12 @@ impl Executor {
     /// Set the event callback for this executor.
     pub fn with_event_callback(mut self, callback: EventCallback) -> Self {
         self.event_callback = Some(callback);
+        self
+    }
+
+    /// Attach a cross-run task state cache so unchanged tasks can be skipped.
+    pub fn with_state_cache(mut self, cache: Arc<crate::state::StateHashCache>) -> Self {
+        self.state_cache = Some(cache);
         self
     }
 
@@ -1121,7 +1131,8 @@ impl Executor {
             {
                 let mut flush_hosts = Vec::new();
                 for host in &active_hosts {
-                    let context = ExecutionContext::new(host.clone());
+                    let context = ExecutionContext::new(host.clone())
+                        .with_state_cache(self.state_cache.clone());
                     if let Some(condition) = &task.when {
                         if !task
                             .evaluate_condition(condition, &context, &self.runtime)
@@ -1319,7 +1330,8 @@ impl Executor {
                 let mut ctx = ExecutionContext::new(host.clone())
                     .with_check_mode(self.config.check_mode)
                     .with_diff_mode(self.config.diff_mode)
-                    .with_verbosity(self.config.verbosity);
+                    .with_verbosity(self.config.verbosity)
+                    .with_state_cache(self.state_cache.clone());
 
                 // Set connection if available
                 if let Some(ref conn) = host_connection {
@@ -1448,6 +1460,7 @@ impl Executor {
                 let changed_tasks = Arc::clone(&self.changed_tasks);
                 let batch_processor = Arc::clone(&self.batch_processor);
                 let pipelining = self.config.pipelining;
+                let state_cache = self.state_cache.clone();
                 let tx_id = tx_id.clone();
                 let event_callback = event_callback.clone();
 
@@ -1489,7 +1502,8 @@ impl Executor {
                         let mut ctx = ExecutionContext::new(host.clone())
                             .with_check_mode(check_mode)
                             .with_diff_mode(diff_mode)
-                            .with_verbosity(verbosity);
+                            .with_verbosity(verbosity)
+                            .with_state_cache(state_cache.clone());
 
                         // Set connection if available
                         if let Some(ref conn) = host_connection {
@@ -1762,7 +1776,8 @@ impl Executor {
             let mut ctx = ExecutionContext::new(host.clone())
                 .with_check_mode(self.config.check_mode)
                 .with_diff_mode(self.config.diff_mode)
-                .with_verbosity(self.config.verbosity);
+                .with_verbosity(self.config.verbosity)
+                .with_state_cache(self.state_cache.clone());
 
             // Set connection if available
             if let Some(conn) = host_connection {
@@ -1877,6 +1892,7 @@ impl Executor {
                 let module_registry = Arc::clone(&self.module_registry);
                 let batch_processor = Arc::clone(&self.batch_processor);
                 let pipelining = self.config.pipelining;
+                let state_cache = self.state_cache.clone();
                 let event_callback = event_callback.clone();
 
                 tokio::spawn(async move {
@@ -1905,7 +1921,8 @@ impl Executor {
                     let mut ctx = ExecutionContext::new(host.clone())
                         .with_check_mode(check_mode)
                         .with_diff_mode(diff_mode)
-                        .with_verbosity(verbosity);
+                        .with_verbosity(verbosity)
+                        .with_state_cache(state_cache.clone());
 
                     // Set connection if available
                     if let Some(conn) = host_connection {

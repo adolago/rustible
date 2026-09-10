@@ -107,6 +107,17 @@ pub struct RunArgs {
     #[arg(long)]
     pub no_pipelining: bool,
 
+    /// Skip tasks whose inputs are unchanged since the last run
+    ///
+    /// A task is skipped only when an earlier run with identical module
+    /// arguments, host and local source files reported no change.
+    #[arg(long)]
+    pub cache_state: bool,
+
+    /// How long a cached task result stays valid, in seconds
+    #[arg(long, value_name = "SECONDS", default_value = "3600")]
+    pub cache_state_ttl: u64,
+
     /// Enable distributed execution across worker nodes
     #[arg(long)]
     pub distributed: bool,
@@ -185,6 +196,27 @@ fn state_dir_for_playbook(playbook: &Path) -> PathBuf {
         .unwrap_or_else(|| Path::new("."))
         .join(".rustible")
         .join("state")
+}
+
+/// Persist the cross-run task cache, if one is enabled.
+///
+/// A cache that cannot be written costs the next run its skips; it is never a
+/// reason to fail the current one.
+fn save_task_cache(
+    state_cache: Option<&(Arc<rustible::state::StateHashCache>, PathBuf)>,
+    ctx: &CommandContext,
+) {
+    let Some((cache, path)) = state_cache else {
+        return;
+    };
+    if let Err(err) = cache.save(path) {
+        ctx.output
+            .warning(&format!("Failed to save task state cache: {}", err));
+    }
+}
+
+fn task_cache_path(playbook: &Path) -> PathBuf {
+    state_dir_for_playbook(playbook).join("task-cache.json")
 }
 
 fn build_host_states(
@@ -781,6 +813,23 @@ impl RunArgs {
             self.start_at_task.clone(),
         );
 
+        // Cross-run task state cache, persisted next to the playbook. Check
+        // mode has to report what a real run would do, so it never reuses a
+        // cached verdict.
+        let state_cache = if self.cache_state && !ctx.check_mode {
+            let path = task_cache_path(&self.playbook);
+            let config = rustible::state::HashingConfig {
+                enabled: true,
+                cache_ttl: std::time::Duration::from_secs(self.cache_state_ttl),
+                ..Default::default()
+            };
+            let cache = Arc::new(rustible::state::StateHashCache::load_or_new(&path, config));
+            executor = executor.with_state_cache(Arc::clone(&cache));
+            Some((cache, path))
+        } else {
+            None
+        };
+
         // Wire up RecoveryManager when auto_rollback or checkpoint_dir is set
         if self.auto_rollback || self.checkpoint_dir.is_some() {
             use rustible::recovery::{RecoveryConfig, RecoveryManager};
@@ -872,6 +921,8 @@ impl RunArgs {
                     ));
                 }
 
+                save_task_cache(state_cache.as_ref(), ctx);
+
                 if let Some(bundle) = output_bundle.as_ref() {
                     let mut bundle = bundle.lock().expect("output bundle lock poisoned");
                     let end_timestamp = timestamp();
@@ -917,6 +968,8 @@ impl RunArgs {
 
         // Close all pooled connections
         ctx.close_connections().await;
+
+        save_task_cache(state_cache.as_ref(), ctx);
 
         // Convert executor results to RecapStats
         let mut stats = RecapStats::new();

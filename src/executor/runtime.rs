@@ -223,6 +223,8 @@ pub struct ExecutionContext {
     pub become_method: String,
     /// Password for privilege escalation
     pub become_password: Option<String>,
+    /// Cross-run task state cache, when `--cache-state` is enabled
+    pub state_cache: Option<std::sync::Arc<crate::state::StateHashCache>>,
 }
 
 impl std::fmt::Debug for ExecutionContext {
@@ -241,6 +243,7 @@ impl std::fmt::Debug for ExecutionContext {
             .field("become_user", &self.become_user)
             .field("become_method", &self.become_method)
             .field("has_become_password", &self.become_password.is_some())
+            .field("state_cache", &self.state_cache.is_some())
             .finish()
     }
 }
@@ -258,7 +261,17 @@ impl ExecutionContext {
             become_user: "root".to_string(),
             become_method: "sudo".to_string(),
             become_password: None,
+            state_cache: None,
         }
+    }
+
+    /// Attach a cross-run task state cache.
+    pub fn with_state_cache(
+        mut self,
+        cache: Option<std::sync::Arc<crate::state::StateHashCache>>,
+    ) -> Self {
+        self.state_cache = cache;
+        self
     }
 
     pub fn with_check_mode(mut self, check: bool) -> Self {

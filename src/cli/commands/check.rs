@@ -90,6 +90,10 @@ impl CheckArgs {
             forward_agent: false,
             checkpoint_dir: None,
             no_pipelining: false,
+            // Check mode must report what a real run would do, so a cached
+            // "unchanged" verdict from an earlier run is never reused here.
+            cache_state: false,
+            cache_state_ttl: 3600,
             distributed: false,
             workers: 1,
             distribution_strategy: "adaptive".to_string(),

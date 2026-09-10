@@ -41,6 +41,7 @@ use crate::executor::parallelization::ParallelizationManager;
 use crate::executor::runtime::{ExecutionContext, RegisteredResult, RuntimeContext};
 use crate::executor::{ExecutorError, ExecutorResult};
 use crate::modules::ModuleRegistry;
+use crate::state::{StateHashCache, TaskHashBuilder, TaskStateHash};
 use crate::template::get_engine;
 
 /// Status of a task execution
@@ -475,6 +476,130 @@ impl From<crate::playbook::Task> for Task {
             until: pt.until,
             vars: pt.vars.as_map().clone(),
         }
+    }
+}
+
+/// A pending lookup in the cross-run task state cache.
+///
+/// Holds everything needed to answer "did this exact task, with these exact
+/// inputs, already leave this host in the desired state?" and to record the
+/// answer after execution.
+struct StateCacheProbe {
+    cache: Arc<StateHashCache>,
+    host: String,
+    task_id: String,
+    hash: TaskStateHash,
+}
+
+impl StateCacheProbe {
+    /// Modules whose result depends only on their arguments and the target's
+    /// state, so an unchanged run can stand in for a repeat run.
+    ///
+    /// Deliberately an allowlist: command-like, fact-producing and
+    /// flow-control modules must always run, and a module missing from this
+    /// list simply executes as usual.
+    const CACHEABLE_MODULES: &'static [&'static str] = &[
+        "apt",
+        "archive",
+        "authorized_key",
+        "blockinfile",
+        "copy",
+        "cron",
+        "dnf",
+        "file",
+        "firewalld",
+        "group",
+        "hostname",
+        "known_hosts",
+        "lineinfile",
+        "mount",
+        "package",
+        "pip",
+        "selinux",
+        "service",
+        "sysctl",
+        "systemd",
+        "systemd_unit",
+        "template",
+        "timezone",
+        "ufw",
+        "unarchive",
+        "user",
+        "yum",
+    ];
+
+    /// Argument keys that name a file on the controller whose content is part
+    /// of the task's identity.
+    const LOCAL_SOURCE_KEYS: &'static [&'static str] = &["src"];
+
+    /// Build a probe, or `None` when this task must not be cached.
+    fn build(
+        cache: Arc<StateHashCache>,
+        module: &str,
+        task_name: &str,
+        args: &IndexMap<String, JsonValue>,
+        host: &str,
+    ) -> Option<Self> {
+        if !Self::CACHEABLE_MODULES.contains(&module) {
+            return None;
+        }
+
+        // `state: latest` asks about the world, not just this host, so a
+        // previous no-op says nothing about the next run.
+        if let Some(state) = args.get("state").and_then(|value| value.as_str()) {
+            if state == "latest" {
+                return None;
+            }
+        }
+
+        let args_value = serde_json::to_value(args).ok()?;
+        let mut builder = TaskHashBuilder::new()
+            .module(module)
+            .host(host)
+            .arguments(&args_value);
+
+        for key in Self::LOCAL_SOURCE_KEYS {
+            let Some(source) = args.get(*key).and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let path = std::path::PathBuf::from(source);
+            // A remote-only or unreadable source cannot be pinned to a hash,
+            // so the task stays uncached rather than being skipped blindly.
+            if !path.is_file() {
+                return None;
+            }
+            builder = builder.file_content(&path).ok()?;
+        }
+
+        Some(Self {
+            cache,
+            host: host.to_string(),
+            task_id: format!("{}:{}", task_name, module),
+            hash: builder.build(),
+        })
+    }
+
+    /// A previous no-op result for these inputs, if one is still valid.
+    fn lookup(&self) -> Option<crate::state::CachedTaskResult> {
+        self.cache.check_skip(&self.host, &self.task_id, &self.hash)
+    }
+
+    /// Record this run's outcome so a later identical run can skip the task.
+    fn record(&self, result: &TaskResult) {
+        // Only a successful run says anything about the target's state, and
+        // only an unchanged one proves the task is now a no-op.
+        if !matches!(result.status, TaskStatus::Ok) || result.changed {
+            return;
+        }
+        self.cache.store(
+            &self.host,
+            &self.task_id,
+            self.hash.clone(),
+            crate::state::TaskStatus::Ok,
+            false,
+            result.msg.clone(),
+            result.result.clone(),
+        );
     }
 }
 
@@ -1098,7 +1223,37 @@ impl Task {
             .acquire(hint, lock_host, &self.module)
             .await;
 
-        match module_name {
+        // Cross-run state cache: a task whose inputs are unchanged since a
+        // previous no-op run on this host does not need to run again. Tasks
+        // with `until` retries are excluded because their outcome depends on
+        // the world, not only on their arguments.
+        let cache_probe = match (&ctx.state_cache, self.until.is_some()) {
+            (Some(cache), false) => {
+                StateCacheProbe::build(cache.clone(), module_name, &self.name, &args, &ctx.host)
+            }
+            _ => None,
+        };
+
+        if let Some(probe) = &cache_probe {
+            if let Some(cached) = probe.lookup() {
+                debug!(
+                    "Task '{}' skipped: state cache hit for host {}",
+                    self.name, ctx.host
+                );
+                let mut result = TaskResult::ok().with_msg(
+                    cached
+                        .message
+                        .unwrap_or_else(|| "Unchanged since the last run".to_string()),
+                );
+                result.result = Some(serde_json::json!({
+                    "cached": true,
+                    "state_hash": probe.hash.hash,
+                }));
+                return Ok(result);
+            }
+        }
+
+        let result = match module_name {
             "debug" => self.execute_debug(&args, ctx).await,
             "set_fact" => self.execute_set_fact(&args, ctx, runtime).await,
             "fail" => self.execute_fail(&args).await,
@@ -1122,7 +1277,13 @@ impl Task {
                 self.execute_native(module_name, &args, ctx, runtime, module_registry)
                     .await
             }
+        };
+
+        if let (Some(probe), Ok(task_result)) = (&cache_probe, &result) {
+            probe.record(task_result);
         }
+
+        result
     }
 
     /// The transport configured for this task's host: a task-level
