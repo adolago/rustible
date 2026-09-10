@@ -150,7 +150,7 @@ impl Playbook {
             )
         })?;
 
-        let value = resolve_merge_keys(value);
+        let value = crate::utils::yaml::resolve_merge_keys(value);
 
         // Playbooks are a list of plays at the top level.
         let plays: Vec<Play> = serde_yaml::from_value(value).map_err(|e| {
@@ -392,57 +392,6 @@ where
     }
 
     deserializer.deserialize_option(OptionBoolVisitor)
-}
-
-fn resolve_merge_keys(value: serde_yaml::Value) -> serde_yaml::Value {
-    match value {
-        serde_yaml::Value::Mapping(mapping) => {
-            let mut merged = serde_yaml::Mapping::new();
-            let mut explicit = Vec::new();
-
-            for (key, value) in mapping {
-                if matches!(&key, serde_yaml::Value::String(s) if s == "<<") {
-                    match value {
-                        serde_yaml::Value::Mapping(_) => {
-                            if let serde_yaml::Value::Mapping(source) = resolve_merge_keys(value) {
-                                for (k, v) in source {
-                                    merged.insert(k, v);
-                                }
-                            }
-                        }
-                        serde_yaml::Value::Sequence(seq) => {
-                            for item in seq {
-                                if let serde_yaml::Value::Mapping(source) = resolve_merge_keys(item)
-                                {
-                                    for (k, v) in source {
-                                        merged.insert(k, v);
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                } else {
-                    explicit.push((key, value));
-                }
-            }
-
-            for (key, value) in explicit {
-                merged.insert(key, resolve_merge_keys(value));
-            }
-
-            serde_yaml::Value::Mapping(merged)
-        }
-        serde_yaml::Value::Sequence(seq) => {
-            serde_yaml::Value::Sequence(seq.into_iter().map(resolve_merge_keys).collect())
-        }
-        serde_yaml::Value::Tagged(tagged) => {
-            let mut tagged = *tagged;
-            tagged.value = resolve_merge_keys(tagged.value);
-            serde_yaml::Value::Tagged(Box::new(tagged))
-        }
-        other => other,
-    }
 }
 
 impl Play {

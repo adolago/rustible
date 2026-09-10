@@ -444,10 +444,11 @@ impl VarStore {
         // Check if it's vault encrypted
         if content.starts_with("$ANSIBLE_VAULT;") {
             let decrypted = self.decrypt_vault(&content)?;
-            let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(&decrypted)?;
+            let vars: IndexMap<String, serde_yaml::Value> =
+                crate::utils::yaml::from_str(&decrypted)?;
             self.set_many_from_file(vars, precedence, &path);
         } else {
-            let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(&content)?;
+            let vars: IndexMap<String, serde_yaml::Value> = crate::utils::yaml::from_str(&content)?;
             self.set_many_from_file(vars, precedence, &path);
         }
 

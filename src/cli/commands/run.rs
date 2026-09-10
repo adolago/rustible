@@ -671,7 +671,8 @@ impl RunArgs {
             ctx.output
                 .warning("Running in PLAN MODE - showing execution plan only");
             let playbook_content = std::fs::read_to_string(&self.playbook)?;
-            let playbook_yaml: serde_yaml::Value = serde_yaml::from_str(&playbook_content)?;
+            let playbook_yaml: serde_yaml::Value =
+                rustible::utils::yaml::from_str(&playbook_content)?;
             let mut plan_lines: Vec<String> = Vec::new();
             if let Some(plays) = playbook_yaml.as_sequence() {
                 let extra_vars_for_plan: std::collections::HashMap<String, serde_yaml::Value> =
@@ -1114,7 +1115,7 @@ impl RunArgs {
                 if role_tasks_path.exists() {
                     if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
                         if let Ok(role_tasks) =
-                            serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                            rustible::utils::yaml::from_str::<Vec<serde_yaml::Value>>(&content)
                         {
                             role_task_count += role_tasks.len();
                         }
@@ -1232,7 +1233,7 @@ impl RunArgs {
                 if role_tasks_path.exists() {
                     if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
                         if let Ok(role_tasks) =
-                            serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                            rustible::utils::yaml::from_str::<Vec<serde_yaml::Value>>(&content)
                         {
                             for task in &role_tasks {
                                 task_num += 1;
@@ -1334,7 +1335,7 @@ impl RunArgs {
                     if role_tasks_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
                             if let Ok(role_tasks) =
-                                serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                                rustible::utils::yaml::from_str::<Vec<serde_yaml::Value>>(&content)
                             {
                                 for task in &role_tasks {
                                     if self.should_run_task(task) {
@@ -1863,7 +1864,7 @@ impl RunArgs {
             if role_tasks_path.exists() {
                 if let Ok(role_content) = std::fs::read_to_string(&role_tasks_path) {
                     if let Ok(role_tasks) =
-                        serde_yaml::from_str::<Vec<serde_yaml::Value>>(&role_content)
+                        rustible::utils::yaml::from_str::<Vec<serde_yaml::Value>>(&role_content)
                     {
                         // Merge role vars if present
                         let mut role_vars = vars.clone();
@@ -1877,7 +1878,9 @@ impl RunArgs {
                         if defaults_path.exists() {
                             if let Ok(defaults_content) = std::fs::read_to_string(&defaults_path) {
                                 if let Ok(defaults) =
-                                    serde_yaml::from_str::<serde_yaml::Value>(&defaults_content)
+                                    rustible::utils::yaml::from_str::<serde_yaml::Value>(
+                                        &defaults_content,
+                                    )
                                 {
                                     if let Some(mapping) = defaults.as_mapping() {
                                         for (k, v) in mapping {
@@ -1901,7 +1904,9 @@ impl RunArgs {
                         if vars_path.exists() {
                             if let Ok(vars_content) = std::fs::read_to_string(&vars_path) {
                                 if let Ok(role_vars_file) =
-                                    serde_yaml::from_str::<serde_yaml::Value>(&vars_content)
+                                    rustible::utils::yaml::from_str::<serde_yaml::Value>(
+                                        &vars_content,
+                                    )
                                 {
                                     if let Some(mapping) = role_vars_file.as_mapping() {
                                         for (k, v) in mapping {
@@ -1957,7 +1962,7 @@ impl RunArgs {
             if let Some(inv_path) = ctx.inventory() {
                 if inv_path.exists() {
                     let content = std::fs::read_to_string(inv_path)?;
-                    let inventory: serde_yaml::Value = serde_yaml::from_str(&content)?;
+                    let inventory: serde_yaml::Value = rustible::utils::yaml::from_str(&content)?;
 
                     let mut hosts = Vec::new();
                     if let Some(all) = inventory.get("all") {
@@ -2336,7 +2341,7 @@ impl RunArgs {
         if let Some(inv_path) = ctx.inventory() {
             if inv_path.exists() {
                 let content = std::fs::read_to_string(inv_path)?;
-                let inventory: serde_yaml::Value = serde_yaml::from_str(&content)?;
+                let inventory: serde_yaml::Value = rustible::utils::yaml::from_str(&content)?;
 
                 // Look for host-specific vars
                 if let Some(all) = inventory.get("all") {

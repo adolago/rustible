@@ -353,7 +353,8 @@ impl Inventory {
                     .to_string();
 
                 let content = std::fs::read_to_string(&file_path)?;
-                let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(&content)?;
+                let vars: IndexMap<String, serde_yaml::Value> =
+                    crate::utils::yaml::from_str(&content)?;
 
                 if let Some(group) = self.groups.get_mut(&group_name) {
                     group.merge_vars(&vars);
@@ -395,7 +396,8 @@ impl Inventory {
                     .to_string();
 
                 let content = std::fs::read_to_string(&file_path)?;
-                let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(&content)?;
+                let vars: IndexMap<String, serde_yaml::Value> =
+                    crate::utils::yaml::from_str(&content)?;
 
                 if let Some(host) = self.hosts.get_mut(&host_name) {
                     host.merge_vars(&vars);
@@ -433,7 +435,8 @@ impl Inventory {
                 let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if ext == "yml" || ext == "yaml" {
                     let content = std::fs::read_to_string(&file_path)?;
-                    let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(&content)?;
+                    let vars: IndexMap<String, serde_yaml::Value> =
+                        crate::utils::yaml::from_str(&content)?;
                     merged_vars.extend(vars);
                 }
             }
@@ -463,7 +466,7 @@ impl Inventory {
 
     /// Parse YAML inventory format
     fn parse_yaml(&mut self, content: &str) -> InventoryResult<()> {
-        let data: serde_yaml::Value = serde_yaml::from_str(content)?;
+        let data: serde_yaml::Value = crate::utils::yaml::from_str(content)?;
 
         let map = data
             .as_mapping()

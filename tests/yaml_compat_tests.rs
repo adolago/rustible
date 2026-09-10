@@ -1303,3 +1303,111 @@ fn test_yaml_compatibility_summary() {
         "Should cover 22 YAML compatibility areas"
     );
 }
+
+// ============================================================================
+// SECTION 9: Merge Keys Outside Playbooks
+//
+// Ansible resolves `<<` in vars files, task files and inventories too, not
+// only in playbooks.
+// ============================================================================
+
+#[test]
+fn test_merge_keys_in_vars_file() {
+    let vars = r#"
+defaults: &defaults
+  port: 80
+  user: www
+
+web:
+  <<: *defaults
+  port: 8080
+"#;
+    let parsed: HashMap<String, HashMap<String, serde_yaml::Value>> =
+        rustible::utils::yaml::from_str(vars).expect("vars file should parse");
+    assert_eq!(parsed["web"]["port"], serde_yaml::Value::from(8080));
+    assert_eq!(parsed["web"]["user"], serde_yaml::Value::from("www"));
+}
+
+#[test]
+fn test_merge_keys_in_task_file() {
+    let tasks = r#"
+- &base
+  name: base task
+  debug:
+    msg: hello
+  become: true
+
+- <<: *base
+  name: derived task
+"#;
+    let parsed: Vec<serde_yaml::Value> =
+        rustible::utils::yaml::from_str(tasks).expect("task file should parse");
+    let derived = parsed[1].as_mapping().expect("task should be a mapping");
+    assert_eq!(
+        derived.get(serde_yaml::Value::from("name")),
+        Some(&serde_yaml::Value::from("derived task")),
+        "the explicit name overrides the merged one"
+    );
+    assert_eq!(
+        derived.get(serde_yaml::Value::from("become")),
+        Some(&serde_yaml::Value::from(true)),
+        "merged keys are inherited"
+    );
+    assert!(
+        derived.get(serde_yaml::Value::from("<<")).is_none(),
+        "the merge key itself must not survive into the task"
+    );
+}
+
+#[test]
+fn test_merge_keys_in_inventory_group_vars() {
+    let inventory = r#"
+all:
+  vars: &common
+    ansible_user: deploy
+  children:
+    web:
+      vars:
+        <<: *common
+        http_port: 80
+      hosts:
+        web1:
+"#;
+    let parsed: serde_yaml::Value =
+        rustible::utils::yaml::from_str(inventory).expect("inventory should parse");
+    let web_vars = parsed
+        .get("all")
+        .and_then(|all| all.get("children"))
+        .and_then(|children| children.get("web"))
+        .and_then(|web| web.get("vars"))
+        .expect("web group vars should exist");
+    assert_eq!(
+        web_vars.get("ansible_user"),
+        Some(&serde_yaml::Value::from("deploy"))
+    );
+    assert_eq!(
+        web_vars.get("http_port"),
+        Some(&serde_yaml::Value::from(80))
+    );
+}
+
+#[test]
+fn test_merge_keys_survive_multi_document_streams() {
+    let stream = r#"
+base: &base
+  retries: 3
+first:
+  <<: *base
+---
+second: 2
+"#;
+    let documents: Vec<serde_yaml::Value> =
+        rustible::utils::yaml::from_str_multi(stream).expect("stream should parse");
+    assert_eq!(documents.len(), 2);
+    assert_eq!(
+        documents[0]
+            .get("first")
+            .and_then(|first| first.get("retries")),
+        Some(&serde_yaml::Value::from(3))
+    );
+}
