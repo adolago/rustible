@@ -813,12 +813,9 @@ impl Executor {
         play: &Play,
         tx_id: Option<TransactionId>,
     ) -> ExecutorResult<HashMap<String, HostResult>> {
-        if play.r#become || self.config.r#become {
-            return Err(ExecutorError::RuntimeError(
-                "Play-level privilege escalation is not verified end-to-end; refusing execution"
-                    .into(),
-            ));
-        }
+        // Play-level and CLI-level escalation flow into each task below; the
+        // task path refuses any module that cannot pass escalation through to
+        // the target.
         self.emit_event(ExecutionEvent::PlayStart(play.name.clone()));
         info!("Starting play: {}", play.name);
 

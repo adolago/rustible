@@ -74,12 +74,19 @@ impl SshTarget {
         fs::write(
             dir.path().join("Dockerfile"),
             r#"FROM debian:13-slim
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-server cron tzdata git \
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-server cron tzdata git sudo \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /root/.ssh /run/sshd \
-    && sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+    && sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config \
+    && useradd -m -s /bin/bash runner \
+    && mkdir -p /home/runner/.ssh \
+    && echo 'runner ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runner \
+    && chmod 440 /etc/sudoers.d/runner
 COPY id_test.pub /root/.ssh/authorized_keys
-RUN chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys
+COPY id_test.pub /home/runner/.ssh/authorized_keys
+RUN chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys \
+    && chown -R runner:runner /home/runner/.ssh \
+    && chmod 700 /home/runner/.ssh && chmod 600 /home/runner/.ssh/authorized_keys
 CMD ["/usr/sbin/sshd", "-D", "-e"]
 "#,
         )
@@ -138,6 +145,31 @@ all:
       ansible_host: 127.0.0.1
       ansible_port: {}
       ansible_user: root
+      ansible_ssh_private_key_file: {}
+      ansible_ssh_known_hosts_file: {}
+"#,
+                SSH_PORT,
+                self.key_path().display(),
+                self.dir.path().join("known_hosts").display()
+            ),
+        )
+        .expect("write inventory");
+        path
+    }
+
+    /// Inventory that logs in as an unprivileged user with passwordless sudo.
+    fn write_runner_inventory(&self) -> PathBuf {
+        let path = self.dir.path().join("runner-inventory.yml");
+        fs::write(
+            &path,
+            format!(
+                r#"---
+all:
+  hosts:
+    container1:
+      ansible_host: 127.0.0.1
+      ansible_port: {}
+      ansible_user: runner
       ansible_ssh_private_key_file: {}
       ansible_ssh_known_hosts_file: {}
 "#,
@@ -488,5 +520,103 @@ fn git_clones_on_the_target() {
         second.contains("changed=0"),
         "a second clone of the same version should report no change:\n{}",
         second
+    );
+}
+
+#[test]
+fn become_escalates_on_the_target() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+
+    let target = SshTarget::start();
+    let inventory = target.write_runner_inventory();
+    let playbook = target.write_playbook(
+        r#"---
+- name: Escalated tasks
+  hosts: all
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Report the effective user
+      command: id -un
+      register: whoami
+
+    - name: Escalation must reach root
+      assert:
+        that:
+          - whoami.stdout | trim == "root"
+
+    - name: Create a root-owned directory
+      file:
+        path: /opt/become-test
+        state: directory
+        mode: "0700"
+        owner: root
+
+    - name: Create a group as root
+      group:
+        name: escalated
+        state: present
+"#,
+    );
+
+    let output = run_playbook(&inventory, &playbook);
+    assert!(
+        output.contains("failed=0") && output.contains("unreachable=0"),
+        "the escalated play should succeed:\n{}",
+        output
+    );
+    assert!(
+        target
+            .exec("stat -c '%U %a' /opt/become-test")
+            .trim()
+            .starts_with("root 700"),
+        "the directory should be owned by root on the target"
+    );
+    assert!(
+        target.exec("getent group escalated").contains("escalated"),
+        "the group should exist on the target"
+    );
+}
+
+#[test]
+fn become_is_refused_for_modules_that_cannot_escalate() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+
+    let target = SshTarget::start();
+    let inventory = target.write_runner_inventory();
+    // copy writes over SFTP, which has no way to escalate, so asking for
+    // become must fail rather than write as the login user.
+    let playbook = target.write_playbook(
+        r#"---
+- name: Escalated copy
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Write a root-owned file
+      copy:
+        content: "escalated\n"
+        dest: /opt/become-copy.txt
+"#,
+    );
+
+    let output = run_playbook(&inventory, &playbook);
+    assert!(
+        output.contains("cannot pass privilege escalation"),
+        "an escalated copy must be refused:\n{}",
+        output
+    );
+    assert!(
+        target
+            .exec("test -e /opt/become-copy.txt && echo present")
+            .trim()
+            .is_empty(),
+        "the refused task must not have written to the target"
     );
 }

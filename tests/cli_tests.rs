@@ -29,7 +29,7 @@ fn rustible_cmd() -> Command {
 // that matches no inventory host is an error rather than a warning; and
 // `--start-at-task` naming a task that never runs is an error. Execution
 // refusals exit with code 2, pattern errors with code 1.
-const BECOME_REFUSED: &str = "Play-level privilege escalation is not verified end-to-end";
+const LOCAL_BECOME_REFUSED: &str = "Privilege escalation on the control node is not verified";
 const NO_HOSTS_MATCHED: &str = "No hosts matched pattern";
 const START_TASK_NOT_FOUND: &str = "Requested start task was not found";
 
@@ -674,14 +674,14 @@ fn test_run_with_step() {
 fn test_run_with_become() {
     let playbook = create_test_playbook();
 
+    // `-b` is accepted; escalation is decided per task, and this playbook's
+    // debug task needs none.
     rustible_cmd()
         .arg("run")
         .arg(playbook.path())
         .arg("-b")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 #[test]
@@ -695,9 +695,7 @@ fn test_run_with_become_method() {
         .arg("--become-method")
         .arg("su")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 #[test]
@@ -711,9 +709,7 @@ fn test_run_with_become_user() {
         .arg("--become-user")
         .arg("admin")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 #[test]
@@ -1085,9 +1081,7 @@ fn test_complex_run_with_all_flags() {
         .arg("--become-user")
         .arg("root")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 #[test]
@@ -2416,9 +2410,7 @@ fn test_long_form_arguments() {
         .arg("--become-user")
         .arg("root")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 // =============================================================================
@@ -3308,9 +3300,7 @@ fn test_run_with_all_become_options() {
         .arg("--become-user")
         .arg("admin")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 #[test]
@@ -3332,9 +3322,7 @@ fn test_check_with_all_options() {
         .arg("-u")
         .arg("testuser")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 // =============================================================================
@@ -3536,9 +3524,7 @@ fn test_become_method_su() {
         .arg("--become-method")
         .arg("su")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 #[test]
@@ -3552,9 +3538,7 @@ fn test_become_method_sudo() {
         .arg("--become-method")
         .arg("sudo")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 #[test]
@@ -3567,9 +3551,7 @@ fn test_become_without_method() {
         .arg(playbook.path())
         .arg("--become")
         .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains(BECOME_REFUSED));
+        .success();
 }
 
 // =============================================================================
@@ -4346,4 +4328,30 @@ fn test_ansible_env_var_compatibility() {
         .arg(playbook.path())
         .assert()
         .success();
+}
+
+#[test]
+fn test_local_become_is_refused_for_native_modules() {
+    let mut playbook = NamedTempFile::new().unwrap();
+    writeln!(
+        playbook,
+        r#"---
+- name: Local escalation
+  hosts: localhost
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Create a group
+      group:
+        name: rustible-local-become
+        state: present
+"#
+    )
+    .unwrap();
+
+    rustible_cmd()
+        .arg("run")
+        .arg(playbook.path())
+        .assert()
+        .stdout(predicate::str::contains(LOCAL_BECOME_REFUSED));
 }

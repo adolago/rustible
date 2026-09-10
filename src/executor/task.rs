@@ -1371,6 +1371,45 @@ impl Task {
         "yum",
     ];
 
+    /// Modules that pass privilege escalation through to the target.
+    ///
+    /// Each one builds its remote commands with the context's become user and
+    /// method. Transfer-based modules (`copy`, `template`, `lineinfile`) are
+    /// absent on purpose: they write over SFTP, which cannot escalate, so a
+    /// `become` request there would silently write as the login user.
+    const BECOME_CAPABLE_MODULES: &'static [&'static str] = &[
+        "apt",
+        "authorized_key",
+        "command",
+        "cron",
+        "dnf",
+        "file",
+        "firewalld",
+        "git",
+        "group",
+        "hostname",
+        "locale",
+        "mount",
+        "package",
+        "pip",
+        "script",
+        "selinux",
+        "service",
+        "shell",
+        "stat",
+        "sysctl",
+        "systemd_unit",
+        "timezone",
+        "ufw",
+        "user",
+        "yum",
+    ];
+
+    /// Whether a module can run under privilege escalation.
+    fn supports_become(module_name: &str) -> bool {
+        Self::BECOME_CAPABLE_MODULES.contains(&module_name)
+    }
+
     /// Whether a module may run against a remote target.
     fn has_remote_transport(module_name: &str) -> bool {
         Self::REMOTE_VERIFIED_MODULES.contains(&module_name)
@@ -1411,10 +1450,22 @@ disabled"
                 "Module '{module_name}' does not have a verified remote transport"
             )));
         }
-        if ctx.r#become && (local || !matches!(module_name, "command" | "shell")) {
-            return Ok(TaskResult::failed(
-                "Privilege escalation is not verified for this module; refusing execution",
-            ));
+        // Fact gathering runs as the login user: it reads public system
+        // information and never applies escalation, so a play-level `become`
+        // must not block it.
+        let escalating = ctx.r#become && !matches!(module_name, "gather_facts" | "setup");
+        if escalating {
+            if local {
+                return Ok(TaskResult::failed(
+                    "Privilege escalation on the control node is not verified; refusing execution",
+                ));
+            }
+            if !Self::supports_become(module_name) {
+                return Ok(TaskResult::failed(format!(
+                    "Module '{module_name}' cannot pass privilege escalation to the target; \
+refusing execution"
+                )));
+            }
         }
         if module_name == "gather_facts" || module_name == "setup" {
             return self.execute_gather_facts(args, ctx).await;
