@@ -88,6 +88,9 @@ Within a play, components execute in this order:
 6. `post_tasks`
 7. Handlers notified by post_tasks
 
+Tasks that declare [dependencies](#declared-dependencies) with `provides` and
+`requires` are reordered inside that schedule so requirements run first.
+
 ## Tasks
 
 Tasks are the basic unit of work in a playbook.
@@ -126,6 +129,42 @@ tasks:
     changed_when: install_result.rc == 0
     failed_when: install_result.rc > 1
 ```
+
+### Declared Dependencies
+
+`provides` and `requires` let a task say what it produces and what it needs,
+instead of relying on the order tasks appear in the file. Rustible reorders the
+play so that every requirement is satisfied first:
+
+```yaml
+tasks:
+  - name: Configure app
+    template:
+      src: app.conf.j2
+      dest: /etc/app.conf
+    requires: db_config          # runs after the task providing db_config
+
+  - name: Install database
+    package:
+      name: postgresql
+    provides: database
+
+  - name: Configure database
+    template:
+      src: pg.conf.j2
+      dest: /etc/postgresql/pg.conf
+    requires: database
+    provides: db_config
+```
+
+Both keys accept a single name or a list. Rules:
+
+- Tasks with no unmet requirement keep their authored order, so a play that
+  uses neither key behaves exactly as before.
+- A `requires` that no task provides fails the play before anything runs, as
+  does a cycle between declarations.
+- Tasks in a `block` (with its `rescue` and `always`) move as one unit, so
+  error handling is never split apart.
 
 ### Common Task Patterns
 

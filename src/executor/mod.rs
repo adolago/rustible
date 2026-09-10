@@ -905,6 +905,8 @@ impl Executor {
                 delay: None,
                 until: None,
                 vars: IndexMap::new(),
+                provides: Vec::new(),
+                requires: Vec::new(),
             };
             all_tasks.push(gather_facts_task);
         }
@@ -961,6 +963,16 @@ impl Executor {
             !skipped && !never && (selected || tags.contains(&"always"))
         });
         drop(start);
+
+        // Honour declared task dependencies (`provides`/`requires`) before
+        // handing the schedule to a strategy.
+        let all_tasks =
+            dependency::order_by_declared_resources(all_tasks).map_err(|err| match err {
+                DependencyError::CircularDependency(_) => {
+                    ExecutorError::DependencyCycle(err.to_string())
+                }
+                other => ExecutorError::RuntimeError(other.to_string()),
+            })?;
 
         // Execute based on serial specification and strategy
         let mut execution_result = if let Some(ref serial_spec) = play.serial {

@@ -325,6 +325,12 @@ pub struct Task {
     /// Task-level variables
     #[serde(default)]
     pub vars: IndexMap<String, JsonValue>,
+    /// Resources this task produces, for dependency-ordered execution
+    #[serde(default)]
+    pub provides: Vec<String>,
+    /// Resources this task needs before it can run
+    #[serde(default)]
+    pub requires: Vec<String>,
 }
 
 /// Role of a task within a block structure
@@ -380,6 +386,8 @@ impl Default for Task {
             delay: None,
             until: None,
             vars: IndexMap::new(),
+            provides: Vec::new(),
+            requires: Vec::new(),
         }
     }
 }
@@ -451,6 +459,8 @@ impl From<crate::playbook::Task> for Task {
         });
 
         Self {
+            provides: pt.provides,
+            requires: pt.requires,
             name: pt.name,
             module: pt.module.name,
             args,

@@ -838,6 +838,124 @@ impl DependencyGraph {
 }
 
 // ============================================================================
+// Declared Resource Ordering (`provides` / `requires`)
+// ============================================================================
+
+/// Reorder tasks so that every `requires` runs after the tasks that `provides`
+/// it.
+///
+/// Tasks that declare nothing keep their authored position: the sort is stable,
+/// so among tasks whose dependencies are already satisfied the earliest one in
+/// the playbook runs first. A play that uses neither keyword is returned
+/// untouched.
+///
+/// Tasks belonging to the same block (`block`/`rescue`/`always`) move as one
+/// unit, because splitting a block would change its error-handling semantics.
+/// A unit provides and requires the union of its tasks' declarations.
+///
+/// # Errors
+///
+/// Returns [`DependencyError::ResolutionError`] when a `requires` names a
+/// resource no task provides, and [`DependencyError::CircularDependency`] when
+/// the declarations form a cycle.
+pub fn order_by_declared_resources(tasks: Vec<Task>) -> DependencyResult<Vec<Task>> {
+    if !tasks
+        .iter()
+        .any(|task| !task.requires.is_empty() || !task.provides.is_empty())
+    {
+        return Ok(tasks);
+    }
+
+    // Group consecutive tasks that belong to the same block into one unit.
+    let mut units: Vec<Vec<Task>> = Vec::new();
+    for task in tasks {
+        let same_block = match (units.last().and_then(|unit| unit.first()), &task.block_id) {
+            (Some(previous), Some(block_id)) => previous.block_id.as_deref() == Some(block_id),
+            _ => false,
+        };
+        if same_block {
+            units
+                .last_mut()
+                .expect("a previous unit exists when same_block is true")
+                .push(task);
+        } else {
+            units.push(vec![task]);
+        }
+    }
+
+    // Map each provided resource to the units that produce it.
+    let mut producers: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (index, unit) in units.iter().enumerate() {
+        for resource in unit.iter().flat_map(|task| task.provides.iter()) {
+            producers.entry(resource.as_str()).or_default().push(index);
+        }
+    }
+
+    // Edges point from a producer to the unit that requires it.
+    let mut dependencies: Vec<HashSet<usize>> = vec![HashSet::new(); units.len()];
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); units.len()];
+    for (index, unit) in units.iter().enumerate() {
+        for resource in unit.iter().flat_map(|task| task.requires.iter()) {
+            let Some(providers) = producers.get(resource.as_str()) else {
+                return Err(DependencyError::ResolutionError(format!(
+                    "task '{}' requires '{}', which no task provides",
+                    unit.first().map(|task| task.name.as_str()).unwrap_or(""),
+                    resource
+                )));
+            };
+            for provider in providers {
+                // A unit that provides what it requires does not wait for
+                // itself.
+                if *provider == index {
+                    continue;
+                }
+                if dependencies[index].insert(*provider) {
+                    dependents[*provider].push(index);
+                }
+            }
+        }
+    }
+
+    // Kahn's algorithm over a min-heap of unit indices keeps the authored order
+    // among units that are ready at the same time.
+    let mut ready: std::collections::BinaryHeap<std::cmp::Reverse<usize>> = dependencies
+        .iter()
+        .enumerate()
+        .filter(|(_, deps)| deps.is_empty())
+        .map(|(index, _)| std::cmp::Reverse(index))
+        .collect();
+
+    let mut remaining: Vec<usize> = dependencies.iter().map(|deps| deps.len()).collect();
+    let mut order = Vec::with_capacity(units.len());
+    while let Some(std::cmp::Reverse(index)) = ready.pop() {
+        order.push(index);
+        for dependent in &dependents[index] {
+            remaining[*dependent] -= 1;
+            if remaining[*dependent] == 0 {
+                ready.push(std::cmp::Reverse(*dependent));
+            }
+        }
+    }
+
+    if order.len() != units.len() {
+        let cycle: Vec<String> = remaining
+            .iter()
+            .enumerate()
+            .filter(|(_, count)| **count > 0)
+            .filter_map(|(index, _)| units[index].first().map(|task| task.name.clone()))
+            .collect();
+        return Err(DependencyError::CircularDependency(cycle));
+    }
+
+    let mut units: Vec<Option<Vec<Task>>> = units.into_iter().map(Some).collect();
+    Ok(order
+        .into_iter()
+        .filter_map(|index| units[index].take())
+        .flatten()
+        .collect())
+}
+
+// ============================================================================
 // Dependency Analyzer
 // ============================================================================
 
@@ -1001,6 +1119,129 @@ impl Default for DependencyAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ------------------------------------------------------------------
+    // Declared resource ordering
+    // ------------------------------------------------------------------
+
+    fn declared_task(name: &str, provides: &[&str], requires: &[&str]) -> Task {
+        Task {
+            name: name.to_string(),
+            module: "debug".to_string(),
+            provides: provides.iter().map(|s| s.to_string()).collect(),
+            requires: requires.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    fn ordered_names(tasks: Vec<Task>) -> Vec<String> {
+        order_by_declared_resources(tasks)
+            .expect("ordering should succeed")
+            .into_iter()
+            .map(|task| task.name)
+            .collect()
+    }
+
+    #[test]
+    fn test_requires_runs_after_its_provider() {
+        let tasks = vec![
+            declared_task("configure app", &["app_config"], &["database"]),
+            declared_task("install database", &["database"], &[]),
+        ];
+        assert_eq!(
+            ordered_names(tasks),
+            vec!["install database", "configure app"]
+        );
+    }
+
+    #[test]
+    fn test_independent_tasks_keep_authored_order() {
+        let tasks = vec![
+            declared_task("install database", &["database"], &[]),
+            declared_task("install app", &["app"], &[]),
+            declared_task("configure database", &["db_config"], &["database"]),
+            declared_task("configure app", &[], &["db_config", "app"]),
+        ];
+        assert_eq!(
+            ordered_names(tasks),
+            vec![
+                "install database",
+                "install app",
+                "configure database",
+                "configure app"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_plays_without_declarations_are_untouched() {
+        let tasks = vec![
+            declared_task("second", &[], &[]),
+            declared_task("first", &[], &[]),
+        ];
+        assert_eq!(ordered_names(tasks), vec!["second", "first"]);
+    }
+
+    #[test]
+    fn test_missing_provider_is_an_error() {
+        let tasks = vec![declared_task("configure app", &[], &["database"])];
+        let err = order_by_declared_resources(tasks).unwrap_err();
+        assert!(
+            err.to_string().contains("which no task provides"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_cycles_are_reported() {
+        let tasks = vec![
+            declared_task("a", &["a_done"], &["b_done"]),
+            declared_task("b", &["b_done"], &["a_done"]),
+        ];
+        let err = order_by_declared_resources(tasks).unwrap_err();
+        assert!(
+            matches!(err, DependencyError::CircularDependency(_)),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_block_tasks_move_together() {
+        let mut block_first = declared_task("block task 1", &["service"], &[]);
+        block_first.block_id = Some("block-1".to_string());
+        let mut block_second = declared_task("block task 2", &[], &[]);
+        block_second.block_id = Some("block-1".to_string());
+
+        let tasks = vec![
+            declared_task("needs service", &[], &["service"]),
+            block_first,
+            block_second,
+        ];
+
+        assert_eq!(
+            ordered_names(tasks),
+            vec!["block task 1", "block task 2", "needs service"],
+            "the block runs as a unit, before the task that requires what it provides"
+        );
+    }
+
+    #[test]
+    fn test_multiple_providers_all_run_first() {
+        let tasks = vec![
+            declared_task("consumer", &[], &["repo"]),
+            declared_task("repo a", &["repo"], &[]),
+            declared_task("repo b", &["repo"], &[]),
+        ];
+        assert_eq!(ordered_names(tasks), vec!["repo a", "repo b", "consumer"]);
+    }
+
+    #[test]
+    fn test_self_provided_requirement_does_not_deadlock() {
+        let tasks = vec![declared_task("bootstrap", &["repo"], &["repo"])];
+        assert_eq!(ordered_names(tasks), vec!["bootstrap"]);
+    }
 
     #[test]
     fn test_dependency_graph_basic() {

@@ -609,6 +609,14 @@ pub struct Task {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
 
+    /// Resources this task produces, for dependency-ordered execution
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub provides: Vec<String>,
+
+    /// Resources this task needs before it can run
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+
     /// Block of tasks (for block/rescue/always error handling)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block: Option<Vec<Task>>,
@@ -667,6 +675,8 @@ impl<'de> Deserialize<'de> for Task {
             "retries",
             "delay",
             "until",
+            "provides",
+            "requires",
             "block",
             "rescue",
             "always",
@@ -719,6 +729,20 @@ impl<'de> Deserialize<'de> for Task {
                 .collect(),
             _ => Vec::new(),
         };
+
+        // Parse provides/requires as a single string or a list
+        let string_list = |value: Option<&serde_json::Value>| -> Vec<String> {
+            match value {
+                Some(serde_json::Value::String(s)) => vec![s.clone()],
+                Some(serde_json::Value::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        let provides = string_list(obj.get("provides"));
+        let requires = string_list(obj.get("requires"));
 
         // Parse tags
         let tags = match obj.get("tags") {
@@ -836,6 +860,8 @@ impl<'de> Deserialize<'de> for Task {
                 .map(|v| v as u32),
             delay: obj.get("delay").and_then(|v| v.as_u64()),
             until: obj.get("until").and_then(|v| v.as_str()).map(String::from),
+            provides,
+            requires,
             block: obj
                 .get("block")
                 .and_then(|v| serde_json::from_value::<Vec<Task>>(v.clone()).ok()),
@@ -887,6 +913,8 @@ impl Task {
             retries: None,
             delay: None,
             until: None,
+            provides: Vec::new(),
+            requires: Vec::new(),
             block: None,
             rescue: None,
             always: None,

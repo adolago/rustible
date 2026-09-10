@@ -414,6 +414,14 @@ pub struct TaskDefinition {
     #[serde(default)]
     pub become_user: Option<String>,
     /// Block of tasks
+    /// Resources this task produces, for dependency-ordered execution
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub provides: Vec<String>,
+
+    /// Resources this task needs before it can run
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub requires: Vec<String>,
+
     #[serde(default)]
     pub block: Option<Vec<TaskDefinition>>,
     /// Rescue tasks (run if block fails)
@@ -1323,6 +1331,8 @@ fn parse_task_definition(
         delay: def.delay.map(|n| n as u64),
         until: def.until.as_ref().map(WhenCondition::to_condition),
         vars: extract_task_vars(&def.module),
+        provides: def.provides,
+        requires: def.requires,
     };
 
     tasks.push(task);
