@@ -31,6 +31,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest;
@@ -710,9 +711,13 @@ impl DetectArgs {
             self.print_report(ctx, &report);
         }
 
-        // Determine base exit code from drift status
+        // Determine base exit code from drift status. A resource that could
+        // not be checked must not read as "no drift": an unreachable host
+        // would otherwise report a clean run.
         let mut exit_code = if report.summary.drifted > 0 || report.summary.missing > 0 {
             2 // Drift detected
+        } else if report.summary.unknown > 0 {
+            1 // Nothing drifted, but some resources could not be checked
         } else {
             0 // No drift
         };
@@ -801,6 +806,13 @@ impl DetectArgs {
             )
         })?;
 
+        // Drift is a question about the target, so every check runs through a
+        // connection to that host rather than against the control node.
+        let connection_factory = rustible::connection::ConnectionFactory::with_pool_size(
+            super::run::build_connection_config(&inventory, None, None, ctx.timeout),
+            ctx.forks.max(1),
+        );
+
         let mut findings = Vec::new();
         let mut hosts_checked = Vec::new();
 
@@ -848,8 +860,17 @@ impl DetectArgs {
             if let Some(tasks) = play.get("tasks").and_then(|t| t.as_sequence()) {
                 for task in tasks {
                     for host in &play_hosts {
-                        if let Some(finding) =
-                            self.check_task_drift(ctx, host, task, &registry).await?
+                        let connection = match connection_factory.get_connection(host).await {
+                            Ok(connection) => Some(connection),
+                            Err(error) => {
+                                ctx.output
+                                    .warning(&format!("Cannot reach {}: {}", host, error));
+                                None
+                            }
+                        };
+                        if let Some(finding) = self
+                            .check_task_drift(ctx, host, task, &registry, connection)
+                            .await?
                         {
                             let status = finding.status.clone();
                             findings.push(finding);
@@ -901,6 +922,7 @@ impl DetectArgs {
         host: &str,
         task: &serde_yaml::Value,
         registry: &ModuleRegistry,
+        connection: Option<Arc<dyn rustible::connection::Connection + Send + Sync>>,
     ) -> Result<Option<DriftFinding>> {
         let task_name = task
             .get("name")
@@ -922,8 +944,14 @@ impl DetectArgs {
         }
 
         // Execute the module in check_mode to detect drift
-        let finding =
-            self.execute_drift_check(host, task_name, &module_type, &module_args, registry)?;
+        let finding = self.execute_drift_check(
+            host,
+            task_name,
+            &module_type,
+            &module_args,
+            registry,
+            connection,
+        )?;
 
         if self.detailed && finding.status != DriftStatus::InSync {
             ctx.output.debug(&format!(
@@ -943,14 +971,34 @@ impl DetectArgs {
         module_type: &str,
         module_args: &serde_yaml::Value,
         registry: &ModuleRegistry,
+        connection: Option<Arc<dyn rustible::connection::Connection + Send + Sync>>,
     ) -> Result<DriftFinding> {
         let params = yaml_to_module_params(module_args);
         let desired_state = serde_json::to_value(module_args).ok();
 
+        // Without a connection the check would inspect the control node and
+        // report someone else's state as this host's drift.
+        let Some(connection) = connection else {
+            return Ok(DriftFinding {
+                host: host.to_string(),
+                resource: task_name.to_string(),
+                resource_type: module_type.to_string(),
+                status: DriftStatus::Unknown,
+                current_state: None,
+                desired_state,
+                description: format!(
+                    "Cannot check {} on {}: no connection to the host",
+                    task_name, host
+                ),
+                diff: None,
+            });
+        };
+
         // Build module context with check_mode and diff_mode enabled
         let module_ctx = ModuleContext::new()
             .with_check_mode(true)
-            .with_diff_mode(true);
+            .with_diff_mode(true)
+            .with_connection(connection);
 
         // Execute with timeout
         let timeout_duration = Duration::from_secs(self.timeout);
@@ -1199,12 +1247,23 @@ impl DetectArgs {
             }
         }
 
-        // Print Terraform-style summary
-        ctx.output.plan_summary(
-            report.summary.missing, // to_add (missing resources need to be created)
-            report.summary.drifted, // to_change (drifted resources need updates)
-            report.summary.extra,   // to_destroy (extra resources should be removed)
-        );
+        // Print Terraform-style summary. When nothing could be checked at all,
+        // "no changes" would be a claim the run cannot support.
+        let checked_something = report.summary.in_sync
+            + report.summary.drifted
+            + report.summary.missing
+            + report.summary.extra
+            > 0;
+        if checked_something || report.summary.unknown == 0 {
+            ctx.output.plan_summary(
+                report.summary.missing, // to_add (missing resources need to be created)
+                report.summary.drifted, // to_change (drifted resources need updates)
+                report.summary.extra,   // to_destroy (extra resources should be removed)
+            );
+        } else {
+            ctx.output
+                .warning("No resource could be checked; drift status is unknown.");
+        }
 
         // Additional statistics
         if report.summary.in_sync > 0 || report.summary.unknown > 0 {
@@ -1216,10 +1275,17 @@ impl DetectArgs {
                 ));
             }
             if report.summary.unknown > 0 {
-                ctx.output.debug(&format!(
-                    "{} resource(s) with unknown status (could not determine drift)",
+                // A resource that could not be checked is not a resource in
+                // sync; say so where the summary is read, not only under -v.
+                ctx.output.warning(&format!(
+                    "{} resource(s) could not be checked; their drift status is unknown",
                     report.summary.unknown
                 ));
+                for finding in &report.findings {
+                    if finding.status == DriftStatus::Unknown {
+                        ctx.output.warning(&format!("  {}", finding.description));
+                    }
+                }
             }
         }
 

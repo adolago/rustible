@@ -10,7 +10,6 @@ use crate::connection::{Connection, ExecuteOptions};
 use crate::utils::shell_escape;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::runtime::Handle;
 
 /// Desired state for a group
 #[derive(Debug, Clone, PartialEq)]
@@ -76,9 +75,12 @@ impl GroupModule {
         let options = Self::get_exec_options(context);
 
         // Use tokio runtime to execute async command
-        let result = Handle::current()
-            .block_on(async { connection.execute(command, Some(options)).await })
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
+        let connection = connection.clone();
+        let command = command.to_string();
+        let result = super::block_on_module_future(async move {
+            connection.execute(&command, Some(options)).await
+        })?
+        .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
 
         Ok((result.success, result.stdout, result.stderr))
     }

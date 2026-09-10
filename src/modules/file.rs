@@ -156,6 +156,55 @@ impl FileModule {
         }
     }
 
+    /// Whether applying the requested attributes would change anything.
+    ///
+    /// Check mode must answer the same question the real run answers, so it
+    /// compares the target's current metadata instead of assuming that naming
+    /// an attribute means changing it.
+    #[allow(clippy::too_many_arguments)]
+    fn attributes_would_change(
+        path: &Path,
+        mode: Option<u32>,
+        owner: Option<u32>,
+        group: Option<u32>,
+        access_time: Option<i64>,
+        modification_time: Option<i64>,
+        selinux: &SelinuxContext,
+        follow: bool,
+    ) -> bool {
+        // A SELinux context cannot be compared without reading it back, and
+        // the read is only meaningful on a labelled system; treat a requested
+        // context as a change, as before.
+        if selinux.is_set() {
+            return true;
+        }
+
+        let Ok(meta) = Self::attribute_metadata(path, follow) else {
+            // The path disappeared between checks; the run would recreate it.
+            return true;
+        };
+
+        if let Some(mode) = mode {
+            if !meta.file_type().is_symlink() && meta.permissions().mode() & 0o7777 != mode {
+                return true;
+            }
+        }
+
+        if owner.is_some_and(|owner| meta.uid() != owner)
+            || group.is_some_and(|group| meta.gid() != group)
+        {
+            return true;
+        }
+
+        if access_time.is_some_and(|time| meta.atime() != time)
+            || modification_time.is_some_and(|time| meta.mtime() != time)
+        {
+            return true;
+        }
+
+        false
+    }
+
     fn set_permissions(
         path: &Path,
         mode: u32,
@@ -650,9 +699,27 @@ impl FileModule {
                 );
         }
 
-        let result = Handle::current()
-            .block_on(async { connection.execute(command, Some(options)).await })
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
+        let connection = connection.clone();
+        let command = command.to_string();
+        let fut = async move { connection.execute(&command, Some(options)).await };
+
+        // Modules run from both blocking and async contexts. Driving the
+        // future on a separate thread works in either, where block_on alone
+        // panics inside a runtime.
+        let result = if let Ok(handle) = Handle::try_current() {
+            std::thread::scope(|scope| scope.spawn(move || handle.block_on(fut)).join()).map_err(
+                |_| ModuleError::ExecutionFailed("Tokio runtime thread panicked".to_string()),
+            )?
+        } else {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to create tokio runtime: {}", e))
+                })?
+                .block_on(fut)
+        }
+        .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
 
         Ok((result.success, result.stdout, result.stderr))
     }
@@ -1176,14 +1243,17 @@ impl Module for FileModule {
             FileState::Directory => {
                 if context.check_mode {
                     if current_state == Some(FileState::Directory) {
-                        // Check if permissions need changing
-                        if mode.is_some()
-                            || owner.is_some()
-                            || group.is_some()
-                            || access_time.is_some()
-                            || modification_time.is_some()
-                            || selinux.is_set()
-                        {
+                        // Only report a change when the attributes really differ.
+                        if Self::attributes_would_change(
+                            path,
+                            mode,
+                            owner,
+                            group,
+                            access_time,
+                            modification_time,
+                            &selinux,
+                            follow,
+                        ) {
                             return Ok(ModuleOutput::changed(format!(
                                 "Would update attributes on '{}'",
                                 path_str
@@ -1245,13 +1315,23 @@ impl Module for FileModule {
                     if current_state == Some(FileState::File)
                         || (!follow && current_state == Some(FileState::Link))
                     {
-                        if (mode.is_some() && current_state != Some(FileState::Link))
-                            || owner.is_some()
-                            || group.is_some()
-                            || access_time.is_some()
-                            || modification_time.is_some()
-                            || selinux.is_set()
-                        {
+                        // A link's own mode is never changed, so ignore a
+                        // requested mode there.
+                        let requested_mode = if current_state == Some(FileState::Link) {
+                            None
+                        } else {
+                            mode
+                        };
+                        if Self::attributes_would_change(
+                            path,
+                            requested_mode,
+                            owner,
+                            group,
+                            access_time,
+                            modification_time,
+                            &selinux,
+                            follow,
+                        ) {
                             return Ok(ModuleOutput::changed(format!(
                                 "Would update attributes on '{}'",
                                 path_str

@@ -216,7 +216,7 @@ fn save_task_cache(
 }
 
 /// Read an inventory value that may be written as a YAML bool or a string.
-fn yaml_bool(value: &serde_yaml::Value) -> Option<bool> {
+pub(crate) fn yaml_bool(value: &serde_yaml::Value) -> Option<bool> {
     match value {
         serde_yaml::Value::Bool(value) => Some(*value),
         serde_yaml::Value::String(text) => match text.to_ascii_lowercase().as_str() {
@@ -234,7 +234,7 @@ fn yaml_bool(value: &serde_yaml::Value) -> Option<bool> {
 /// every remote task reports "requires an established connection". Inventory
 /// values win over the command line, matching how `ansible_user` overrides
 /// `--user`.
-fn build_connection_config(
+pub(crate) fn build_connection_config(
     inventory: &rustible::inventory::Inventory,
     cli_user: Option<&str>,
     cli_private_key: Option<&Path>,

@@ -75,6 +75,33 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 
+/// Drive a future to completion from module code.
+///
+/// Modules are synchronous but talk to targets through async connections, and
+/// they are called from two places: the executor, which runs them on a
+/// blocking thread, and CLI commands such as `drift`, which call them from an
+/// async function. `Handle::block_on` panics in the second case, so the future
+/// runs on a scoped thread when a runtime is already driving this one.
+pub fn block_on_module_future<F>(future: F) -> ModuleResult<F::Output>
+where
+    F: std::future::Future + Send,
+    F::Output: Send,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => std::thread::scope(|scope| scope.spawn(|| handle.block_on(future)).join())
+            .map_err(|_| {
+                ModuleError::ExecutionFailed("Module runtime thread panicked".to_string())
+            }),
+        Err(_) => Ok(tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| {
+                ModuleError::ExecutionFailed(format!("Failed to create tokio runtime: {}", e))
+            })?
+            .block_on(future)),
+    }
+}
+
 /// Regex pattern for validating package names.
 /// Allows alphanumeric characters, dots, underscores, plus signs, and hyphens.
 static PACKAGE_NAME_REGEX: Lazy<Regex> =

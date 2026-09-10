@@ -12,7 +12,6 @@ use crate::utils::shell_escape;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
-use tokio::runtime::Handle;
 use uuid::Uuid;
 
 /// Regex pattern for validating cron time fields
@@ -200,9 +199,12 @@ impl CronModule {
     ) -> ModuleResult<(bool, String, String)> {
         let options = Self::get_exec_options(context);
 
-        let result = Handle::current()
-            .block_on(async { connection.execute(command, Some(options)).await })
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
+        let connection = connection.clone();
+        let command = command.to_string();
+        let result = super::block_on_module_future(async move {
+            connection.execute(&command, Some(options)).await
+        })?
+        .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
 
         Ok((result.success, result.stdout, result.stderr))
     }
