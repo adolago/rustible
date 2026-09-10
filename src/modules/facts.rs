@@ -417,10 +417,192 @@ impl FactsModule {
 // Remote Facts Gathering via Connection
 // ============================================================================
 
+/// Commands issued while gathering facts from a remote host.
+///
+/// Fact gathering asks a host about twenty small questions. Sent one at a time
+/// each answer costs a full round trip, which dominates the cost of connecting
+/// to a host. `prefetch` sends them as a single shell script and splits the
+/// answers apart, so the common case is one round trip instead of twenty.
+///
+/// Any command that was not prefetched — or a host whose shell cannot run the
+/// batch script, such as a Windows target — falls back to executing that one
+/// command on its own, so behavior is unchanged either way.
+struct RemoteCommands<'a> {
+    connection: &'a Arc<dyn Connection + Send + Sync>,
+    outputs: HashMap<String, Option<String>>,
+}
+
+impl<'a> RemoteCommands<'a> {
+    fn new(connection: &'a Arc<dyn Connection + Send + Sync>) -> Self {
+        Self {
+            connection,
+            outputs: HashMap::new(),
+        }
+    }
+
+    /// Run `commands` in one remote invocation and remember their output.
+    async fn prefetch(&mut self, commands: &[&str]) {
+        let pending: Vec<&str> = commands
+            .iter()
+            .copied()
+            .filter(|command| !self.outputs.contains_key(*command))
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+
+        // A per-batch nonce keeps a command's own output from being mistaken
+        // for a delimiter.
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let script = build_batch_script(&nonce, &pending);
+
+        let output = match self.connection.execute(&script, None).await {
+            Ok(result) => result.stdout,
+            Err(e) => {
+                debug!("Batched fact commands failed, falling back: {}", e);
+                return;
+            }
+        };
+
+        match parse_batch_output(&nonce, &output, &pending) {
+            Some(parsed) => {
+                for (command, value) in parsed {
+                    self.outputs.insert(command, value);
+                }
+            }
+            None => {
+                debug!("Batched fact output was not parseable, falling back to single commands");
+            }
+        }
+    }
+
+    /// The trimmed stdout of a command, executing it if it was not prefetched.
+    async fn get(&mut self, command: &str) -> Option<String> {
+        if let Some(cached) = self.outputs.get(command) {
+            return cached.clone();
+        }
+        let value = execute_and_get_output(self.connection, command).await;
+        self.outputs.insert(command.to_string(), value.clone());
+        value
+    }
+
+    /// The content of a remote file.
+    async fn read_file(&mut self, path: &str) -> Option<String> {
+        self.get(&read_file_command(path)).await
+    }
+}
+
+/// The command used to read a remote file, also used as its cache key.
+fn read_file_command(path: &str) -> String {
+    format!("cat {}", path)
+}
+
+/// Build a shell script that runs each command between marker lines.
+fn build_batch_script(nonce: &str, commands: &[&str]) -> String {
+    let mut script = String::new();
+    for (index, command) in commands.iter().enumerate() {
+        script.push_str(&format!("echo RUSTIBLE_{}_{}_BEGIN\n", nonce, index));
+        script.push_str(command);
+        script.push('\n');
+        script.push_str(&format!("echo RUSTIBLE_{}_{}_END\n", nonce, index));
+    }
+    script
+}
+
+/// Split batched output back into per-command results.
+///
+/// Returns `None` when the markers are missing, which means the host did not
+/// run the script as expected and the commands should be retried one by one.
+fn parse_batch_output(
+    nonce: &str,
+    output: &str,
+    commands: &[&str],
+) -> Option<HashMap<String, Option<String>>> {
+    let mut parsed = HashMap::new();
+    let mut current: Option<(usize, Vec<&str>)> = None;
+
+    for line in output.lines() {
+        let line_trimmed = line.trim_end_matches('\r');
+        if let Some(rest) = line_trimmed.strip_prefix(&format!("RUSTIBLE_{}_", nonce)) {
+            if let Some(index) = rest.strip_suffix("_BEGIN") {
+                let index: usize = index.parse().ok()?;
+                current = Some((index, Vec::new()));
+                continue;
+            }
+            if let Some(index) = rest.strip_suffix("_END") {
+                let index: usize = index.parse().ok()?;
+                let (open_index, collected) = current.take()?;
+                if open_index != index {
+                    return None;
+                }
+                let command = commands.get(index)?;
+                let joined = collected.join("\n");
+                let trimmed = joined.trim();
+                parsed.insert(
+                    command.to_string(),
+                    // An empty answer means the command produced nothing, which
+                    // callers treat the same as a failure.
+                    (!trimmed.is_empty()).then(|| trimmed.to_string()),
+                );
+                continue;
+            }
+        }
+        if let Some((_, collected)) = current.as_mut() {
+            collected.push(line);
+        }
+    }
+
+    // A truncated batch (connection dropped mid-script) is not usable.
+    if current.is_some() || parsed.len() != commands.len() {
+        return None;
+    }
+    Some(parsed)
+}
+
+/// Commands the OS fact gatherer issues.
+const OS_FACT_COMMANDS: &[&str] = &[
+    "hostname -f",
+    "uname -s",
+    "uname -r",
+    "uname -m",
+    "cat /etc/os-release",
+    "whoami",
+    "id -u",
+    "id -g",
+];
+
+/// Commands the hardware fact gatherer issues.
+const HARDWARE_FACT_COMMANDS: &[&str] = &["cat /proc/cpuinfo", "cat /proc/meminfo", "df -B1 /"];
+
+/// Commands the network fact gatherer issues before it knows the interfaces.
+const NETWORK_FACT_COMMANDS: &[&str] = &[
+    "ls -1 /sys/class/net 2>/dev/null",
+    "ip route get 1.1.1.1 2>/dev/null",
+    "hostname -f",
+];
+
+/// Commands the date/time fact gatherer issues.
+const DATE_FACT_COMMANDS: &[&str] = &[
+    "date '+%Y-%m-%d %H:%M:%S %Z'",
+    "date +%s",
+    "cat /etc/timezone",
+    "readlink /etc/localtime",
+    "cat /proc/uptime",
+];
+
+/// Command that collects the environment variables Rustible reports.
+const ENV_COMMAND: &str =
+    "printenv PATH HOME USER SHELL LANG LC_ALL TERM PWD 2>/dev/null || echo ''";
+
+/// Commands the environment fact gatherer issues.
+const ENV_FACT_COMMANDS: &[&str] = &[ENV_COMMAND, "python3 --version 2>&1"];
+
 /// Gather facts from a remote host via a Connection.
 ///
 /// This function executes commands on the remote host using the provided
-/// connection and parses the output to build a facts map.
+/// connection and parses the output to build a facts map. The commands for the
+/// requested subsets are sent as one batch first, so a host is normally asked
+/// once rather than once per fact.
 ///
 /// # Arguments
 ///
@@ -437,67 +619,56 @@ pub async fn gather_facts_via_connection(
     let gather_all = gather_subset
         .map(|s| s.iter().any(|x| x == "all"))
         .unwrap_or(true);
+    let wants = |names: &[&str]| -> bool {
+        gather_all
+            || gather_subset
+                .map(|subset| subset.iter().any(|entry| names.contains(&entry.as_str())))
+                .unwrap_or(false)
+    };
+
+    let want_os = wants(&["os", "min"]);
+    let want_hardware = wants(&["hardware"]);
+    let want_network = wants(&["network"]);
+    let want_date = wants(&["date_time"]);
+    let want_env = wants(&["env"]);
+
+    let mut commands = RemoteCommands::new(connection);
+
+    // One round trip for everything the selected subsets need.
+    let mut batch: Vec<&str> = Vec::new();
+    for (wanted, group) in [
+        (want_os, OS_FACT_COMMANDS),
+        (want_hardware, HARDWARE_FACT_COMMANDS),
+        (want_network, NETWORK_FACT_COMMANDS),
+        (want_date, DATE_FACT_COMMANDS),
+        (want_env, ENV_FACT_COMMANDS),
+    ] {
+        if wanted {
+            batch.extend_from_slice(group);
+        }
+    }
+    batch.sort_unstable();
+    batch.dedup();
+    if !batch.is_empty() {
+        commands.prefetch(&batch).await;
+    }
 
     let mut all_facts = HashMap::new();
 
-    // Always gather OS facts (or if specifically requested)
-    if gather_all
-        || gather_subset
-            .map(|s| s.iter().any(|x| x == "os" || x == "min"))
-            .unwrap_or(false)
-    {
-        let os_facts = gather_os_facts_remote(connection).await;
-        for (k, v) in os_facts {
-            all_facts.insert(k, v);
-        }
+    if want_os {
+        all_facts.extend(gather_os_facts_remote(&mut commands).await);
     }
-
-    // Gather hardware facts
-    if gather_all
-        || gather_subset
-            .map(|s| s.iter().any(|x| x == "hardware"))
-            .unwrap_or(false)
-    {
-        let hw_facts = gather_hardware_facts_remote(connection).await;
-        for (k, v) in hw_facts {
-            all_facts.insert(k, v);
-        }
+    if want_hardware {
+        all_facts.extend(gather_hardware_facts_remote(&mut commands).await);
     }
-
-    // Gather network facts
-    if gather_all
-        || gather_subset
-            .map(|s| s.iter().any(|x| x == "network"))
-            .unwrap_or(false)
-    {
-        let net_facts = gather_network_facts_remote(connection).await;
-        for (k, v) in net_facts {
-            all_facts.insert(k, v);
-        }
+    if want_network {
+        all_facts.extend(gather_network_facts_remote(&mut commands).await);
     }
-
-    // Gather date/time facts
-    if gather_all
-        || gather_subset
-            .map(|s| s.iter().any(|x| x == "date_time"))
-            .unwrap_or(false)
-    {
-        let date_facts = gather_date_facts_remote(connection).await;
-        for (k, v) in date_facts {
-            all_facts.insert(k, v);
-        }
+    if want_date {
+        all_facts.extend(gather_date_facts_remote(&mut commands).await);
     }
-
-    // Gather environment facts
-    if gather_all
-        || gather_subset
-            .map(|s| s.iter().any(|x| x == "env"))
-            .unwrap_or(false)
-    {
-        let env_facts = gather_env_facts_remote(connection).await;
-        for (k, v) in env_facts {
-            all_facts.insert(k, v);
-        }
+    if want_env {
+        all_facts.extend(gather_env_facts_remote(&mut commands).await);
     }
 
     all_facts
@@ -524,23 +695,14 @@ async fn execute_and_get_output(
     }
 }
 
-/// Helper to read a remote file's content
-async fn read_remote_file(
-    connection: &Arc<dyn Connection + Send + Sync>,
-    path: &str,
-) -> Option<String> {
-    // Use cat to read file content via the connection
-    execute_and_get_output(connection, &format!("cat {}", path)).await
-}
-
 /// Gather OS facts from remote host
 async fn gather_os_facts_remote(
-    connection: &Arc<dyn Connection + Send + Sync>,
+    commands: &mut RemoteCommands<'_>,
 ) -> HashMap<String, serde_json::Value> {
     let mut facts = HashMap::new();
 
     // Get hostname
-    if let Some(hostname) = execute_and_get_output(connection, "hostname -f").await {
+    if let Some(hostname) = commands.get("hostname -f").await {
         facts.insert("hostname".to_string(), serde_json::json!(hostname));
         if let Some(short) = hostname.split('.').next() {
             facts.insert("hostname_short".to_string(), serde_json::json!(short));
@@ -548,15 +710,15 @@ async fn gather_os_facts_remote(
     }
 
     // Get kernel info via uname
-    if let Some(system) = execute_and_get_output(connection, "uname -s").await {
+    if let Some(system) = commands.get("uname -s").await {
         facts.insert("system".to_string(), serde_json::json!(system));
     }
 
-    if let Some(kernel) = execute_and_get_output(connection, "uname -r").await {
+    if let Some(kernel) = commands.get("uname -r").await {
         facts.insert("kernel".to_string(), serde_json::json!(kernel));
     }
 
-    if let Some(arch) = execute_and_get_output(connection, "uname -m").await {
+    if let Some(arch) = commands.get("uname -m").await {
         facts.insert("architecture".to_string(), serde_json::json!(&arch));
 
         // Map to common architecture names
@@ -571,7 +733,7 @@ async fn gather_os_facts_remote(
     }
 
     // Get OS release info
-    if let Some(content) = read_remote_file(connection, "/etc/os-release").await {
+    if let Some(content) = commands.read_file("/etc/os-release").await {
         for line in content.lines() {
             if let Some((key, value)) = line.split_once('=') {
                 let value = value.trim_matches('"');
@@ -620,19 +782,19 @@ async fn gather_os_facts_remote(
     }
 
     // Get current user
-    if let Some(user) = execute_and_get_output(connection, "whoami").await {
+    if let Some(user) = commands.get("whoami").await {
         facts.insert("user_id".to_string(), serde_json::json!(user));
     }
 
     // Get user's UID
-    if let Some(uid_str) = execute_and_get_output(connection, "id -u").await {
+    if let Some(uid_str) = commands.get("id -u").await {
         if let Ok(uid) = uid_str.parse::<u32>() {
             facts.insert("user_uid".to_string(), serde_json::json!(uid));
         }
     }
 
     // Get user's GID
-    if let Some(gid_str) = execute_and_get_output(connection, "id -g").await {
+    if let Some(gid_str) = commands.get("id -g").await {
         if let Ok(gid) = gid_str.parse::<u32>() {
             facts.insert("user_gid".to_string(), serde_json::json!(gid));
         }
@@ -643,12 +805,12 @@ async fn gather_os_facts_remote(
 
 /// Gather hardware facts from remote host
 async fn gather_hardware_facts_remote(
-    connection: &Arc<dyn Connection + Send + Sync>,
+    commands: &mut RemoteCommands<'_>,
 ) -> HashMap<String, serde_json::Value> {
     let mut facts = HashMap::new();
 
     // Get CPU info
-    if let Some(content) = read_remote_file(connection, "/proc/cpuinfo").await {
+    if let Some(content) = commands.read_file("/proc/cpuinfo").await {
         let mut processor_count = 0;
         let mut model_name = String::new();
         let mut cpu_cores = 0;
@@ -680,7 +842,7 @@ async fn gather_hardware_facts_remote(
     }
 
     // Get memory info
-    if let Some(content) = read_remote_file(connection, "/proc/meminfo").await {
+    if let Some(content) = commands.read_file("/proc/meminfo").await {
         for line in content.lines() {
             if line.starts_with("MemTotal:") {
                 if let Some(kb_str) = line.split_whitespace().nth(1) {
@@ -705,7 +867,7 @@ async fn gather_hardware_facts_remote(
     }
 
     // Get disk info - root filesystem
-    if let Some(stdout) = execute_and_get_output(connection, "df -B1 /").await {
+    if let Some(stdout) = commands.get("df -B1 /").await {
         if let Some(line) = stdout.lines().nth(1) {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 4 {
@@ -727,35 +889,44 @@ async fn gather_hardware_facts_remote(
 
 /// Gather network facts from remote host
 async fn gather_network_facts_remote(
-    connection: &Arc<dyn Connection + Send + Sync>,
+    commands: &mut RemoteCommands<'_>,
 ) -> HashMap<String, serde_json::Value> {
     let mut facts = HashMap::new();
     let mut interfaces: Vec<serde_json::Value> = Vec::new();
 
     // Get network interfaces by listing /sys/class/net
-    if let Some(iface_list) =
-        execute_and_get_output(connection, "ls -1 /sys/class/net 2>/dev/null").await
-    {
-        for iface_name in iface_list.lines() {
-            let iface_name = iface_name.trim();
+    if let Some(iface_list) = commands.get("ls -1 /sys/class/net 2>/dev/null").await {
+        let names: Vec<String> = iface_list
+            .lines()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty() && name != "lo")
+            .collect();
 
-            // Skip loopback
-            if iface_name == "lo" || iface_name.is_empty() {
-                continue;
-            }
+        // The per-interface reads are only known once the list is back, so
+        // they cost a second round trip rather than three per interface.
+        let per_interface: Vec<String> = names
+            .iter()
+            .flat_map(|name| {
+                [
+                    read_file_command(&format!("/sys/class/net/{}/address", name)),
+                    read_file_command(&format!("/sys/class/net/{}/mtu", name)),
+                    read_file_command(&format!("/sys/class/net/{}/operstate", name)),
+                ]
+            })
+            .collect();
+        if !per_interface.is_empty() {
+            let borrowed: Vec<&str> = per_interface.iter().map(String::as_str).collect();
+            commands.prefetch(&borrowed).await;
+        }
 
+        for iface_name in names {
             let mut iface_info = serde_json::Map::new();
-            iface_info.insert(
-                "device".to_string(),
-                serde_json::json!(iface_name.to_string()),
-            );
+            iface_info.insert("device".to_string(), serde_json::json!(iface_name.clone()));
 
             // Get MAC address
-            if let Some(mac) = read_remote_file(
-                connection,
-                &format!("/sys/class/net/{}/address", iface_name),
-            )
-            .await
+            if let Some(mac) = commands
+                .read_file(&format!("/sys/class/net/{}/address", iface_name))
+                .await
             {
                 let mac = mac.trim();
                 if mac != "00:00:00:00:00:00" {
@@ -764,8 +935,9 @@ async fn gather_network_facts_remote(
             }
 
             // Get MTU
-            if let Some(mtu_str) =
-                read_remote_file(connection, &format!("/sys/class/net/{}/mtu", iface_name)).await
+            if let Some(mtu_str) = commands
+                .read_file(&format!("/sys/class/net/{}/mtu", iface_name))
+                .await
             {
                 if let Ok(mtu) = mtu_str.trim().parse::<u32>() {
                     iface_info.insert("mtu".to_string(), serde_json::json!(mtu));
@@ -773,11 +945,9 @@ async fn gather_network_facts_remote(
             }
 
             // Get operstate
-            if let Some(state) = read_remote_file(
-                connection,
-                &format!("/sys/class/net/{}/operstate", iface_name),
-            )
-            .await
+            if let Some(state) = commands
+                .read_file(&format!("/sys/class/net/{}/operstate", iface_name))
+                .await
             {
                 iface_info.insert(
                     "active".to_string(),
@@ -792,9 +962,7 @@ async fn gather_network_facts_remote(
     facts.insert("interfaces".to_string(), serde_json::json!(interfaces));
 
     // Get default IPv4 address
-    if let Some(stdout) =
-        execute_and_get_output(connection, "ip route get 1.1.1.1 2>/dev/null").await
-    {
+    if let Some(stdout) = commands.get("ip route get 1.1.1.1 2>/dev/null").await {
         if let Some(ip) = stdout.split("src ").nth(1) {
             if let Some(ip) = ip.split_whitespace().next() {
                 facts.insert("default_ipv4".to_string(), serde_json::json!(ip));
@@ -803,7 +971,7 @@ async fn gather_network_facts_remote(
     }
 
     // Get FQDN
-    if let Some(fqdn) = execute_and_get_output(connection, "hostname -f").await {
+    if let Some(fqdn) = commands.get("hostname -f").await {
         facts.insert("fqdn".to_string(), serde_json::json!(fqdn));
     }
 
@@ -812,27 +980,26 @@ async fn gather_network_facts_remote(
 
 /// Gather date/time facts from remote host
 async fn gather_date_facts_remote(
-    connection: &Arc<dyn Connection + Send + Sync>,
+    commands: &mut RemoteCommands<'_>,
 ) -> HashMap<String, serde_json::Value> {
     let mut facts = HashMap::new();
 
     // Get current date/time info
-    if let Some(datetime) = execute_and_get_output(connection, "date '+%Y-%m-%d %H:%M:%S %Z'").await
-    {
+    if let Some(datetime) = commands.get("date '+%Y-%m-%d %H:%M:%S %Z'").await {
         facts.insert("date_time".to_string(), serde_json::json!(datetime));
     }
 
     // Get epoch
-    if let Some(epoch_str) = execute_and_get_output(connection, "date +%s").await {
+    if let Some(epoch_str) = commands.get("date +%s").await {
         if let Ok(epoch) = epoch_str.parse::<u64>() {
             facts.insert("epoch".to_string(), serde_json::json!(epoch));
         }
     }
 
     // Get timezone
-    if let Some(tz) = read_remote_file(connection, "/etc/timezone").await {
+    if let Some(tz) = commands.read_file("/etc/timezone").await {
         facts.insert("timezone".to_string(), serde_json::json!(tz.trim()));
-    } else if let Some(link) = execute_and_get_output(connection, "readlink /etc/localtime").await {
+    } else if let Some(link) = commands.get("readlink /etc/localtime").await {
         // Extract timezone from symlink path
         if let Some(tz) = link.strip_prefix("/usr/share/zoneinfo/") {
             facts.insert("timezone".to_string(), serde_json::json!(tz));
@@ -840,7 +1007,7 @@ async fn gather_date_facts_remote(
     }
 
     // Get uptime
-    if let Some(content) = read_remote_file(connection, "/proc/uptime").await {
+    if let Some(content) = commands.read_file("/proc/uptime").await {
         if let Some(seconds_str) = content.split_whitespace().next() {
             if let Ok(seconds) = seconds_str.parse::<f64>() {
                 facts.insert(
@@ -856,14 +1023,13 @@ async fn gather_date_facts_remote(
 
 /// Gather environment facts from remote host
 async fn gather_env_facts_remote(
-    connection: &Arc<dyn Connection + Send + Sync>,
+    commands: &mut RemoteCommands<'_>,
 ) -> HashMap<String, serde_json::Value> {
     let mut facts = HashMap::new();
     let mut env_vars = serde_json::Map::new();
 
     // Get important environment variables using printenv
-    let env_cmd = "printenv PATH HOME USER SHELL LANG LC_ALL TERM PWD 2>/dev/null || echo ''";
-    if let Some(env_output) = execute_and_get_output(connection, env_cmd).await {
+    if let Some(env_output) = commands.get(ENV_COMMAND).await {
         for line in env_output.lines() {
             if let Some((key, value)) = line.split_once('=') {
                 env_vars.insert(key.to_string(), serde_json::json!(value));
@@ -874,8 +1040,7 @@ async fn gather_env_facts_remote(
     facts.insert("env".to_string(), serde_json::Value::Object(env_vars));
 
     // Get Python version if available
-    if let Some(version_output) = execute_and_get_output(connection, "python3 --version 2>&1").await
-    {
+    if let Some(version_output) = commands.get("python3 --version 2>&1").await {
         if let Some(ver) = version_output.strip_prefix("Python ") {
             facts.insert("python_version".to_string(), serde_json::json!(ver.trim()));
         }
@@ -978,6 +1143,76 @@ impl Module for FactsModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_build_batch_script_wraps_each_command() {
+        let script = build_batch_script("nonce", &["uname -s", "id -u"]);
+        assert_eq!(
+            script,
+            "echo RUSTIBLE_nonce_0_BEGIN\nuname -s\necho RUSTIBLE_nonce_0_END\n\
+             echo RUSTIBLE_nonce_1_BEGIN\nid -u\necho RUSTIBLE_nonce_1_END\n"
+        );
+    }
+
+    #[test]
+    fn test_parse_batch_output_splits_results() {
+        let output = "RUSTIBLE_n_0_BEGIN\nLinux\nRUSTIBLE_n_0_END\n\
+                      RUSTIBLE_n_1_BEGIN\n\nRUSTIBLE_n_1_END\n";
+        let parsed = parse_batch_output("n", output, &["uname -s", "missing"]).unwrap();
+        assert_eq!(parsed["uname -s"], Some("Linux".to_string()));
+        assert_eq!(
+            parsed["missing"], None,
+            "a command with no output is reported as absent"
+        );
+    }
+
+    #[test]
+    fn test_parse_batch_output_keeps_multiline_content() {
+        let output = "RUSTIBLE_n_0_BEGIN\nfirst\nsecond\nRUSTIBLE_n_0_END\n";
+        let parsed = parse_batch_output("n", output, &["cat file"]).unwrap();
+        assert_eq!(parsed["cat file"], Some("first\nsecond".to_string()));
+    }
+
+    #[test]
+    fn test_parse_batch_output_rejects_truncated_output() {
+        // A connection dropped mid-script leaves an unterminated section.
+        let output = "RUSTIBLE_n_0_BEGIN\nLinux\n";
+        assert!(parse_batch_output("n", output, &["uname -s"]).is_none());
+    }
+
+    #[test]
+    fn test_parse_batch_output_rejects_unmarked_output() {
+        // A shell that could not run the script produces no markers at all.
+        assert!(parse_batch_output("n", "command not found\n", &["uname -s"]).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_prefetch_answers_every_command_in_one_batch() {
+        use crate::connection::local::LocalConnection;
+
+        let conn: Arc<dyn Connection + Send + Sync> = Arc::new(LocalConnection::new());
+        let mut commands = RemoteCommands::new(&conn);
+        commands.prefetch(&["echo one", "echo two", "true"]).await;
+
+        // prefetch only records answers when the batch parsed cleanly, so a
+        // populated map proves the single round trip worked.
+        assert_eq!(commands.outputs.len(), 3);
+        assert_eq!(commands.outputs["echo one"], Some("one".to_string()));
+        assert_eq!(commands.outputs["echo two"], Some("two".to_string()));
+        assert_eq!(commands.outputs["true"], None);
+    }
+
+    #[tokio::test]
+    async fn test_get_falls_back_to_a_single_command() {
+        use crate::connection::local::LocalConnection;
+
+        let conn: Arc<dyn Connection + Send + Sync> = Arc::new(LocalConnection::new());
+        let mut commands = RemoteCommands::new(&conn);
+        assert_eq!(
+            commands.get("echo fallback").await,
+            Some("fallback".to_string())
+        );
+    }
 
     #[test]
     fn test_gather_os_facts() {
@@ -1101,7 +1336,7 @@ mod tests {
         use crate::connection::local::LocalConnection;
 
         let conn: Arc<dyn Connection + Send + Sync> = Arc::new(LocalConnection::new());
-        let facts = gather_os_facts_remote(&conn).await;
+        let facts = gather_os_facts_remote(&mut RemoteCommands::new(&conn)).await;
 
         // Should get hostname
         assert!(
@@ -1118,7 +1353,7 @@ mod tests {
         use crate::connection::local::LocalConnection;
 
         let conn: Arc<dyn Connection + Send + Sync> = Arc::new(LocalConnection::new());
-        let facts = gather_hardware_facts_remote(&conn).await;
+        let facts = gather_hardware_facts_remote(&mut RemoteCommands::new(&conn)).await;
 
         // Should have processor info on Linux
         if std::path::Path::new("/proc/cpuinfo").exists() {
@@ -1139,7 +1374,7 @@ mod tests {
         use crate::connection::local::LocalConnection;
 
         let conn: Arc<dyn Connection + Send + Sync> = Arc::new(LocalConnection::new());
-        let facts = gather_network_facts_remote(&conn).await;
+        let facts = gather_network_facts_remote(&mut RemoteCommands::new(&conn)).await;
 
         // Should have interfaces list
         assert!(facts.contains_key("interfaces"), "Expected interfaces fact");
@@ -1150,7 +1385,7 @@ mod tests {
         use crate::connection::local::LocalConnection;
 
         let conn: Arc<dyn Connection + Send + Sync> = Arc::new(LocalConnection::new());
-        let facts = gather_date_facts_remote(&conn).await;
+        let facts = gather_date_facts_remote(&mut RemoteCommands::new(&conn)).await;
 
         // Should have date/time info
         assert!(facts.contains_key("date_time"), "Expected date_time fact");
@@ -1162,7 +1397,7 @@ mod tests {
         use crate::connection::local::LocalConnection;
 
         let conn: Arc<dyn Connection + Send + Sync> = Arc::new(LocalConnection::new());
-        let facts = gather_env_facts_remote(&conn).await;
+        let facts = gather_env_facts_remote(&mut RemoteCommands::new(&conn)).await;
 
         // Should have env fact
         assert!(facts.contains_key("env"), "Expected env fact");
