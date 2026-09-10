@@ -308,7 +308,7 @@ impl LockArgs {
     }
 
     /// Create a checkpoint
-    async fn create_checkpoint(
+    pub(crate) async fn create_checkpoint(
         &self,
         ctx: Option<&CommandContext>,
         name: Option<String>,

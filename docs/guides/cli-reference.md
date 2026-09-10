@@ -62,6 +62,7 @@ The `run` command executes an Ansible-compatible playbook against the specified 
 | `--ssh-common-args <ARGS>` | - | Additional SSH arguments | - |
 | `--cache-state` | - | Skip tasks whose inputs are unchanged since the last run | false |
 | `--cache-state-ttl <SECONDS>` | - | How long a cached task result stays valid | 3600 |
+| `--checkpoint [NAME]` | - | Checkpoint before the run and record what tasks change | - |
 | `--agent-mode` | - | Run commands through the agent binary on each target | false |
 | `--agent-path <PATH>` | - | Path of the agent binary on the target | `/usr/local/bin/rustible-agent` |
 
@@ -96,6 +97,19 @@ rustible run playbook.yml --step --start-at-task "Install packages"
 ```bash
 rustible run playbook.yml --vault-password-file ~/.vault_pass
 ```
+
+**Take a checkpoint so the run can be undone:**
+```bash
+rustible run -i inventory.yml site.yml --checkpoint before-deploy
+rustible lock site.yml rollback before-deploy --dry-run
+rustible lock site.yml rollback before-deploy
+```
+
+`--checkpoint` records the state of each managed resource before a task
+changes it, which is what a rollback needs to tell a created resource from an
+edited one. Without it a rollback finds nothing to undo. Rollback covers the
+modules whose reversal is well defined — files and directories, packages,
+services, users and groups — and reports the plan first with `--dry-run`.
 
 **Skip work that is already done:**
 ```bash

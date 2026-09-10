@@ -94,6 +94,7 @@ impl CheckArgs {
             // "unchanged" verdict from an earlier run is never reused here.
             cache_state: false,
             cache_state_ttl: 3600,
+            checkpoint: None,
             agent_mode: false,
             agent_path: "/usr/local/bin/rustible-agent".to_string(),
             distributed: false,

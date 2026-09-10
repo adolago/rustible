@@ -107,6 +107,12 @@ pub struct RunArgs {
     #[arg(long)]
     pub no_pipelining: bool,
 
+    /// Create a checkpoint before the run and record what each task changes
+    ///
+    /// Roll back later with `rustible lock <playbook> rollback <name>`.
+    #[arg(long, value_name = "NAME", num_args = 0..=1, default_missing_value = "auto")]
+    pub checkpoint: Option<String>,
+
     /// Run commands through the rustible-agent binary on each target
     ///
     /// Deploy it first with `rustible agent deploy`.
@@ -909,6 +915,30 @@ impl RunArgs {
             connection_factory = connection_factory.with_agent_path(self.agent_path.clone());
         }
         executor = executor.with_connection_factory(connection_factory);
+
+        // Rollback tracking: take a checkpoint and record each managed
+        // resource's state before a task changes it, so `lock rollback` can
+        // undo the run.
+        if let Some(name) = &self.checkpoint {
+            executor = executor.with_rollback_state_capture(true);
+
+            let name = (name != "auto").then(|| name.clone());
+            let lock_args = super::lock::LockArgs {
+                subcommand: None,
+                playbook: self.playbook.clone(),
+                lockfile: None,
+                update: false,
+                check: false,
+            };
+            if let Err(error) = lock_args
+                .create_checkpoint(Some(ctx), name, Some("Created by rustible run".to_string()))
+                .await
+            {
+                ctx.output
+                    .error(&format!("Failed to create checkpoint: {}", error));
+                return Ok(1);
+            }
+        }
 
         // Cross-run task state cache, persisted next to the playbook. Check
         // mode has to report what a real run would do, so it never reuses a

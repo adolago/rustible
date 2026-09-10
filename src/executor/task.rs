@@ -75,6 +75,12 @@ pub struct TaskResult {
     pub result: Option<JsonValue>,
     /// Diff showing what changed (if diff_mode enabled)
     pub diff: Option<TaskDiff>,
+    /// State of the managed resource before the task ran.
+    ///
+    /// Only captured when rollback tracking is on; it is what lets a rollback
+    /// tell "this file was created" from "this file was edited".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_state: Option<JsonValue>,
 }
 
 impl TaskResult {
@@ -489,6 +495,9 @@ impl From<crate::playbook::Task> for Task {
     }
 }
 
+/// Largest file whose content is kept for a content rollback (64 KiB).
+const MAX_CAPTURED_CONTENT: u64 = 64 * 1024;
+
 /// A pending lookup in the cross-run task state cache.
 ///
 /// Holds everything needed to answer "did this exact task, with these exact
@@ -871,6 +880,7 @@ impl Task {
                 msg: Some(format!("Ignored error: {}", result.msg.unwrap_or_default())),
                 result: result.result,
                 diff: result.diff,
+                before_state: None,
             });
         }
 
@@ -1044,6 +1054,7 @@ impl Task {
             msg: Some(format!("Completed {} loop iterations", loop_results.len())),
             result: Some(serde_json::to_value(&loop_results).unwrap_or(JsonValue::Null)),
             diff: None,
+            before_state: None,
         };
 
         // Register combined result if needed
@@ -1173,6 +1184,7 @@ impl Task {
             )),
             result: last_result.as_ref().and_then(|r| r.result.clone()),
             diff: None,
+            before_state: None,
         })
     }
 
@@ -1263,6 +1275,14 @@ impl Task {
             }
         }
 
+        // Capture what the task is about to change, so a later rollback knows
+        // whether the resource existed before.
+        let before_state = if ctx.capture_rollback_state {
+            Self::capture_before_state(module_name, &args, ctx).await
+        } else {
+            None
+        };
+
         let result = match module_name {
             "debug" => self.execute_debug(&args, ctx).await,
             "set_fact" => self.execute_set_fact(&args, ctx, runtime).await,
@@ -1293,7 +1313,95 @@ impl Task {
             probe.record(task_result);
         }
 
+        let mut result = result;
+        if let (Some(before_state), Ok(task_result)) = (before_state, &mut result) {
+            task_result.before_state = Some(before_state);
+        }
+
         result
+    }
+
+    /// Read the current state of the resource a task manages.
+    ///
+    /// Returns `None` for modules whose rollback needs no prior state (a
+    /// package that was installed is simply removed) and when the state cannot
+    /// be read.
+    async fn capture_before_state(
+        module_name: &str,
+        args: &IndexMap<String, JsonValue>,
+        ctx: &ExecutionContext,
+    ) -> Option<JsonValue> {
+        // Only the file-writing modules need it; the others reverse from their
+        // own arguments.
+        let path = match module_name {
+            "file" => args.get("path").or_else(|| args.get("dest")),
+            "copy" | "template" | "lineinfile" | "blockinfile" => args.get("dest"),
+            _ => return None,
+        }?
+        .as_str()?
+        .to_string();
+
+        match &ctx.connection {
+            Some(connection) => Self::remote_path_state(connection.as_ref(), &path).await,
+            None => Some(Self::local_path_state(&path)),
+        }
+    }
+
+    /// State of a path on the control node.
+    fn local_path_state(path: &str) -> JsonValue {
+        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::PermissionsExt;
+
+        let Ok(metadata) = std::fs::symlink_metadata(path) else {
+            return serde_json::json!({ "exists": false });
+        };
+
+        let mut state = serde_json::json!({
+            "exists": true,
+            "mode": format!("{:04o}", metadata.permissions().mode() & 0o7777),
+            "uid": metadata.uid(),
+            "gid": metadata.gid(),
+            "is_dir": metadata.is_dir(),
+        });
+
+        // A small regular file's content makes a content rollback possible.
+        if metadata.is_file() && metadata.len() <= MAX_CAPTURED_CONTENT {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                state["content"] = JsonValue::String(content);
+            }
+        }
+        state
+    }
+
+    /// State of a path on a remote target.
+    async fn remote_path_state(
+        connection: &(dyn crate::connection::Connection + Send + Sync),
+        path: &str,
+    ) -> Option<JsonValue> {
+        let quoted = crate::utils::shell_escape(path);
+        let command = format!(
+            "if [ -e {p} ] || [ -L {p} ]; then stat -c '%a %u %g %F' {p}; else echo missing; fi",
+            p = quoted
+        );
+        let result = connection.execute(&command, None).await.ok()?;
+        let output = result.stdout.trim();
+        if !result.success || output.is_empty() || output == "missing" {
+            return Some(serde_json::json!({ "exists": false }));
+        }
+
+        let fields: Vec<&str> = output.split_whitespace().collect();
+        let mut state = serde_json::json!({ "exists": true });
+        if let Some(mode) = fields.first() {
+            state["mode"] = JsonValue::String(format!("{:0>4}", mode));
+        }
+        if let Some(uid) = fields.get(1).and_then(|value| value.parse::<u32>().ok()) {
+            state["uid"] = serde_json::json!(uid);
+        }
+        if let Some(gid) = fields.get(2).and_then(|value| value.parse::<u32>().ok()) {
+            state["gid"] = serde_json::json!(gid);
+        }
+        state["is_dir"] = serde_json::json!(fields.get(3) == Some(&"directory"));
+        Some(state)
     }
 
     /// The transport configured for this task's host: a task-level
@@ -1555,6 +1663,7 @@ refusing execution"
                         before_header: None,
                         after_header: None,
                     }),
+                    before_state: None,
                 })
             }
             Err(crate::modules::ModuleError::CommandFailed { code, message }) => {

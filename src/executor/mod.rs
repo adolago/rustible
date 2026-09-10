@@ -525,6 +525,8 @@ pub struct Executor {
     event_callback: Option<EventCallback>,
     /// Optional cross-run task state cache (`--cache-state`)
     state_cache: Option<Arc<crate::state::StateHashCache>>,
+    /// Whether tasks record resource state before changing it, for rollback
+    capture_rollback_state: bool,
 }
 
 impl Executor {
@@ -549,6 +551,7 @@ impl Executor {
             batch_processor: Arc::new(BatchProcessor::new(BatchConfig::default())),
             event_callback: None,
             state_cache: None,
+            capture_rollback_state: false,
         }
     }
 
@@ -573,6 +576,7 @@ impl Executor {
             batch_processor: Arc::new(BatchProcessor::new(BatchConfig::default())),
             event_callback: None,
             state_cache: None,
+            capture_rollback_state: false,
         }
     }
 
@@ -613,6 +617,13 @@ impl Executor {
         self
     }
 
+    /// Record the state of managed resources before tasks change them, so a
+    /// later rollback can tell a created resource from an edited one.
+    pub fn with_rollback_state_capture(mut self, capture: bool) -> Self {
+        self.capture_rollback_state = capture;
+        self
+    }
+
     /// Attach a cross-run task state cache so unchanged tasks can be skipped.
     pub fn with_state_cache(mut self, cache: Arc<crate::state::StateHashCache>) -> Self {
         self.state_cache = Some(cache);
@@ -648,6 +659,7 @@ impl Executor {
         task: &Task,
         host: &str,
         status: crate::state::TaskStatus,
+        before_state: Option<serde_json::Value>,
     ) -> crate::state::TaskStateRecord {
         // Convert task args (IndexMap<String, JsonValue>) to a JSON Value
         let args_json: serde_json::Value = {
@@ -669,6 +681,7 @@ impl Executor {
             args: args_json,
             status,
             rollback_available,
+            before_state,
             ..Default::default()
         };
         record.complete(status);
@@ -1351,6 +1364,7 @@ impl Executor {
                     .with_diff_mode(self.config.diff_mode)
                     .with_verbosity(self.config.verbosity)
                     .with_state_cache(self.state_cache.clone())
+                    .with_rollback_state_capture(self.capture_rollback_state)
                     .with_connection_error(connection_error.clone());
 
                 // Set connection if available
@@ -1427,6 +1441,7 @@ impl Executor {
                             task,
                             host,
                             crate::state::TaskStatus::Changed,
+                            result.before_state.clone(),
                         );
                         self.changed_tasks.lock().await.push(record);
                     }
@@ -1481,6 +1496,7 @@ impl Executor {
                 let batch_processor = Arc::clone(&self.batch_processor);
                 let pipelining = self.config.pipelining;
                 let state_cache = self.state_cache.clone();
+                let capture_rollback_state = self.capture_rollback_state;
                 let tx_id = tx_id.clone();
                 let event_callback = event_callback.clone();
 
@@ -1526,6 +1542,7 @@ impl Executor {
                             .with_diff_mode(diff_mode)
                             .with_verbosity(verbosity)
                             .with_state_cache(state_cache.clone())
+                            .with_rollback_state_capture(capture_rollback_state)
                             .with_connection_error(connection_error.clone());
 
                         // Set connection if available
@@ -1604,6 +1621,7 @@ impl Executor {
                                     task,
                                     &host,
                                     crate::state::TaskStatus::Changed,
+                                    result.before_state.clone(),
                                 );
                                 changed_tasks.lock().await.push(record);
                             }
@@ -1801,6 +1819,7 @@ impl Executor {
                 .with_diff_mode(self.config.diff_mode)
                 .with_verbosity(self.config.verbosity)
                 .with_state_cache(self.state_cache.clone())
+                .with_rollback_state_capture(self.capture_rollback_state)
                 .with_connection_error(connection_error.clone());
 
             // Set connection if available
@@ -1879,6 +1898,7 @@ impl Executor {
                         task,
                         host,
                         crate::state::TaskStatus::Changed,
+                        res.before_state.clone(),
                     );
                     self.changed_tasks.lock().await.push(record);
                 }
@@ -1917,6 +1937,7 @@ impl Executor {
                 let batch_processor = Arc::clone(&self.batch_processor);
                 let pipelining = self.config.pipelining;
                 let state_cache = self.state_cache.clone();
+                let capture_rollback_state = self.capture_rollback_state;
                 let event_callback = event_callback.clone();
 
                 tokio::spawn(async move {
@@ -1949,6 +1970,7 @@ impl Executor {
                         .with_diff_mode(diff_mode)
                         .with_verbosity(verbosity)
                         .with_state_cache(state_cache.clone())
+                        .with_rollback_state_capture(capture_rollback_state)
                         .with_connection_error(connection_error.clone());
 
                     // Set connection if available
@@ -1995,6 +2017,7 @@ impl Executor {
                                     msg: Some(e.to_string()),
                                     result: None,
                                     diff: None,
+                                    before_state: None,
                                 },
                             );
                         }
@@ -2042,8 +2065,12 @@ impl Executor {
         // Record changed tasks for rollback
         for (host, res) in &results {
             if res.status == TaskStatus::Changed {
-                let record =
-                    Self::build_task_state_record(task, host, crate::state::TaskStatus::Changed);
+                let record = Self::build_task_state_record(
+                    task,
+                    host,
+                    crate::state::TaskStatus::Changed,
+                    res.before_state.clone(),
+                );
                 self.changed_tasks.lock().await.push(record);
             }
         }

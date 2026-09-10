@@ -227,6 +227,8 @@ pub struct ExecutionContext {
     pub state_cache: Option<std::sync::Arc<crate::state::StateHashCache>>,
     /// Why this host has no connection, when one could not be established
     pub connection_error: Option<String>,
+    /// Whether to record resource state before a task changes it
+    pub capture_rollback_state: bool,
 }
 
 impl std::fmt::Debug for ExecutionContext {
@@ -265,6 +267,7 @@ impl ExecutionContext {
             become_password: None,
             state_cache: None,
             connection_error: None,
+            capture_rollback_state: false,
         }
     }
 
@@ -274,6 +277,12 @@ impl ExecutionContext {
         cache: Option<std::sync::Arc<crate::state::StateHashCache>>,
     ) -> Self {
         self.state_cache = cache;
+        self
+    }
+
+    /// Record the state of managed resources before tasks change them.
+    pub fn with_rollback_state_capture(mut self, capture: bool) -> Self {
+        self.capture_rollback_state = capture;
         self
     }
 
