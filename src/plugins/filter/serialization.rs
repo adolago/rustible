@@ -11,6 +11,7 @@
 //! - `to_yaml`: Convert a value to YAML
 //! - `to_nice_yaml`: Convert a value to multi-line YAML
 //! - `from_yaml`: Parse a YAML string into a value
+//! - `json_query`: Select part of a structure with a JMESPath expression
 //!
 //! # Examples
 //!
@@ -32,6 +33,59 @@ pub fn register_filters(env: &mut Environment<'static>) {
     env.add_filter("to_nice_yaml", to_nice_yaml);
     env.add_filter("from_yaml", from_yaml);
     env.add_filter("from_yaml_all", from_yaml_all);
+    env.add_filter("json_query", json_query);
+}
+
+/// Select part of a structure with a JMESPath expression.
+///
+/// This is Ansible's `json_query`, which is JMESPath, so the same expressions
+/// work unchanged. An expression that matches nothing yields `none`, the way a
+/// JMESPath null result does; a malformed expression is an error rather than a
+/// silent empty result, because a typo in a query is not the same answer as
+/// "no matches".
+///
+/// String literals follow JMESPath: `'up'` for a raw string, or a backtick
+/// literal holding valid JSON such as `` `\"up\"` ``.
+///
+/// ```jinja2
+/// {{ hosts | json_query("[?state=='up'].name") }}
+/// ```
+fn json_query(value: Value, expression: String) -> Result<Value, minijinja::Error> {
+    let compiled = jmespath::compile(&expression).map_err(|error| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("json_query: invalid JMESPath expression: {}", error),
+        )
+    })?;
+
+    // JMESPath works over JSON, so the value makes the round trip through it.
+    let json = serde_json::to_value(&value).map_err(|error| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("json_query: input is not representable as JSON: {}", error),
+        )
+    })?;
+    let variable = jmespath::Variable::try_from(json).map_err(|error| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("json_query: could not read the input: {}", error),
+        )
+    })?;
+
+    let result = compiled.search(variable).map_err(|error| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("json_query: {}", error),
+        )
+    })?;
+
+    let json = serde_json::to_value(&*result).map_err(|error| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("json_query: could not convert the result: {}", error),
+        )
+    })?;
+    Ok(json_to_minijinja_value(json))
 }
 
 /// Convert a value to compact JSON.
@@ -257,6 +311,74 @@ fn yaml_to_minijinja_value(yaml: &serde_yaml::Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn test_json_query_projects_a_list() {
+        let mut env = Environment::new();
+        register_filters(&mut env);
+        let rendered = env
+            .render_str(
+                "{{ hosts | json_query(\"[?state=='up'].name\") | join(',') }}",
+                minijinja::context! {
+                    hosts => vec![
+                        minijinja::context! { name => "web1", state => "up" },
+                        minijinja::context! { name => "web2", state => "down" },
+                        minijinja::context! { name => "web3", state => "up" },
+                    ]
+                },
+            )
+            .unwrap();
+        assert_eq!(rendered, "web1,web3");
+    }
+
+    #[test]
+    fn test_json_query_reads_a_nested_field() {
+        let mut env = Environment::new();
+        register_filters(&mut env);
+        let rendered = env
+            .render_str(
+                "{{ data | json_query('servers.web.port') }}",
+                minijinja::context! {
+                    data => minijinja::context! {
+                        servers => minijinja::context! {
+                            web => minijinja::context! { port => 8080 }
+                        }
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(rendered, "8080");
+    }
+
+    #[test]
+    fn test_json_query_reports_a_bad_expression() {
+        let mut env = Environment::new();
+        register_filters(&mut env);
+        let error = env
+            .render_str(
+                "{{ data | json_query('[?') }}",
+                minijinja::context! { data => 1 },
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("invalid JMESPath expression"),
+            "a typo must not look like an empty result: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn test_json_query_returns_none_for_no_match() {
+        let mut env = Environment::new();
+        register_filters(&mut env);
+        let rendered = env
+            .render_str(
+                "{{ data | json_query('missing') is none }}",
+                minijinja::context! { data => minijinja::context! { present => 1 } },
+            )
+            .unwrap();
+        assert_eq!(rendered, "true");
+    }
     use super::*;
 
     #[test]

@@ -30,9 +30,9 @@ Every filter listed as available is exercised from the production engine in
 | Type conversion | Yes | Ansible truthy semantics for `bool` |
 | Path | Yes | POSIX and Windows paths |
 | Encoding / hashing | Yes | Includes crypt(3)-compatible `password_hash` |
-| Network (`ipaddr` family) | Partial | Common queries; see the gaps section |
+| Network (`ipaddr` family) | Yes | Queries, membership tests, `macaddr`/`hwaddr`, usable-range walking |
 | Date / time | Partial | `strftime`, `to_datetime` (returns a string) |
-| JMESPath (`json_query`) | No | Not implemented |
+| JMESPath (`json_query`) | Yes | Backed by the `jmespath` crate |
 
 ---
 
@@ -132,12 +132,18 @@ Every filter listed as available is exercised from the production engine in
 | `network_in_usable` | Plugin | |
 | `cidr_merge` | Plugin | `merge` (default) and `span` |
 | `ipwrap` | Plugin | Brackets IPv6 addresses |
+| `next_nth_usable`, `previous_nth_usable` | Plugin | Stop at the edge of the usable range rather than crossing into the next network |
+| `network_in_network` | Plugin | Whether one network sits entirely inside another |
+| `reduce_on_network` | Plugin | Keep the addresses on a given network |
+| `macaddr`, `hwaddr` | Plugin | `unix`/`linux` (default), `cisco`, `win`/`eui48`, `bare` |
 
 `ipaddr` queries: `address`, `ip`, `address/prefix`, `host`, `prefix`,
 `netmask`, `hostmask`, `wildcard`, `network`, `broadcast`, `net`, `subnet`,
-`size`, `first_usable`, `last_usable`, `version`, `4`/`ipv4`, `6`/`ipv6`,
-`public`, `private`, `loopback`, `multicast`, `link-local`, `unspecified`.
-An integer query selects the nth address in the network. Unsupported queries
+`size`, `first_usable`, `last_usable`, `range_usable`, `peer`, `revdns`,
+`version`, `4`/`ipv4`, `6`/`ipv6`, `public`, `private`, `loopback`,
+`multicast`, `link-local`, `unspecified`.
+An integer query selects the nth address in the network, and a CIDR query
+(`ipaddr('10.0.0.0/8')`) keeps the addresses inside it. Unsupported queries
 raise an error rather than returning a wrong answer.
 
 ### Date and time
@@ -153,9 +159,9 @@ raise an error rather than returning a wrong answer.
 
 | Filter | Status | Notes |
 |--------|--------|-------|
-| `json_query` | Not implemented | Requires a JMESPath engine; no dependency added yet |
-| `vault`, `unvault` | Not implemented | Vault operations are available through the `vault` CLI and lookups |
-| `ipaddr` advanced queries | Not implemented | `next_usable`, `previous_usable`, `range_usable`, `peer`, `6to4`, `teredo` |
+| `json_query` literals | Different | JMESPath string literals must be raw (`'up'`) or valid JSON in backticks; a bare `` `up` `` is a parse error, as in current jmespath.py |
+| `vault`, `unvault` | Different format | Implemented, but the ciphertext is Rustible's vault format, not `$ANSIBLE_VAULT` |
+| `ipaddr` 6to4 / teredo | Not implemented | The IPv6 transition-mechanism queries raise an error rather than guessing |
 | `password_hash` schemes | Partial | Only `sha512` and `sha256` crypt; `bcrypt`, `md5_crypt` and `des_crypt` raise an error |
 | `hash` algorithms | Partial | No `blake2b`/`blake2s` |
 | `to_datetime` return type | Different | Ansible returns a `datetime` object supporting arithmetic; Rustible returns a string, so date arithmetic must go through `strftime` and epoch seconds |

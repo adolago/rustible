@@ -45,6 +45,12 @@ pub fn register_filters(env: &mut Environment<'static>) {
     env.add_filter("network_in_usable", network_in_usable);
     env.add_filter("cidr_merge", cidr_merge);
     env.add_filter("ipwrap", ipwrap);
+    env.add_filter("next_nth_usable", next_nth_usable);
+    env.add_filter("previous_nth_usable", previous_nth_usable);
+    env.add_filter("network_in_network", network_in_network);
+    env.add_filter("reduce_on_network", reduce_on_network);
+    env.add_filter("macaddr", macaddr);
+    env.add_filter("hwaddr", macaddr);
 }
 
 /// An address with an optional prefix length, mirroring Ansible's handling of
@@ -352,12 +358,41 @@ fn ipaddr_one(net: &IpNet, query: &str) -> Result<Option<Value>, Error> {
         "multicast" => return Ok(net.addr.is_multicast().then(|| Value::from(net.render()))),
         "link-local" => return Ok(net.is_link_local().then(|| Value::from(net.render()))),
         "unspecified" => return Ok(net.addr.is_unspecified().then(|| Value::from(net.render()))),
-        other => {
-            return Err(Error::new(
-                ErrorKind::InvalidOperation,
-                format!("ipaddr: unsupported query '{}'", other),
-            ))
-        }
+        "range_usable" => match (first_usable(net), last_usable(net)) {
+            (Some(first), Some(last)) => Value::from(format!(
+                "{}-{}",
+                from_u128(first, net.is_ipv4()),
+                from_u128(last, net.is_ipv4())
+            )),
+            _ => return Ok(None),
+        },
+        // The other address of a point-to-point link. Ansible defines this for
+        // /30 and /31 on IPv4 and /126 and /127 on IPv6; anything wider has no
+        // single peer to name.
+        "peer" => match peer_address(net) {
+            Some(peer) => Value::from(from_u128(peer, net.is_ipv4()).to_string()),
+            None => {
+                return Err(Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("ipaddr: '{}' is not a point-to-point network", net.render()),
+                ))
+            }
+        },
+        "revdns" => Value::from(reverse_dns(&net.addr)),
+        // A query that is itself a network keeps the addresses inside it,
+        // which is how `ansible_all_ipv4_addresses | ipaddr('10.0.0.0/8')` is
+        // usually written.
+        other => match IpNet::parse(other) {
+            Some(container) if container.explicit_prefix => {
+                return Ok(contains(&container, net).then(|| Value::from(net.render())))
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("ipaddr: unsupported query '{}'", other),
+                ))
+            }
+        },
     };
     Ok(Some(result))
 }
@@ -539,6 +574,184 @@ fn network_in_usable(value: Value, other: Value) -> Result<Value, Error> {
     Ok(Value::from(address >= first && address <= last))
 }
 
+/// Whether `candidate` falls inside `container`, including its network and
+/// broadcast addresses.
+fn contains(container: &IpNet, candidate: &IpNet) -> bool {
+    if container.is_ipv4() != candidate.is_ipv4() {
+        return false;
+    }
+    let address = candidate.as_u128();
+    address >= container.network() && address <= container.broadcast()
+}
+
+/// The other address of a point-to-point link, if the prefix names one.
+fn peer_address(net: &IpNet) -> Option<u128> {
+    let spare = net.bits() - net.prefix as u32;
+    if spare > 2 {
+        return None;
+    }
+    let address = net.as_u128();
+    match spare {
+        // /31 and /127: the two addresses are each other's peer.
+        1 => Some(address ^ 1),
+        // /30 and /126: the peer is the other usable address.
+        2 => {
+            let first = net.network() + 1;
+            let last = net.broadcast() - 1;
+            if address == first {
+                Some(last)
+            } else if address == last {
+                Some(first)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The reverse-DNS name for an address (`in-addr.arpa` or `ip6.arpa`).
+fn reverse_dns(addr: &IpAddr) -> String {
+    match addr {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            format!(
+                "{}.{}.{}.{}.in-addr.arpa",
+                octets[3], octets[2], octets[1], octets[0]
+            )
+        }
+        IpAddr::V6(v6) => {
+            let mut name = String::with_capacity(72);
+            for octet in v6.octets().iter().rev() {
+                name.push_str(&format!("{:x}.{:x}.", octet & 0xf, octet >> 4));
+            }
+            name.push_str("ip6.arpa");
+            name
+        }
+    }
+}
+
+/// The nth usable address after the given one, within its network.
+fn next_nth_usable(value: Value, count: i128) -> Result<Value, Error> {
+    shift_usable(value, count)
+}
+
+/// The nth usable address before the given one, within its network.
+fn previous_nth_usable(value: Value, count: i128) -> Result<Value, Error> {
+    shift_usable(value, -count)
+}
+
+/// Move an address `count` usable slots along its own network.
+///
+/// Walking off either end of the usable range yields `false` rather than an
+/// address in a neighbouring network, which is what makes these safe to use
+/// for address allocation.
+fn shift_usable(value: Value, count: i128) -> Result<Value, Error> {
+    let text = value.to_string();
+    let Some(net) = IpNet::parse(&text) else {
+        return Ok(Value::from(false));
+    };
+    let (Some(first), Some(last)) = (first_usable(&net), last_usable(&net)) else {
+        return Ok(Value::from(false));
+    };
+
+    let current = net.as_u128();
+    let target = if count < 0 {
+        match current.checked_sub(count.unsigned_abs()) {
+            Some(target) => target,
+            None => return Ok(Value::from(false)),
+        }
+    } else {
+        match current.checked_add(count as u128) {
+            Some(target) => target,
+            None => return Ok(Value::from(false)),
+        }
+    };
+
+    if target < first || target > last {
+        return Ok(Value::from(false));
+    }
+    Ok(Value::from(from_u128(target, net.is_ipv4()).to_string()))
+}
+
+/// Test whether one network sits entirely inside another.
+fn network_in_network(value: Value, other: Value) -> Result<Value, Error> {
+    let container = value.to_string();
+    let candidate = other.to_string();
+    let (Some(container), Some(candidate)) = (IpNet::parse(&container), IpNet::parse(&candidate))
+    else {
+        return Ok(Value::from(false));
+    };
+    if container.is_ipv4() != candidate.is_ipv4() {
+        return Ok(Value::from(false));
+    }
+    Ok(Value::from(
+        candidate.network() >= container.network()
+            && candidate.broadcast() <= container.broadcast(),
+    ))
+}
+
+/// Keep the addresses from a list that fall inside the given network.
+fn reduce_on_network(value: Value, network: String) -> Result<Value, Error> {
+    let Some(container) = IpNet::parse(&network) else {
+        return Err(Error::new(
+            ErrorKind::InvalidOperation,
+            format!("reduce_on_network: '{}' is not a network", network),
+        ));
+    };
+
+    let kept: Vec<Value> = as_inputs(&value)
+        .into_iter()
+        .filter_map(|text| {
+            let net = IpNet::parse(&text)?;
+            contains(&container, &net).then(|| Value::from(net.render()))
+        })
+        .collect();
+    Ok(Value::from(kept))
+}
+
+/// Normalise a MAC address, optionally reformatting it.
+///
+/// Supported queries mirror Ansible's: no query or `unix` gives colon-separated
+/// lowercase, `linux` the same, `cisco` dotted quads, `win`/`eui48` dashed
+/// uppercase, and `bare` the hex digits alone. An input that is not a MAC
+/// address yields `false`, so the filter doubles as a test.
+fn macaddr(value: Value, query: Option<String>) -> Result<Value, Error> {
+    let text = value.to_string();
+    let digits: String = text
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    let separators = text
+        .chars()
+        .filter(|c| !c.is_ascii_hexdigit())
+        .all(|c| matches!(c, ':' | '-' | '.'));
+    if digits.len() != 12 || !separators {
+        return Ok(Value::from(false));
+    }
+
+    let pairs: Vec<String> = (0..6)
+        .map(|i| digits[i * 2..i * 2 + 2].to_string())
+        .collect();
+    let formatted = match query.as_deref().unwrap_or("unix") {
+        "unix" | "linux" => pairs.join(":"),
+        "cisco" => format!(
+            "{}{}.{}{}.{}{}",
+            pairs[0], pairs[1], pairs[2], pairs[3], pairs[4], pairs[5]
+        ),
+        "win" | "eui48" => pairs.join("-").to_uppercase(),
+        "bare" => digits.to_uppercase(),
+        other => {
+            return Err(Error::new(
+                ErrorKind::InvalidOperation,
+                format!("macaddr: unsupported query '{}'", other),
+            ))
+        }
+    };
+    Ok(Value::from(formatted))
+}
+
 /// Merge addresses into the smallest list of CIDR ranges that covers them.
 fn cidr_merge(value: Value, action: Option<String>) -> Result<Value, Error> {
     let action = action.unwrap_or_else(|| "merge".to_string());
@@ -664,6 +877,94 @@ mod tests {
             .unwrap()
             .render(Value::UNDEFINED)
             .unwrap()
+    }
+
+    #[test]
+    fn test_ipaddr_membership_query() {
+        // The common fleet idiom: keep the addresses on a given network.
+        assert_eq!(
+            render(
+                "{{ ['10.1.2.3', '192.168.1.5', '10.9.9.9'] | ipaddr('10.0.0.0/8') | join(',') }}"
+            ),
+            "10.1.2.3,10.9.9.9"
+        );
+        assert_eq!(
+            render("{{ '192.168.1.5' | ipaddr('10.0.0.0/8') }}"),
+            "false"
+        );
+    }
+
+    #[test]
+    fn test_ipaddr_range_usable_and_peer() {
+        assert_eq!(
+            render("{{ '192.168.1.0/24' | ipaddr('range_usable') }}"),
+            "192.168.1.1-192.168.1.254"
+        );
+        assert_eq!(render("{{ '10.0.0.1/30' | ipaddr('peer') }}"), "10.0.0.2");
+        assert_eq!(render("{{ '10.0.0.0/31' | ipaddr('peer') }}"), "10.0.0.1");
+    }
+
+    #[test]
+    fn test_ipaddr_revdns() {
+        assert_eq!(
+            render("{{ '192.168.1.5' | ipaddr('revdns') }}"),
+            "5.1.168.192.in-addr.arpa"
+        );
+        assert!(render("{{ '::1' | ipaddr('revdns') }}").ends_with("ip6.arpa"));
+    }
+
+    #[test]
+    fn test_next_and_previous_nth_usable() {
+        assert_eq!(
+            render("{{ '192.168.1.5/24' | next_nth_usable(5) }}"),
+            "192.168.1.10"
+        );
+        assert_eq!(
+            render("{{ '192.168.1.5/24' | previous_nth_usable(4) }}"),
+            "192.168.1.1"
+        );
+        // Walking past the usable range must not hand back a neighbour's address.
+        assert_eq!(
+            render("{{ '192.168.1.1/24' | previous_nth_usable(1) }}"),
+            "false"
+        );
+        assert_eq!(
+            render("{{ '192.168.1.254/24' | next_nth_usable(1) }}"),
+            "false"
+        );
+    }
+
+    #[test]
+    fn test_network_in_network_and_reduce() {
+        assert_eq!(
+            render("{{ '10.0.0.0/8' | network_in_network('10.1.0.0/16') }}"),
+            "true"
+        );
+        assert_eq!(
+            render("{{ '10.1.0.0/16' | network_in_network('10.0.0.0/8') }}"),
+            "false"
+        );
+        assert_eq!(
+            render("{{ ['10.0.0.1', '11.0.0.1'] | reduce_on_network('10.0.0.0/8') | join(',') }}"),
+            "10.0.0.1"
+        );
+    }
+
+    #[test]
+    fn test_macaddr_formats() {
+        assert_eq!(
+            render("{{ '1A:2B:3C:4D:5E:6F' | macaddr }}"),
+            "1a:2b:3c:4d:5e:6f"
+        );
+        assert_eq!(
+            render("{{ '1a2b.3c4d.5e6f' | hwaddr('cisco') }}"),
+            "1a2b.3c4d.5e6f"
+        );
+        assert_eq!(
+            render("{{ '1a:2b:3c:4d:5e:6f' | macaddr('win') }}"),
+            "1A-2B-3C-4D-5E-6F"
+        );
+        assert_eq!(render("{{ 'not-a-mac' | macaddr }}"), "false");
     }
 
     #[test]

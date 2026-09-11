@@ -481,12 +481,12 @@ rustible run --agent-mode playbook.yml
 | Feature | Status | Target |
 |---------|--------|--------|
 | Playbook syntax | :white_check_mark: Complete | 100% |
-| Module compatibility | Local: broad; remote: 23 verified modules | 95%+ |
+| Module compatibility | Local: broad; remote: 27 verified, 20 connection-only, 19 control-node-only | 95%+ |
 | Ansible Galaxy | :white_check_mark: Complete | Full support |
 | Callback plugins | :white_check_mark: Complete | Native + Python support |
 | Dynamic inventory | :white_check_mark: Complete | Full plugin system |
 | Lookup plugins | :white_check_mark: Complete | Full support |
-| Filter plugins | :white_check_mark: Complete | Registered in the production engine; `json_query`, `vault`/`unvault` and advanced `ipaddr` queries remain out |
+| Filter plugins | :white_check_mark: Complete | Registered in the production engine, including `json_query`, `vault`/`unvault` and the advanced `ipaddr` queries; only the IPv6 transition queries (`6to4`, `teredo`) remain out |
 
 ### Connection Enhancements
 

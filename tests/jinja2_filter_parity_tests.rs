@@ -516,3 +516,71 @@ fn test_default_filter_boolean_argument() {
         json!("")
     );
 }
+
+// ============================================================================
+// Tests: JMESPath, vault and the advanced ipaddr queries
+//
+// These three were the documented holes in filter parity. They are checked
+// through the production engine, not the filter module, because a filter that
+// is implemented but never registered is the failure these tests exist for.
+// ============================================================================
+
+#[test]
+fn test_json_query_runs_in_the_production_engine() {
+    let context = json!({
+        "hosts": [
+            {"name": "web1", "state": "up"},
+            {"name": "web2", "state": "down"},
+            {"name": "web3", "state": "up"},
+        ]
+    });
+    assert_eq!(
+        render_expr_json(r#"hosts | json_query("[?state=='up'].name")"#, context),
+        json!(["web1", "web3"])
+    );
+}
+
+#[test]
+fn test_vault_round_trips_in_the_production_engine() {
+    assert_eq!(
+        render_expr(r#""s3cret" | vault("pw") | unvault("pw")"#, json!({})),
+        "s3cret"
+    );
+}
+
+#[test]
+fn test_advanced_ipaddr_queries_are_registered() {
+    let cases = vec![
+        (
+            r#""192.168.1.0/24" | ipaddr("range_usable")"#,
+            "192.168.1.1-192.168.1.254",
+        ),
+        (r#""10.0.0.1/30" | ipaddr("peer")"#, "10.0.0.2"),
+        (
+            r#""192.168.1.5" | ipaddr("revdns")"#,
+            "5.1.168.192.in-addr.arpa",
+        ),
+        (r#""192.168.1.5/24" | next_nth_usable(5)"#, "192.168.1.10"),
+        (
+            r#""1A:2B:3C:4D:5E:6F" | macaddr("cisco")"#,
+            "1a2b.3c4d.5e6f",
+        ),
+    ];
+    for (expr, expected) in cases {
+        assert_eq!(render_expr(expr, json!({})), expected, "expr: {}", expr);
+    }
+}
+
+#[test]
+fn test_ipaddr_membership_filters_a_fact_list() {
+    let context = json!({
+        "ansible_all_ipv4_addresses": ["10.1.2.3", "192.168.1.5", "10.9.9.9"]
+    });
+    assert_eq!(
+        render_expr_json(
+            r#"ansible_all_ipv4_addresses | ipaddr("10.0.0.0/8")"#,
+            context
+        ),
+        json!(["10.1.2.3", "10.9.9.9"])
+    );
+}
