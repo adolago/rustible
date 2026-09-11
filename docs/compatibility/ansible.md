@@ -122,6 +122,8 @@ has been reviewed — see `docs/FEATURE_STATUS.md` for the verified list and
 local-filesystem implementation and no connection path is refused on a remote
 host rather than run against the control node.
 
+`replace`, `fetch` and `slurp` were added alongside the existing set.
+
 ### Stable Modules (No Feature Flag Required)
 
 #### Package Management

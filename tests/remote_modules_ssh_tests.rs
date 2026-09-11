@@ -766,3 +766,98 @@ fn agent_mode_runs_tasks_through_the_agent() {
         status
     );
 }
+
+#[test]
+fn replace_slurp_and_fetch_work_against_the_target() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+
+    let target = SshTarget::start();
+    let inventory = target.write_inventory();
+    let fetched = target.dir.path().join("fetched.conf");
+
+    let playbook = target.write_playbook(&format!(
+        r#"---
+- name: File content modules
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Seed a config file
+      copy:
+        content: "port = 80\nhost = example\n"
+        dest: /etc/rustible-replace.conf
+
+    - name: Replace the port
+      replace:
+        path: /etc/rustible-replace.conf
+        regexp: 'port = [0-9]+'
+        replace: 'port = 8080'
+
+    - name: Read the file back
+      slurp:
+        src: /etc/rustible-replace.conf
+      register: slurped
+
+    - name: The content must come from the target
+      assert:
+        that:
+          - "'port = 8080' in (slurped.content | b64decode)"
+
+    - name: Fetch it to the control node
+      fetch:
+        src: /etc/rustible-replace.conf
+        dest: {}
+        flat: true
+"#,
+        fetched.display()
+    ));
+
+    let first = run_playbook(&inventory, &playbook);
+    assert!(
+        first.contains("failed=0") && first.contains("unreachable=0"),
+        "the run should succeed:\n{}",
+        first
+    );
+
+    assert!(
+        target
+            .exec("cat /etc/rustible-replace.conf")
+            .contains("port = 8080"),
+        "replace should have edited the file on the target"
+    );
+    let local = fs::read_to_string(&fetched).expect("fetch should write to the control node");
+    assert!(
+        local.contains("port = 8080"),
+        "the fetched copy should match the target: {}",
+        local
+    );
+
+    // Re-running the seeding play would rewrite the file and replace it
+    // again, so idempotency is checked with the same tasks minus the seed.
+    let repeat = target.write_playbook(
+        r#"---
+- name: File content modules again
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Replace the port
+      replace:
+        path: /etc/rustible-replace.conf
+        regexp: 'port = [0-9]+'
+        replace: 'port = 8080'
+
+    - name: Read the file back
+      slurp:
+        src: /etc/rustible-replace.conf
+      register: slurped
+"#,
+    );
+    let second = run_playbook(&inventory, &repeat);
+    assert!(
+        second.contains("changed=0") && second.contains("failed=0"),
+        "replace and slurp should report no change on a repeat run:\n{}",
+        second
+    );
+}

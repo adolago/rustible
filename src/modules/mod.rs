@@ -20,6 +20,7 @@ pub mod dnf;
 pub mod docker;
 pub mod facts;
 pub mod fail;
+pub mod fetch;
 pub mod file;
 pub mod firewalld;
 pub mod get_url;
@@ -43,11 +44,13 @@ pub mod proxmox_lxc;
 pub mod proxmox_vm;
 pub mod python;
 pub mod raw;
+pub mod replace;
 pub mod script;
 pub mod selinux;
 pub mod service;
 pub mod set_fact;
 pub mod shell;
+pub mod slurp;
 pub mod stat;
 pub mod synchronize;
 pub mod sysctl;
@@ -1630,8 +1633,11 @@ impl ModuleRegistry {
             Files: [
                 blockinfile::BlockinfileModule,
                 copy::CopyModule,
+                fetch::FetchModule,
                 file::FileModule,
                 lineinfile::LineinfileModule,
+                replace::ReplaceModule,
+                slurp::SlurpModule,
                 template::TemplateModule,
                 stat::StatModule,
                 archive::ArchiveModule,
