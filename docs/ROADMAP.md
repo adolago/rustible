@@ -315,7 +315,7 @@ is satisfied on a candidate commit.
 | Checkpoint rollback | :test_tube: Beta | Checkpoints include snapshot metadata and rollback can restore recorded state transitions. |
 | Windows targeting | :test_tube: Beta | Linux/macOS controllers can target Windows hosts over WinRM with Beta-level support. |
 | AWS module coverage | :test_tube: Beta | Native AWS coverage includes EC2, S3, IAM roles/policies, standalone SG rules, and EBS volumes. |
-| State manifests | :test_tube: Implemented (Beta quality) | `run --manifest` records per-host resource manifests and `drift manifest list/show/check` reads and re-checks them through a connection to each host. Identity comes from the module's `path`/`dest`/`name` argument, so modules without one are not tracked. |
+| State manifests | :test_tube: Experimental | `run --manifest` records per-host resource manifests and `drift manifest list/show/check` reads and re-checks them. A pre-PR review found untemplated desired state, duplicated replays for multi-resource tasks, dropped escalation on replay, and mismatched default directories — see `FEATURE_STATUS.md`. |
 
 ### Remaining Beta Gate
 
@@ -371,12 +371,16 @@ pub struct StateKey {
 - On re-run: compare hash, skip if unchanged
 - **Target**: "Instant" re-runs for unchanged configurations
 
-**Lockfile Support:** :test_tube: Implemented (Beta quality). `rustible lock`
-records the local files a playbook depends on with their checksums, plus every
-role under `roles/` and every collection under `collections/ansible_collections`
-by a checksum over its file tree, and `lock verify` detects an edit to any of
-them. A role that exists only as a Galaxy reference with nothing installed is
-not recorded, because `verify` cannot check an artifact it has never read.
+**Lockfile Support:** :test_tube: Partial. `rustible lock` records the local
+files a playbook depends on with their checksums, plus the roles the playbook
+names and every collection under `collections/ansible_collections`, by a
+checksum over each file tree; `lock verify` detects an edit to any of them. A
+role that exists only as a Galaxy reference with nothing installed is not
+recorded, because `verify` cannot check an artifact it has never read. Known
+gaps: roles reached only through another role's `meta` dependencies are not
+hashed, `include_tasks`/`import_tasks` targets and `vars_files` are not locked,
+re-locking never prunes entries the playbook no longer references, and recorded
+paths resolve against the working directory rather than the lockfile's own.
 
 ```yaml
 # rustible.lock

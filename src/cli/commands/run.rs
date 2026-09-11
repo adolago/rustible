@@ -370,14 +370,15 @@ fn save_host_manifests(
         }
     }
 
-    let count = manifests.len();
+    // One host's failure must not silently drop every host after it.
+    let mut count = 0;
     for manifest in manifests.values() {
-        if let Err(error) = store.save(manifest) {
-            ctx.output.warning(&format!(
+        match store.save(manifest) {
+            Ok(()) => count += 1,
+            Err(error) => ctx.output.warning(&format!(
                 "Failed to write the manifest for {}: {}",
                 manifest.hostname, error
-            ));
-            return;
+            )),
         }
     }
 
@@ -1044,6 +1045,13 @@ impl RunArgs {
         } else {
             None
         };
+
+        // A manifest describes the whole applied surface, so tasks that found
+        // nothing to do are recorded alongside the ones that changed something.
+        // Without this the manifest holds only the last run's diff.
+        if self.manifest.is_some() {
+            executor = executor.with_manifest_recording(true);
+        }
 
         // Wire up RecoveryManager when auto_rollback or checkpoint_dir is set
         if self.auto_rollback || self.checkpoint_dir.is_some() {

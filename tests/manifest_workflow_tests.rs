@@ -50,7 +50,6 @@ fn managed_playbook(dir: &Path, managed: &Path) -> PathBuf {
       file:
         path: {}
         state: directory
-        mode: "0750"
 
     - name: Managed file
       copy:
@@ -110,18 +109,39 @@ fn an_unchanged_task_still_reaches_the_manifest() {
     let inventory = local_inventory(temp.path());
     let playbook = managed_playbook(temp.path(), &managed);
 
-    // The first run changes everything; the second changes nothing. A manifest
-    // built only from changes would come back empty and lose the fleet's state.
-    for _ in 0..2 {
-        rustible_cmd()
-            .arg("run")
-            .arg("-i")
-            .arg(&inventory)
-            .arg(&playbook)
-            .arg("--manifest")
-            .assert()
-            .code(0);
-    }
+    // The first run changes everything; the second must change nothing.
+    rustible_cmd()
+        .arg("run")
+        .arg("-i")
+        .arg(&inventory)
+        .arg(&playbook)
+        .arg("--manifest")
+        .assert()
+        .code(0);
+
+    // Throw away the first run's manifest, so the second run has to produce
+    // one from scratch out of tasks that report no change. Without this the
+    // assertion below passes on the file the first run left behind.
+    fs::remove_dir_all(manifest_dir(temp.path())).unwrap();
+
+    let second = rustible_cmd()
+        .arg("run")
+        .arg("-i")
+        .arg(&inventory)
+        .arg(&playbook)
+        .arg("--manifest")
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let second = String::from_utf8(second).unwrap();
+    assert!(
+        second.contains("changed=0"),
+        "the second run must be a no-op, or this test is not exercising \
+         unchanged tasks at all:\n{}",
+        second
+    );
 
     let path = manifest_dir(temp.path()).join("node1.manifest.json");
     let manifest: serde_json::Value =

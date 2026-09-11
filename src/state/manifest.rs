@@ -36,6 +36,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -589,8 +590,28 @@ impl ManifestStore {
     }
 
     /// Get the path for a host's manifest
+    ///
+    /// An inventory hostname is user input: interpolating it straight into a
+    /// filename would let `../` or a separator write outside the store, so
+    /// anything that is not a plain host character is replaced.
     fn manifest_path(&self, hostname: &str) -> PathBuf {
-        self.base_dir.join(format!("{}.manifest.json", hostname))
+        let safe: String = hostname
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        // A name that is only dots would still address a directory entry.
+        let safe = if safe.is_empty() || safe.chars().all(|c| c == '.') {
+            format!("host_{:x}", Sha256::digest(hostname.as_bytes()))
+        } else {
+            safe
+        };
+        self.base_dir.join(format!("{}.manifest.json", safe))
     }
 
     /// Ensure the base directory exists

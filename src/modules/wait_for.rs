@@ -627,15 +627,16 @@ impl WaitForModule {
             // the caller reports that instead of guessing.
             WaitState::Started | WaitState::Stopped => {
                 let port = config.port?;
+                // The host reaches both branches as a positional argument, so a
+                // quote in it cannot close the quoting and run as a command.
                 Some(format!(
-                    "if command -v nc >/dev/null 2>&1; then nc -z -w {} {} {}; \
+                    "set -- {} {}; \
+if command -v nc >/dev/null 2>&1; then nc -z -w {} \"$1\" \"$2\"; \
 elif command -v bash >/dev/null 2>&1; then \
-bash -c 'exec 3<>/dev/tcp/{}/{}' 2>/dev/null; else exit 127; fi",
-                    config.connect_timeout,
+bash -c 'exec 3<>/dev/tcp/$0/$1' \"$1\" \"$2\" 2>/dev/null; else exit 127; fi",
                     shell_escape(&config.host),
                     port,
-                    config.host,
-                    port
+                    config.connect_timeout
                 ))
             }
             WaitState::Present if config.compiled_regex.is_none() => {

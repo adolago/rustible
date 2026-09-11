@@ -56,6 +56,34 @@ this commit from here, and it does not include the Docker-gated remote suite —
 `tests/remote_modules_ssh_tests.rs` runs only with `RUSTIBLE_TEST_SSH_DOCKER=1`
 and passed separately (12 tests, against a throwaway sshd container).
 
+## Pre-PR adversarial review (11 September 2026)
+
+The branch behind the green suite above was reviewed by a fan-out of
+independent reviewers, each finding verified adversarially before being kept.
+Forty findings survived, ten rated high. A green suite and a clean review are
+different claims, and this page records both.
+
+Fixed on the branch: `run --manifest` never enabled unchanged-task recording,
+so the feature recorded only the last run's diff — the exact failure its own
+design note warned about; the test meant to catch that could not fail; the
+`wait_for` remote port probe interpolated `host` unescaped into a `bash -c`
+string; `ManifestStore` built a filename straight from an inventory hostname;
+and a manifest write failure skipped every remaining host.
+
+Known and not fixed here, disclosed rather than hidden: the manifest's recorded
+desired state is the task's untemplated arguments; a task naming several
+resources replays in full once per resource; the replay drops `become`, vars and
+facts; `unarchive` stages a remote upload at a predictable `/tmp` path and drops
+`checksum`, `exclude` and `include` on the remote path; lockfile paths resolve
+against the working directory; and role dedupe keys ignore `when`, `tags` and
+`tasks_from`. The full list is in the pull request.
+
+Separately, the review surfaced a **pre-existing** defect outside this branch:
+`file: state=directory` defaults `recurse` to `true` (changed in `13471667`,
+December 2025, with a comment claiming it matches Ansible — Ansible defaults it
+to `no`), so setting `mode` on a directory silently rewrites the mode of
+everything inside it. Observed widening a `0640` file to `0750`.
+
 ## Verification still required
 
 - Required CI on the final combined source and its dependency graph, including

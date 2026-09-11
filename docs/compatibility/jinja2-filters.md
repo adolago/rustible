@@ -6,8 +6,11 @@
 This document tracks the compatibility between Ansible's Jinja2 filters and
 Rustible's MiniJinja-based template engine.
 
-Every filter listed as available is exercised from the production engine in
-`tests/jinja2_filter_parity_tests.rs`. Filters come from three places:
+Filters listed as available are registered in the production engine; a subset
+of them — not all — is exercised end to end in
+`tests/jinja2_filter_parity_tests.rs`, with the rest covered by unit tests in
+their own plugin module or by MiniJinja upstream. Filters come from three
+places:
 
 - MiniJinja's Jinja2 built-ins (`min`, `max`, `sum`, `batch`, `slice`,
   `groupby`, `zip`, `select`, `reject`, `selectattr`, `rejectattr`, `map`,

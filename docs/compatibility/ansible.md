@@ -95,7 +95,7 @@ cargo build --release --features full-cloud
 | Docker | Yes | Yes | `docker` | Via Bollard |
 | Kubernetes | Yes | Yes | `kubernetes` | Via kube-rs |
 | WinRM | Yes | Partial | `winrm` | Experimental |
-| Podman | Yes | Yes | `podman` | Rootless containers |
+| Podman | Yes | Yes | none (always built) | Rootless containers, via the `podman` CLI |
 | AWS SSM | Yes | Yes | `aws` | EC2 Session Manager |
 
 ---
@@ -116,8 +116,13 @@ cargo build --release --features full-cloud
 ## Module Compatibility
 
 Module availability is one question; running a module against a *remote* host
-is another. Every registered module carries one of three classifications, and
-`tests/remote_transport_coverage_tests.rs` fails if any module carries none:
+is another. Modules that reach the executor's dispatch carry one of three
+classifications, and `tests/remote_transport_coverage_tests.rs` fails if one of
+them carries none. Two groups sit outside that check: the seven modules the
+executor handles before dispatch without any connection (`assert`, `debug`,
+`fail`, `include_vars`, `meta`, `pause`, `set_fact`), which the test exempts by
+name, and feature-gated modules, which are not registered in a default build
+and so are invisible to it.
 
 - **Verified** — routes all of its work through the connection and has been
   exercised against a live SSH target. See `Task::REMOTE_VERIFIED_MODULES`.
@@ -129,10 +134,10 @@ is another. Every registered module carries one of three classifications, and
   pointer to `delegate_to: localhost` rather than run against the wrong
   machine.
 
-`docs/FEATURE_STATUS.md` carries the current lists.
+`docs/FEATURE_STATUS.md` carries the current lists, including which of the verified entries are actually exercised against a live target and which rest on a source review of their transport path.
 
 `replace`, `fetch`, `slurp`, `unarchive`, `wait_for`, `archive` and `raw` were
-added to the verified set alongside the existing modules.
+added to the verified set alongside the existing modules, each with a live-target test.
 
 ### Stable Modules (No Feature Flag Required)
 
