@@ -116,13 +116,23 @@ cargo build --release --features full-cloud
 ## Module Compatibility
 
 Module availability is one question; running a module against a *remote* host
-is another. The executor only dispatches a module remotely once its transport
-has been reviewed — see `docs/FEATURE_STATUS.md` for the verified list and
-`Task::REMOTE_VERIFIED_MODULES` for the source of truth. A module with a
-local-filesystem implementation and no connection path is refused on a remote
-host rather than run against the control node.
+is another. Every registered module carries one of three classifications, and
+`tests/remote_transport_coverage_tests.rs` fails if any module carries none:
 
-`replace`, `fetch` and `slurp` were added alongside the existing set.
+- **Verified** — routes all of its work through the connection and has been
+  exercised against a live SSH target. See `Task::REMOTE_VERIFIED_MODULES`.
+- **Connection-only** — routes all of its work through the connection, but no
+  environment here can exercise it end to end (systemd, firewalls, RPM
+  distributions, switches, PostgreSQL).
+- **Control-node-only** — does its work on the control node by design, whether
+  through `std::fs` or its own protocol. A remote task is refused with a
+  pointer to `delegate_to: localhost` rather than run against the wrong
+  machine.
+
+`docs/FEATURE_STATUS.md` carries the current lists.
+
+`replace`, `fetch`, `slurp`, `unarchive`, `wait_for`, `archive` and `raw` were
+added to the verified set alongside the existing modules.
 
 ### Stable Modules (No Feature Flag Required)
 
@@ -144,8 +154,8 @@ host rather than run against the control node.
 | `lineinfile` | Yes | Yes | Needs tests |
 | `blockinfile` | Yes | Yes | Needs tests |
 | `stat` | Yes | Yes | 19 tests |
-| `archive` | Yes | Yes | 17 tests |
-| `unarchive` | Yes | Yes | Needs tests |
+| `archive` | Yes | Yes | 17 tests plus live remote packing |
+| `unarchive` | Yes | Yes | Unit tests plus live remote extraction |
 
 #### Command Execution
 | Module | Ansible | Rustible | Test Coverage |
@@ -181,7 +191,7 @@ host rather than run against the control node.
 | Module | Ansible | Rustible | Test Coverage |
 |--------|---------|----------|---------------|
 | `uri` | Yes | Yes | 25 tests |
-| `wait_for` | Yes | Yes | 37 tests |
+| `wait_for` | Yes | Yes | 37 tests plus live remote port/path checks |
 | `get_url` | Yes | No | Use `uri` |
 
 #### Utility & Logic
