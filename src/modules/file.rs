@@ -483,7 +483,7 @@ impl FileModule {
         Ok(changed)
     }
 
-    fn create_directory(path: &Path, mode: Option<u32>, recurse: bool) -> ModuleResult<bool> {
+    fn create_directory(path: &Path, mode: Option<u32>) -> ModuleResult<bool> {
         if path.exists() {
             if path.is_dir() {
                 return Ok(false);
@@ -494,11 +494,9 @@ impl FileModule {
             )));
         }
 
-        if recurse {
-            fs::create_dir_all(path)?;
-        } else {
-            fs::create_dir(path)?;
-        }
+        // Parents are always created, as in Ansible and the remote path
+        // (`mkdir -p`); `recurse` only governs attributes on the contents.
+        fs::create_dir_all(path)?;
 
         if let Some(mode) = mode {
             fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
@@ -615,7 +613,7 @@ impl FileModule {
         Ok(true)
     }
 
-    fn remove_path(path: &Path, recurse: bool) -> ModuleResult<bool> {
+    fn remove_path(path: &Path) -> ModuleResult<bool> {
         if !path.exists() && !path.is_symlink() {
             return Ok(false);
         }
@@ -623,11 +621,9 @@ impl FileModule {
         let meta = fs::symlink_metadata(path)?;
 
         if meta.is_dir() {
-            if recurse {
-                fs::remove_dir_all(path)?;
-            } else {
-                fs::remove_dir(path)?;
-            }
+            // A directory goes with its contents, as in Ansible and the remote
+            // path (`rm -rf`); `recurse` only governs attributes.
+            fs::remove_dir_all(path)?;
         } else {
             fs::remove_file(path)?;
         }
@@ -1151,8 +1147,9 @@ impl Module for FileModule {
         let mode = params.get_u32("mode")?;
         let owner = params.get_u32("owner")?;
         let group = params.get_u32("group")?;
-        // Default recurse to true for directory creation (matches Ansible behavior)
-        let recurse = params.get_bool_or("recurse", true);
+        // Ansible defaults `recurse` to false: attributes reach a directory's
+        // contents only when state=directory and recurse=true are both set.
+        let recurse = params.get_bool_or("recurse", false);
         let force = params.get_bool_or("force", false);
         let follow = params.get_bool_or("follow", true);
         let src = params.get_string("src")?;
@@ -1236,7 +1233,7 @@ impl Module for FileModule {
                     );
                 }
 
-                Self::remove_path(path, recurse)?;
+                Self::remove_path(path)?;
                 Ok(ModuleOutput::changed(format!("Removed '{}'", path_str)))
             }
 
@@ -1270,7 +1267,7 @@ impl Module for FileModule {
                     )));
                 }
 
-                let created = Self::create_directory(path, mode, recurse)?;
+                let created = Self::create_directory(path, mode)?;
                 let perm_changed = if let Some(m) = mode {
                     Self::set_permissions(path, m, follow, None)?
                 } else {
