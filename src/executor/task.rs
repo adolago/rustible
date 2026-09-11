@@ -339,6 +339,20 @@ pub struct Task {
     pub requires: Vec<String>,
 }
 
+/// How a module behaves when a task addresses a remote host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteTransport {
+    /// Routes all of its work through the connection, and has been exercised
+    /// against a live remote target.
+    Verified,
+    /// Routes all of its work through the connection, but no environment here
+    /// can exercise it end to end.
+    ConnectionOnly,
+    /// Does its work on the control node by design, so a remote task is
+    /// refused rather than run against the wrong machine.
+    ControlNodeOnly,
+}
+
 /// Role of a task within a block structure
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -1471,19 +1485,27 @@ impl Task {
 
     /// Modules whose implementation is connection-only but which no test
     /// environment here can exercise end to end (they need systemd, a
-    /// firewall, an RPM distribution, mount privileges, and so on).
+    /// firewall, an RPM distribution, mount privileges, a switch, a database
+    /// server, and so on).
     ///
     /// Each one fails without a connection and performs every operation
     /// through it, so it cannot fall back to the control node; what is missing
     /// is live confirmation of the behavior, not the transport.
     const REMOTE_CONNECTION_ONLY_MODULES: &'static [&'static str] = &[
         "dnf",
+        "eos_config",
         "firewalld",
         "get_url",
         "hostname",
+        "ios_config",
+        "junos_config",
         "locale",
         "mount",
+        "nxos_config",
         "pip",
+        "postgresql_db",
+        "postgresql_query",
+        "postgresql_user",
         "selinux",
         "service",
         "sysctl",
@@ -1531,6 +1553,38 @@ impl Task {
         "yum",
     ];
 
+    /// Modules that do their work on the control node by design, so a task
+    /// addressed to a remote host is refused rather than run here.
+    ///
+    /// Two kinds sit here. Some read and write the control node's filesystem
+    /// with `std::fs` and have no connection path at all (`known_hosts`,
+    /// `synchronize`, the HPC toolchain helpers). Others reach their subject
+    /// over their own protocol — a BMC, a Proxmox API, an HTTP endpoint — and
+    /// would behave identically from any machine; running them against the
+    /// inventory host would still not be running them *on* it, so the honest
+    /// answer is to refuse and let the playbook delegate explicitly.
+    const CONTROL_NODE_ONLY_MODULES: &'static [&'static str] = &[
+        "hpc_baseline",
+        "hpc_facts",
+        "hpc_healthcheck",
+        "hpc_job",
+        "hpc_queue",
+        "hpc_server",
+        "hpc_toolchain",
+        "ipmi_boot",
+        "ipmi_power",
+        "known_hosts",
+        "lmod",
+        "mpi_config",
+        "munge",
+        "nfs_client",
+        "nfs_server",
+        "proxmox_lxc",
+        "proxmox_vm",
+        "synchronize",
+        "uri",
+    ];
+
     /// Whether a module can run under privilege escalation.
     fn supports_become(module_name: &str) -> bool {
         Self::BECOME_CAPABLE_MODULES.contains(&module_name)
@@ -1540,6 +1594,36 @@ impl Task {
     fn has_remote_transport(module_name: &str) -> bool {
         Self::REMOTE_VERIFIED_MODULES.contains(&module_name)
             || Self::REMOTE_CONNECTION_ONLY_MODULES.contains(&module_name)
+    }
+
+    /// Every module name that carries a classification.
+    ///
+    /// Used to catch a stale entry: a name on one of the lists that no module
+    /// registers grants remote execution to nothing and hides a rename.
+    pub fn classified_modules() -> impl Iterator<Item = &'static str> {
+        Self::REMOTE_VERIFIED_MODULES
+            .iter()
+            .chain(Self::REMOTE_CONNECTION_ONLY_MODULES.iter())
+            .chain(Self::CONTROL_NODE_ONLY_MODULES.iter())
+            .copied()
+    }
+
+    /// How a module behaves when a task addresses a remote host.
+    ///
+    /// Every registered module has to land in one of these, so a new module is
+    /// classified on purpose instead of being silently refused; the guard in
+    /// `execute_module` and the test in `tests/remote_transport_coverage_tests.rs`
+    /// both read this.
+    pub fn remote_transport(module_name: &str) -> Option<RemoteTransport> {
+        if Self::REMOTE_VERIFIED_MODULES.contains(&module_name) {
+            Some(RemoteTransport::Verified)
+        } else if Self::REMOTE_CONNECTION_ONLY_MODULES.contains(&module_name) {
+            Some(RemoteTransport::ConnectionOnly)
+        } else if Self::CONTROL_NODE_ONLY_MODULES.contains(&module_name) {
+            Some(RemoteTransport::ControlNodeOnly)
+        } else {
+            None
+        }
     }
 
     /// Native modules may run locally only for an explicitly local inventory target.
@@ -1589,6 +1673,15 @@ disabled"
         // std::fs and would silently act on the control node, so a module may
         // only run remotely once its transport path has been reviewed.
         if !local && !Self::has_remote_transport(module_name) {
+            if matches!(
+                Self::remote_transport(module_name),
+                Some(RemoteTransport::ControlNodeOnly)
+            ) {
+                return Ok(TaskResult::failed(format!(
+                    "Module '{module_name}' runs on the control node by design; address it with \
+delegate_to: localhost instead of a remote host"
+                )));
+            }
             return Ok(TaskResult::failed(format!(
                 "Module '{module_name}' does not have a verified remote transport"
             )));

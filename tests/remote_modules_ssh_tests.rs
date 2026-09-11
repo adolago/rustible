@@ -384,7 +384,7 @@ fn modules_without_a_verified_remote_transport_are_refused() {
 
     let output = run_playbook(&inventory, &playbook);
     assert!(
-        output.contains("does not have a verified remote transport"),
+        output.contains("runs on the control node by design"),
         "a module that operates on the local filesystem must be refused, not \
          silently run on the control node:\n{}",
         output
