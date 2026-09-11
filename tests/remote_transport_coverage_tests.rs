@@ -73,6 +73,23 @@ fn classification_names_only_registered_modules() {
 }
 
 #[test]
+fn feature_gated_modules_are_classified_when_their_feature_is_on() {
+    // The gated list is allowed to name modules this build does not register —
+    // that is the point of it. What must hold is the converse: anything the
+    // build *does* register from that list is classified, which the
+    // every_registered_module_is_classified test above covers, and that the
+    // gated list never duplicates an always-registered classification.
+    let always: Vec<&str> = Task::classified_modules().collect();
+    for name in Task::feature_gated_modules() {
+        assert!(
+            !always.contains(&name),
+            "{} is classified twice: once as always-registered and once as feature-gated",
+            name
+        );
+    }
+}
+
+#[test]
 fn a_control_node_module_is_refused_with_a_useful_message() {
     // `synchronize` drives rsync from the control node: it has no connection
     // path, and the refusal should say so rather than leave the reader

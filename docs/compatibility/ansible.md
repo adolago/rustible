@@ -118,11 +118,11 @@ cargo build --release --features full-cloud
 Module availability is one question; running a module against a *remote* host
 is another. Modules that reach the executor's dispatch carry one of three
 classifications, and `tests/remote_transport_coverage_tests.rs` fails if one of
-them carries none. Two groups sit outside that check: the seven modules the
-executor handles before dispatch without any connection (`assert`, `debug`,
-`fail`, `include_vars`, `meta`, `pause`, `set_fact`), which the test exempts by
-name, and feature-gated modules, which are not registered in a default build
-and so are invisible to it.
+them carries none — including under a feature build, where the gated HPC,
+cloud and database modules register and are classified control-node-only. One
+group sits outside that check: the seven modules the executor handles before
+dispatch without any connection (`assert`, `debug`, `fail`, `include_vars`,
+`meta`, `pause`, `set_fact`), which the test exempts by name.
 
 - **Verified** — routes all of its work through the connection and has been
   exercised against a live SSH target. See `Task::REMOTE_VERIFIED_MODULES`.

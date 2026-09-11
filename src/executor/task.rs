@@ -1585,6 +1585,80 @@ impl Task {
         "uri",
     ];
 
+    /// Feature-gated modules that also run on the control node by design.
+    ///
+    /// These register only under a Cargo feature (`hpc`, `aws`, `database`,
+    /// ...), so a default build never sees them; they are listed separately so
+    /// the stale-entry test can hold the always-registered lists to a stricter
+    /// rule. Like `CONTROL_NODE_ONLY_MODULES`, every one of them drives its
+    /// subject over its own protocol — a scheduler, a BMC, a cloud API, a
+    /// database socket — or shells out locally, and none takes a connection.
+    const FEATURE_GATED_CONTROL_NODE_MODULES: &'static [&'static str] = &[
+        "aws_ebs_volume",
+        "aws_ec2_instance",
+        "aws_ec2_security_group",
+        "aws_ec2_vpc",
+        "aws_iam_policy",
+        "aws_iam_role",
+        "aws_s3",
+        "aws_security_group_rule",
+        "azure_network_interface",
+        "azure_resource_group",
+        "azure_vm",
+        "beegfs_client",
+        "beegfs_target",
+        "cuda_toolkit",
+        "dcgm",
+        "fabric_manager",
+        "gcp_compute_firewall",
+        "gcp_compute_instance",
+        "gcp_compute_network",
+        "gcp_service_account",
+        "gdrcopy",
+        "ib_diagnostics",
+        "ib_partition",
+        "ib_validate",
+        "ipoib",
+        "kerberos_client",
+        "lsf_host",
+        "lsf_policy",
+        "lsf_queue",
+        "lustre_client",
+        "lustre_mount",
+        "lustre_ost",
+        "mig_config",
+        "mysql_db",
+        "mysql_query",
+        "mysql_user",
+        "nccl",
+        "nvidia_container_toolkit",
+        "nvidia_driver",
+        "nvidia_gpu",
+        "nvidia_peermem",
+        "opensm_config",
+        "pbs_job",
+        "pbs_queue",
+        "pbs_server",
+        "pxe_host",
+        "pxe_profile",
+        "rdma_stack",
+        "redfish_info",
+        "redfish_power",
+        "slurm_account",
+        "slurm_config",
+        "slurm_info",
+        "slurm_job",
+        "slurm_node",
+        "slurm_ops",
+        "slurm_partition",
+        "slurm_qos",
+        "slurmrestd",
+        "sssd_config",
+        "sssd_domain",
+        "warewulf_image",
+        "warewulf_node",
+    ];
+
     /// Whether a module can run under privilege escalation.
     fn supports_become(module_name: &str) -> bool {
         Self::BECOME_CAPABLE_MODULES.contains(&module_name)
@@ -1608,6 +1682,11 @@ impl Task {
             .copied()
     }
 
+    /// Classified names that register only under a Cargo feature.
+    pub fn feature_gated_modules() -> impl Iterator<Item = &'static str> {
+        Self::FEATURE_GATED_CONTROL_NODE_MODULES.iter().copied()
+    }
+
     /// How a module behaves when a task addresses a remote host.
     ///
     /// Every registered module has to land in one of these, so a new module is
@@ -1619,7 +1698,9 @@ impl Task {
             Some(RemoteTransport::Verified)
         } else if Self::REMOTE_CONNECTION_ONLY_MODULES.contains(&module_name) {
             Some(RemoteTransport::ConnectionOnly)
-        } else if Self::CONTROL_NODE_ONLY_MODULES.contains(&module_name) {
+        } else if Self::CONTROL_NODE_ONLY_MODULES.contains(&module_name)
+            || Self::FEATURE_GATED_CONTROL_NODE_MODULES.contains(&module_name)
+        {
             Some(RemoteTransport::ControlNodeOnly)
         } else {
             None
