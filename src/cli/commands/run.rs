@@ -138,6 +138,12 @@ pub struct RunArgs {
     #[arg(long, value_name = "SECONDS", default_value = "3600")]
     pub cache_state_ttl: u64,
 
+    /// Record a per-host state manifest of the resources this run applied
+    ///
+    /// Check them later with `rustible drift manifest check`.
+    #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "")]
+    pub manifest: Option<String>,
+
     /// Enable distributed execution across worker nodes
     #[arg(long)]
     pub distributed: bool,
@@ -308,6 +314,82 @@ pub(crate) fn build_connection_config(
 
 fn task_cache_path(playbook: &Path) -> PathBuf {
     state_dir_for_playbook(playbook).join("task-cache.json")
+}
+
+/// Where host manifests live when `--manifest` is given without a directory.
+pub(crate) fn manifest_dir_for_playbook(playbook: &Path) -> PathBuf {
+    playbook
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".rustible")
+        .join("manifests")
+}
+
+/// Write one manifest per host from the records this run applied.
+///
+/// Each manifest keeps what was applied, not only what changed, so the next
+/// check sees the whole desired surface. A manifest that cannot be written is
+/// reported and does not fail the run, which has already happened.
+fn save_host_manifests(
+    dir: &Path,
+    playbook: &Path,
+    records: &[rustible::state::TaskStateRecord],
+    ctx: &mut CommandContext,
+) {
+    use rustible::state::{resource_from_task_args, HostManifest, ManifestStore, ResourceState};
+
+    let store = ManifestStore::new(dir);
+    let playbook_name = playbook.display().to_string();
+    let mut manifests: IndexMap<String, HostManifest> = IndexMap::new();
+
+    for record in records {
+        let Some((resource_type, resource_id, desired)) =
+            resource_from_task_args(&record.module, &record.args)
+        else {
+            continue;
+        };
+
+        let manifest = manifests.entry(record.host.clone()).or_insert_with(|| {
+            HostManifest::with_playbook(record.host.clone(), playbook_name.clone())
+        });
+
+        // A package module can name several packages in one task; each is its
+        // own resource so drift can point at the one that moved.
+        for id in resource_id.split(',') {
+            let mut state = ResourceState::new(
+                resource_type.clone(),
+                id,
+                record.module.clone(),
+                desired.clone(),
+            );
+            if !record.task_name.is_empty() {
+                state = state.with_task_name(record.task_name.clone());
+            }
+            if !record.tags.is_empty() {
+                state = state.with_tags(record.tags.clone());
+            }
+            manifest.record_resource(state);
+        }
+    }
+
+    let count = manifests.len();
+    for manifest in manifests.values() {
+        if let Err(error) = store.save(manifest) {
+            ctx.output.warning(&format!(
+                "Failed to write the manifest for {}: {}",
+                manifest.hostname, error
+            ));
+            return;
+        }
+    }
+
+    if count > 0 {
+        ctx.output.info(&format!(
+            "Recorded {} host manifest(s) in {}",
+            count,
+            dir.display()
+        ));
+    }
 }
 
 fn build_host_states(
@@ -1125,6 +1207,16 @@ impl RunArgs {
             if result.failed || result.unreachable {
                 has_failures = true;
             }
+        }
+
+        if let Some(manifest_dir) = &self.manifest {
+            let dir = if manifest_dir.is_empty() {
+                manifest_dir_for_playbook(&self.playbook)
+            } else {
+                PathBuf::from(manifest_dir)
+            };
+            let records = executor.applied_task_records().await;
+            save_host_manifests(&dir, &self.playbook, &records, ctx);
         }
 
         if let Err(save_err) = persist_execution_snapshot(

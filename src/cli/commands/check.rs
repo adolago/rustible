@@ -97,6 +97,7 @@ impl CheckArgs {
             checkpoint: None,
             agent_mode: false,
             agent_path: "/usr/local/bin/rustible-agent".to_string(),
+            manifest: None,
             distributed: false,
             workers: 1,
             distribution_strategy: "adaptive".to_string(),

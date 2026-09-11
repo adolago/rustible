@@ -175,6 +175,91 @@ impl HostManifest {
     }
 }
 
+/// Modules that manage no durable resource, so a manifest ignores them.
+///
+/// A command's output, a debug message or a fact assignment has nothing to
+/// compare against on the next run; recording them would inflate the manifest
+/// with rows that can only ever be `Unknown`.
+const UNTRACKED_MODULES: &[&str] = &[
+    "assert",
+    "command",
+    "debug",
+    "fail",
+    "fetch",
+    "gather_facts",
+    "import_role",
+    "import_tasks",
+    "include_role",
+    "include_tasks",
+    "include_vars",
+    "meta",
+    "pause",
+    "ping",
+    "raw",
+    "script",
+    "set_fact",
+    "setup",
+    "shell",
+    "slurp",
+    "wait_for",
+];
+
+/// The argument keys that identify a resource, most specific first.
+const IDENTITY_KEYS: &[&str] = &["path", "dest", "name", "repo", "src", "key", "user"];
+
+/// The resource family a module belongs to.
+///
+/// Grouping modules that manage the same kind of thing keeps
+/// `resources_by_type("file")` meaningful whether the file was written by
+/// `copy`, `template` or `lineinfile`.
+fn resource_type_for(module: &str) -> &str {
+    match module {
+        "blockinfile" | "copy" | "file" | "get_url" | "lineinfile" | "replace" | "stat"
+        | "template" | "unarchive" => "file",
+        "apt" | "dnf" | "package" | "pip" | "yum" => "package",
+        "service" | "systemd" | "systemd_unit" => "service",
+        other => other,
+    }
+}
+
+/// Build the resource a task's arguments address.
+///
+/// Returns `None` for modules that manage nothing durable and for arguments
+/// with no identifying key, so a manifest never records a resource it would be
+/// unable to re-check.
+pub fn resource_from_task_args(
+    module: &str,
+    args: &JsonValue,
+) -> Option<(String, String, JsonValue)> {
+    if UNTRACKED_MODULES.contains(&module) {
+        return None;
+    }
+
+    let object = args.as_object()?;
+    let (_, value) = IDENTITY_KEYS
+        .iter()
+        .find_map(|key| object.get(*key).map(|value| (*key, value)))?;
+
+    // A package module takes either one name or a list of them; each entry is
+    // its own resource, joined here so the caller can split on the comma.
+    let id = match value {
+        JsonValue::String(text) if !text.is_empty() => text.clone(),
+        JsonValue::Array(items) => {
+            let names: Vec<String> = items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect();
+            if names.is_empty() {
+                return None;
+            }
+            names.join(",")
+        }
+        _ => return None,
+    };
+
+    Some((resource_type_for(module).to_string(), id, args.clone()))
+}
+
 impl Default for HostManifest {
     fn default() -> Self {
         Self::new("unknown")

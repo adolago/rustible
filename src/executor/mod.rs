@@ -527,6 +527,8 @@ pub struct Executor {
     state_cache: Option<Arc<crate::state::StateHashCache>>,
     /// Whether tasks record resource state before changing it, for rollback
     capture_rollback_state: bool,
+    /// Whether tasks that reported no change are recorded too, for manifests
+    record_unchanged_tasks: bool,
     /// Privilege escalation settings of the play being executed.
     ///
     /// Handlers are stored separately from the play's task list, so they need
@@ -554,6 +556,7 @@ impl Executor {
             connection_factory: None,
             module_registry: Arc::new(ModuleRegistry::default()),
             changed_tasks: Arc::new(Mutex::new(Vec::new())),
+            record_unchanged_tasks: false,
             batch_processor: Arc::new(BatchProcessor::new(BatchConfig::default())),
             event_callback: None,
             state_cache: None,
@@ -580,6 +583,7 @@ impl Executor {
             connection_factory: None,
             module_registry: Arc::new(ModuleRegistry::default()),
             changed_tasks: Arc::new(Mutex::new(Vec::new())),
+            record_unchanged_tasks: false,
             batch_processor: Arc::new(BatchProcessor::new(BatchConfig::default())),
             event_callback: None,
             state_cache: None,
@@ -629,6 +633,15 @@ impl Executor {
     /// later rollback can tell a created resource from an edited one.
     pub fn with_rollback_state_capture(mut self, capture: bool) -> Self {
         self.capture_rollback_state = capture;
+        self
+    }
+
+    /// Record every applied task, not only the ones that changed something.
+    ///
+    /// A host manifest has to list resources that were already correct, or a
+    /// second run would drop everything it did not have to change.
+    pub fn with_manifest_recording(mut self, record: bool) -> Self {
+        self.record_unchanged_tasks = record;
         self
     }
 
@@ -717,8 +730,42 @@ impl Executor {
     }
 
     /// Return a snapshot of changed task records accumulated during execution.
+    ///
+    /// Rollback only ever acts on tasks that changed something, so records kept
+    /// for a manifest are filtered out here.
     pub async fn changed_task_records(&self) -> Vec<crate::state::TaskStateRecord> {
+        self.changed_tasks
+            .lock()
+            .await
+            .iter()
+            .filter(|record| record.status == crate::state::TaskStatus::Changed)
+            .cloned()
+            .collect()
+    }
+
+    /// Return every applied task record, changed or not.
+    pub async fn applied_task_records(&self) -> Vec<crate::state::TaskStateRecord> {
         self.changed_tasks.lock().await.clone()
+    }
+
+    /// The state-record status for a finished task.
+    fn record_status(status: TaskStatus) -> crate::state::TaskStatus {
+        match status {
+            TaskStatus::Changed => crate::state::TaskStatus::Changed,
+            _ => crate::state::TaskStatus::Ok,
+        }
+    }
+
+    /// Whether a finished task should be recorded.
+    ///
+    /// A changed task is always recorded, for rollback; an unchanged one only
+    /// when the run is building a manifest.
+    fn should_record(&self, status: TaskStatus) -> bool {
+        match status {
+            TaskStatus::Changed => true,
+            TaskStatus::Ok => self.record_unchanged_tasks,
+            _ => false,
+        }
     }
 
     /// Get a connection for a host from the connection factory
@@ -1476,13 +1523,13 @@ impl Executor {
                     }
                 }
 
-                // Record changed tasks for rollback
+                // Record applied tasks for rollback and manifests
                 if let Ok(ref result) = task_result {
-                    if result.status == TaskStatus::Changed {
+                    if self.should_record(result.status) {
                         let record = Self::build_task_state_record(
                             task,
                             host,
-                            crate::state::TaskStatus::Changed,
+                            Self::record_status(result.status),
                             result.before_state.clone(),
                         );
                         self.changed_tasks.lock().await.push(record);
@@ -1535,6 +1582,7 @@ impl Executor {
                 let connection_factory = self.connection_factory.clone();
                 let module_registry = Arc::clone(&self.module_registry);
                 let changed_tasks = Arc::clone(&self.changed_tasks);
+                let record_unchanged = self.record_unchanged_tasks;
                 let batch_processor = Arc::clone(&self.batch_processor);
                 let pipelining = self.config.pipelining;
                 let state_cache = self.state_cache.clone();
@@ -1657,13 +1705,15 @@ impl Executor {
                             }
                         }
 
-                        // Record changed tasks for rollback
+                        // Record applied tasks for rollback and manifests
                         if let Ok(ref result) = task_result {
-                            if result.status == TaskStatus::Changed {
+                            if result.status == TaskStatus::Changed
+                                || (record_unchanged && result.status == TaskStatus::Ok)
+                            {
                                 let record = Executor::build_task_state_record(
                                     task,
                                     &host,
-                                    crate::state::TaskStatus::Changed,
+                                    Executor::record_status(result.status),
                                     result.before_state.clone(),
                                 );
                                 changed_tasks.lock().await.push(record);
@@ -1942,11 +1992,11 @@ impl Executor {
             }
             // Record changed tasks for rollback
             for (host, res) in &results {
-                if res.status == TaskStatus::Changed {
+                if self.should_record(res.status) {
                     let record = Self::build_task_state_record(
                         task,
                         host,
-                        crate::state::TaskStatus::Changed,
+                        Self::record_status(res.status),
                         res.before_state.clone(),
                     );
                     self.changed_tasks.lock().await.push(record);
@@ -2114,11 +2164,11 @@ impl Executor {
         }
         // Record changed tasks for rollback
         for (host, res) in &results {
-            if res.status == TaskStatus::Changed {
+            if self.should_record(res.status) {
                 let record = Self::build_task_state_record(
                     task,
                     host,
-                    crate::state::TaskStatus::Changed,
+                    Self::record_status(res.status),
                     res.before_state.clone(),
                 );
                 self.changed_tasks.lock().await.push(record);

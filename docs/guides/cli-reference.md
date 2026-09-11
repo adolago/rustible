@@ -65,6 +65,7 @@ The `run` command executes an Ansible-compatible playbook against the specified 
 | `--checkpoint [NAME]` | - | Checkpoint before the run and record what tasks change | - |
 | `--agent-mode` | - | Run commands through the agent binary on each target | false |
 | `--agent-path <PATH>` | - | Path of the agent binary on the target | `/usr/local/bin/rustible-agent` |
+| `--manifest [DIR]` | - | Record a per-host manifest of the resources this run applied | `.rustible/manifests` |
 
 ### Examples
 
@@ -135,6 +136,29 @@ Rustible is invisible while the entry is valid. Guard rails:
 - Check mode never reads or writes the cache.
 - Delete `.rustible/state/task-cache.json`, or run without `--cache-state`, to
   force a full run.
+
+**Record what the run applied, and check it later:**
+```bash
+rustible run -i inventory.yml site.yml --manifest
+rustible drift manifest list
+rustible drift manifest check -i inventory.yml
+```
+
+`--manifest` writes one JSON manifest per host under `.rustible/manifests`
+(pass a directory to put them elsewhere). It records every resource the run
+applied, including tasks that found nothing to change, so the manifest
+describes the whole managed surface rather than the last diff.
+
+`rustible drift manifest check` replays each recorded resource in check mode
+through a connection to its host: a module that would change something is
+drift, one that reports no change is in sync, and a host that cannot be
+reached leaves its resources unknown rather than counting as clean. It exits
+`0` when everything is in sync, `2` when something drifted, and `1` when a
+resource could not be checked.
+
+Modules that manage nothing durable (`command`, `shell`, `debug`, `assert`,
+`set_fact`, and similar) are not recorded: there would be nothing to compare
+against on the next check.
 
 ### Exit Codes
 

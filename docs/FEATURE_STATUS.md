@@ -38,6 +38,7 @@ SSH; it says nothing about other distributions, Windows, or cloud services.
 | Lock/checkpoint workflow | Partially verified | Lockfiles record the local files a playbook depends on and `lock verify` detects an edit. Roles and collections are not locked. |
 | Rollback engine | Partially verified | `run --checkpoint` records pre-task state and `lock rollback` undoes file, package, service, user and group changes. Verified for a created directory end to end. Modules outside that set produce no rollback action. |
 | Agent mode | Partially verified | `agent build/deploy/status/stop` and `run --agent-mode` work against a live container. The deployed agent is one-shot per command; a persistent listening agent is implemented in the library but not deployed by these commands. |
+| State manifests | Partially verified | `run --manifest` records one manifest per host covering every resource the run applied, changed or not, and `drift manifest list/show/check` reads them back. `check` replays each resource through a connection to its host, so an unreachable host reports unknown rather than in sync. Verified locally end to end; the recorded identity is the module's `path`/`dest`/`name` argument, so a module with no such argument is not tracked. |
 | Cross-run task cache | Implemented | `run --cache-state` skips tasks whose inputs are unchanged since a no-op run. Off by default; check mode never uses it. |
 | Jinja2 filters | Implemented | The filter plugins are registered in the production engine and pinned by tests from the engine down. `json_query`, `vault`/`unvault` and the advanced `ipaddr` queries are absent; see `docs/compatibility/jinja2-filters.md`. |
 | WinRM transport | Under validation | Feature-gated with `winrm`, no `experimental` gate required. Windows-target behavior has not been exercised here. |
@@ -66,6 +67,7 @@ SSH; it says nothing about other distributions, Windows, or cloud services.
 - The CLI does not retry the initial connection; set `ansible_ssh_retries` per host to opt back in.
 - `become` is refused for transfer-based modules and on the control node.
 - Rollback needs `run --checkpoint`; a run without it records no prior state and cannot be undone.
+- Manifests need `run --manifest`; a plain run records none. Modules that manage nothing durable (`command`, `shell`, `debug`, `set_fact`, ...) are never recorded.
 - Lockfiles cover local file dependencies only; roles and collections need Galaxy resolution.
 - The `winrm` feature's lack of an `experimental` gate is a build choice, not evidence of beta readiness. Real-Windows test coverage still depends on host availability.
 - Kerberos and CredSSP authentication are parsed and tested for explicit failure behavior, but are not implemented.

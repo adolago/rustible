@@ -315,7 +315,7 @@ is satisfied on a candidate commit.
 | Checkpoint rollback | :test_tube: Beta | Checkpoints include snapshot metadata and rollback can restore recorded state transitions. |
 | Windows targeting | :test_tube: Beta | Linux/macOS controllers can target Windows hosts over WinRM with Beta-level support. |
 | AWS module coverage | :test_tube: Beta | Native AWS coverage includes EC2, S3, IAM roles/policies, standalone SG rules, and EBS volumes. |
-| State manifests | :construction: In progress | State and lockfile foundations exist; remote/state-team workflows continue to mature. |
+| State manifests | :test_tube: Implemented (Beta quality) | `run --manifest` records per-host resource manifests and `drift manifest list/show/check` reads and re-checks them through a connection to each host. Identity comes from the module's `path`/`dest`/`name` argument, so modules without one are not tracked. |
 
 ### Remaining Beta Gate
 
