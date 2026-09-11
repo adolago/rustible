@@ -332,10 +332,10 @@ pub struct Task {
     #[serde(default)]
     pub vars: IndexMap<String, JsonValue>,
     /// Resources this task produces, for dependency-ordered execution
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provides: Vec<String>,
     /// Resources this task needs before it can run
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
 }
 
