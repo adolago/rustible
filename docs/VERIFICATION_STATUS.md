@@ -36,10 +36,30 @@ full remote execution or Ansible parity. The state draft contains bounded guards
 and integrity fixes; planning, concurrent updates, provider coverage, and recovery
 still have open findings. Read each PR's migration note before using its branch.
 
+## Default test suite
+
+The default suite is green on the current branch. Measured on 11 September 2026
+with `cargo test --no-fail-fast -- --test-threads=1` on Debian 13 x86_64, on a
+clean tree: 177 result groups, 12128 passed, 0 failed, 16 ignored, exit 0.
+
+Two failures were found and fixed to reach this: `provides`/`requires` were
+absent from the policy traversal keyword list, so every serialized task was
+rejected as ambiguous; and the latency-stability check measured its first ten
+iterations against its last with no warm-up, so ordinary start-up cost tripped
+its lower bound. Both are pinned by the tests that caught them.
+
+What this does and does not establish: it is one run of the default suite on
+one platform, at one commit, by one person. It is not the required GitHub
+workflows (`ci.yml`, `security.yml`, `docker.yml`), which have not been run on
+this commit from here, and it does not include the Docker-gated remote suite —
+`tests/remote_modules_ssh_tests.rs` runs only with `RUSTIBLE_TEST_SSH_DOCKER=1`
+and passed separately (12 tests, against a throwaway sshd container).
+
 ## Verification still required
 
 - Required CI on the final combined source and its dependency graph, including
-  applicable feature and platform builds.
+  applicable feature and platform builds. The default `cargo test` suite is
+  green locally; the workflows themselves are not verified here.
 - Real transport, cloud, Windows-target, and physical-cluster behavior in
   disposable environments with explicit workflow expectations.
 - Full package verification, distribution support, and exact-image scanning.

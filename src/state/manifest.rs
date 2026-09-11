@@ -201,6 +201,7 @@ const UNTRACKED_MODULES: &[&str] = &[
     "setup",
     "shell",
     "slurp",
+    "stat",
     "wait_for",
 ];
 
@@ -214,23 +215,24 @@ const IDENTITY_KEYS: &[&str] = &["path", "dest", "name", "repo", "src", "key", "
 /// `copy`, `template` or `lineinfile`.
 fn resource_type_for(module: &str) -> &str {
     match module {
-        "blockinfile" | "copy" | "file" | "get_url" | "lineinfile" | "replace" | "stat"
-        | "template" | "unarchive" => "file",
+        "blockinfile" | "copy" | "file" | "get_url" | "lineinfile" | "replace" | "template"
+        | "unarchive" => "file",
         "apt" | "dnf" | "package" | "pip" | "yum" => "package",
         "service" | "systemd" | "systemd_unit" => "service",
         other => other,
     }
 }
 
-/// Build the resource a task's arguments address.
+/// Build the resources a task's arguments address.
 ///
 /// Returns `None` for modules that manage nothing durable and for arguments
 /// with no identifying key, so a manifest never records a resource it would be
-/// unable to re-check.
+/// unable to re-check. A package module naming several packages yields one
+/// resource each, so drift can point at the one that moved.
 pub fn resource_from_task_args(
     module: &str,
     args: &JsonValue,
-) -> Option<(String, String, JsonValue)> {
+) -> Option<(String, Vec<String>, JsonValue)> {
     if UNTRACKED_MODULES.contains(&module) {
         return None;
     }
@@ -240,24 +242,23 @@ pub fn resource_from_task_args(
         .iter()
         .find_map(|key| object.get(*key).map(|value| (*key, value)))?;
 
-    // A package module takes either one name or a list of them; each entry is
-    // its own resource, joined here so the caller can split on the comma.
-    let id = match value {
-        JsonValue::String(text) if !text.is_empty() => text.clone(),
-        JsonValue::Array(items) => {
-            let names: Vec<String> = items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
-                .collect();
-            if names.is_empty() {
-                return None;
-            }
-            names.join(",")
-        }
+    // The identity stays whole: a path is one resource even when it contains a
+    // comma, and only an actual list becomes several.
+    let ids: Vec<String> = match value {
+        JsonValue::String(text) if !text.is_empty() => vec![text.clone()],
+        JsonValue::Array(items) => items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+            .collect(),
         _ => return None,
     };
+    if ids.is_empty() {
+        return None;
+    }
 
-    Some((resource_type_for(module).to_string(), id, args.clone()))
+    Some((resource_type_for(module).to_string(), ids, args.clone()))
 }
 
 impl Default for HostManifest {
@@ -710,6 +711,40 @@ impl ManifestStore {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn resource_identity_keeps_a_path_with_a_comma_whole() {
+        let args = serde_json::json!({ "path": "/tmp/a,b.txt", "state": "touch" });
+        let (kind, ids, _) = resource_from_task_args("file", &args).expect("tracked");
+        assert_eq!(kind, "file");
+        assert_eq!(ids, vec!["/tmp/a,b.txt".to_string()]);
+    }
+
+    #[test]
+    fn a_package_list_becomes_one_resource_each() {
+        let args = serde_json::json!({ "name": ["nginx", "curl"], "state": "present" });
+        let (kind, ids, _) = resource_from_task_args("apt", &args).expect("tracked");
+        assert_eq!(kind, "package");
+        assert_eq!(ids, vec!["nginx".to_string(), "curl".to_string()]);
+    }
+
+    #[test]
+    fn modules_that_only_read_are_not_tracked() {
+        for module in ["stat", "slurp", "fetch", "command", "debug"] {
+            let args = serde_json::json!({ "path": "/etc/hosts", "src": "/etc/hosts" });
+            assert!(
+                resource_from_task_args(module, &args).is_none(),
+                "{} manages nothing durable and must stay out of a manifest",
+                module
+            );
+        }
+    }
+
+    #[test]
+    fn arguments_with_no_identity_are_not_tracked() {
+        let args = serde_json::json!({ "state": "present" });
+        assert!(resource_from_task_args("file", &args).is_none());
+    }
     use super::*;
     use serde_json::json;
     use tempfile::tempdir;

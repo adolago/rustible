@@ -343,7 +343,7 @@ fn save_host_manifests(
     let mut manifests: IndexMap<String, HostManifest> = IndexMap::new();
 
     for record in records {
-        let Some((resource_type, resource_id, desired)) =
+        let Some((resource_type, resource_ids, desired)) =
             resource_from_task_args(&record.module, &record.args)
         else {
             continue;
@@ -353,9 +353,7 @@ fn save_host_manifests(
             HostManifest::with_playbook(record.host.clone(), playbook_name.clone())
         });
 
-        // A package module can name several packages in one task; each is its
-        // own resource so drift can point at the one that moved.
-        for id in resource_id.split(',') {
+        for id in resource_ids {
             let mut state = ResourceState::new(
                 resource_type.clone(),
                 id,

@@ -301,7 +301,7 @@ is satisfied on a candidate commit.
 | CLI transport for remote hosts | :white_check_mark: Complete | `rustible run` builds a connection factory from the inventory; before this every remote task reported "requires an established connection". |
 | Remote module coverage | :test_tube: Partial | 26 modules verified against a live SSH target (27 list entries, since `setup` aliases `gather_facts`), 20 more connection-only, 19 refused as control-node-only by design. Every registered module is classified and a test keeps it that way. See `FEATURE_STATUS.md`. |
 | Privilege escalation | :test_tube: Partial | `become` reaches the target for modules that pass it into their commands; transfer-based modules and control-node escalation are refused. |
-| Default CI baseline | :construction: In progress | The remaining beta gate is a consistently green default CI/test suite. |
+| Default CI baseline | :white_check_mark: Green on the candidate commit | `cargo test --no-fail-fast -- --test-threads=1` on 11 September 2026: 177 result groups, 12128 passed, 0 failed, 16 ignored. See [Verification status](VERIFICATION_STATUS.md). Keeping it green across commits is the standing requirement. |
 | CLI smoke coverage | :white_check_mark: Complete | `scripts/smoke_tests.sh` and `tests/cli_smoke_tests.rs` exercise `run`, `check`, and `vault`, and the default CI path runs them explicitly. |
 | Lock rollback execution | :test_tube: Implemented (Beta quality) | `rustible lock rollback` uses snapshot-backed checkpoints, supports dry-run, and executes live rollback actions. |
 | WinRM hardening | :white_check_mark: Complete | `winrm` no longer requires `experimental`; parity/integration tests cover explicit unsupported Kerberos/CredSSP behavior. |
@@ -320,6 +320,8 @@ is satisfied on a candidate commit.
 ### Remaining Beta Gate
 
 1. Keep the default CI and required workflows green on the candidate commit.
+   The default suite is green as of 11 September 2026; the required GitHub
+   workflows have not been run on this commit from here.
 2. Keep status docs synchronized with the real code surface.
 3. Continue treating WinRM and rollback as Beta-quality features until high-risk sign-off infrastructure is consistently available.
 4. Keep public release messaging alpha until the beta entry checklist is actually satisfied.
