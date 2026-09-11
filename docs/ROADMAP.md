@@ -517,7 +517,7 @@ We track community requests and prioritize based on demand and alignment with pr
 | Request | Votes | Status | Priority |
 |---------|-------|--------|----------|
 | Podman connection support | - | :white_check_mark: Complete | Medium |
-| Web UI for playbook management | - | Under consideration | Low |
+| [Web UI for playbook management](architecture/web-ui.md) | - | Under consideration; design drafted, not scheduled | Low |
 | [Terraform integration](architecture/terraform-integration.md) | - | :construction: Design tracked in architecture docs | Medium |
 | [HashiCorp Vault + AWX/Tower](architecture/awx-vault-integration.md) | - | :construction: Design tracked in architecture docs | Medium |
 | [Provider ecosystem](architecture/provider-ecosystem.md) | - | :construction: Design tracked in architecture docs | Medium |
