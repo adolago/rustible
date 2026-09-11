@@ -299,7 +299,7 @@ is satisfied on a candidate commit.
 |------|--------|-------|
 | Docs/source-of-truth cleanup | :construction: In progress | Consolidate status in `FEATURE_STATUS.md`, then keep README and roadmap aligned. |
 | CLI transport for remote hosts | :white_check_mark: Complete | `rustible run` builds a connection factory from the inventory; before this every remote task reported "requires an established connection". |
-| Remote module coverage | :test_tube: Partial | 23 modules verified against a live SSH target; the rest are refused remotely or listed as connection-only. See `FEATURE_STATUS.md`. |
+| Remote module coverage | :test_tube: Partial | 25 modules verified against a live SSH target; the rest are refused remotely or listed as connection-only. See `FEATURE_STATUS.md`. |
 | Privilege escalation | :test_tube: Partial | `become` reaches the target for modules that pass it into their commands; transfer-based modules and control-node escalation are refused. |
 | Default CI baseline | :construction: In progress | The remaining beta gate is a consistently green default CI/test suite. |
 | CLI smoke coverage | :white_check_mark: Complete | `scripts/smoke_tests.sh` and `tests/cli_smoke_tests.rs` exercise `run`, `check`, and `vault`, and the default CI path runs them explicitly. |

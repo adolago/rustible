@@ -861,3 +861,153 @@ fn replace_slurp_and_fetch_work_against_the_target() {
         second
     );
 }
+
+#[test]
+fn unarchive_extracts_on_the_target() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+
+    let target = SshTarget::start();
+    let inventory = target.write_inventory();
+
+    // Build a small archive on the control node; the module has to upload it
+    // and extract it there, not unpack it into the control node's filesystem.
+    let payload = target.dir.path().join("payload");
+    fs::create_dir_all(payload.join("nested")).expect("payload dir");
+    fs::write(payload.join("nested/app.conf"), "mode = remote\n").expect("payload file");
+    let archive = target.dir.path().join("payload.tar.gz");
+    let (ok, _, stderr) = run(
+        "tar",
+        &[
+            "-czf",
+            archive.to_str().unwrap(),
+            "-C",
+            payload.to_str().unwrap(),
+            "nested",
+        ],
+    );
+    assert!(ok, "tar failed: {}", stderr);
+
+    let playbook = target.write_playbook(&format!(
+        r#"---
+- name: Unarchive on the target
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Extract the archive
+      unarchive:
+        src: {}
+        dest: /opt/rustible-archive
+"#,
+        archive.display()
+    ));
+
+    let first = run_playbook(&inventory, &playbook);
+    assert!(
+        first.contains("failed=0") && first.contains("unreachable=0"),
+        "the run should succeed:\n{}",
+        first
+    );
+    assert_eq!(
+        target
+            .exec("cat /opt/rustible-archive/nested/app.conf")
+            .trim(),
+        "mode = remote",
+        "the archive must be extracted inside the container"
+    );
+    assert!(
+        !Path::new("/opt/rustible-archive").exists(),
+        "extraction must not have written to the control node"
+    );
+
+    let second = run_playbook(&inventory, &playbook);
+    assert!(
+        second.contains("changed=0") && second.contains("failed=0"),
+        "a second extraction of the same archive is not a change:\n{}",
+        second
+    );
+
+    // The staged upload is cleaned up rather than left in /tmp.
+    assert!(
+        target
+            .exec("ls /tmp | grep rustible-unarchive")
+            .trim()
+            .is_empty(),
+        "the staged archive should be removed from the target"
+    );
+}
+
+#[test]
+fn wait_for_checks_the_target_not_the_control_node() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+
+    let target = SshTarget::start();
+    let inventory = target.write_inventory();
+
+    // This path exists on the control node and not in the container, so a
+    // wait_for that polls the wrong machine would report it present.
+    let control_only = target.dir.path().join("control-node-only");
+    fs::write(&control_only, "here\n").expect("write control-node file");
+
+    let playbook = target.write_playbook(&format!(
+        r#"---
+- name: Wait for conditions on the target
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The container's sshd port is open
+      wait_for:
+        host: 127.0.0.1
+        port: 22
+        state: started
+        timeout: 20
+
+    - name: A file that only exists on the control node is never found
+      wait_for:
+        path: {}
+        state: present
+        timeout: 3
+      register: control_only_wait
+      ignore_errors: true
+
+    - name: The control-node file must have timed out
+      assert:
+        that:
+          - control_only_wait.failed
+
+    - name: Create a file on the target
+      copy:
+        content: "ready\n"
+        dest: /tmp/rustible-wait-marker
+
+    - name: Wait for it with a pattern
+      wait_for:
+        path: /tmp/rustible-wait-marker
+        search_regex: 'ready'
+        timeout: 10
+"#,
+        control_only.display()
+    ));
+
+    let output = run_playbook(&inventory, &playbook);
+    assert!(
+        output.contains("unreachable=0"),
+        "the run should reach the target:\n{}",
+        output
+    );
+    assert!(
+        !output.contains("failed=1"),
+        "only the deliberately ignored wait should fail:\n{}",
+        output
+    );
+    assert_eq!(
+        target.exec("cat /tmp/rustible-wait-marker").trim(),
+        "ready",
+        "the marker should have been written inside the container"
+    );
+}

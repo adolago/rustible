@@ -1462,7 +1462,9 @@ impl Task {
         "stat",
         "template",
         "timezone",
+        "unarchive",
         "user",
+        "wait_for",
     ];
 
     /// Modules whose implementation is connection-only but which no test
@@ -1519,7 +1521,9 @@ impl Task {
         "systemd_unit",
         "timezone",
         "ufw",
+        "unarchive",
         "user",
+        "wait_for",
         "yum",
     ];
 
