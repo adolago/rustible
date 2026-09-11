@@ -58,8 +58,9 @@ services:
       - "127.0.0.1:2231:22"
     command: >
       bash -c "
+        sed -i 's/^Components: .*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources &&
         apt-get update &&
-        apt-get install -y openssh-server sudo python3 &&
+        apt-get install -y --no-install-recommends openssh-server sudo python3 &&
         mkdir -p /var/run/sshd &&
         useradd -m -s /bin/bash testuser &&
         echo 'testuser:testpass' | chpasswd &&
@@ -68,11 +69,20 @@ services:
         exec /usr/sbin/sshd -D
       "
     healthcheck:
+      # The container installs openssh-server before sshd can listen, so the
+      # budget has to cover an apt install on a loaded runner, not just the
+      # daemon's start-up. At 30s + 5x5s it was killed at ~50s mid-install.
+      # Narrowing apt to main and dropping recommends takes this container from
+      # 96 packages / 37.3 MB to 31 / 10.8 MB (and its index from ~20 MB to
+      # 5.3 MB); the budget below leaves room for a slow mirror on top. A
+      # generous start_period is free: a check that succeeds during it marks
+      # the container healthy immediately, so this only costs time when the
+      # container really is still installing.
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
       interval: 5s
       timeout: 3s
-      retries: 5
-      start_period: 30s
+      retries: 12
+      start_period: 300s
 
   target-debian:
     profiles: ["testing"]
@@ -87,7 +97,7 @@ services:
     command: >
       bash -c "
         apt-get update &&
-        apt-get install -y openssh-server sudo python3 &&
+        apt-get install -y --no-install-recommends openssh-server sudo python3 &&
         mkdir -p /var/run/sshd &&
         useradd -m -s /bin/bash testuser &&
         echo 'testuser:testpass' | chpasswd &&
@@ -96,11 +106,12 @@ services:
         exec /usr/sbin/sshd -D
       "
     healthcheck:
+      # Same apt install as the ubuntu target; 10s was never enough for it.
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
       interval: 5s
       timeout: 3s
-      retries: 5
-      start_period: 10s
+      retries: 12
+      start_period: 300s
 
   target-alpine:
     profiles: ["testing"]
@@ -123,11 +134,13 @@ services:
         exec /usr/sbin/sshd -D
       "
     healthcheck:
+      # apk is quicker than apt, but this container still installs openssh
+      # before it can answer, so it gets the same budget.
       test: ["CMD", "nc", "-z", "localhost", "22"]
       interval: 5s
       timeout: 3s
-      retries: 5
-      start_period: 10s
+      retries: 12
+      start_period: 300s
 
   # ============================================================================
   # Integration Test Runner
