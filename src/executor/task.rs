@@ -1453,6 +1453,7 @@ impl Task {
         "group",
         "lineinfile",
         "package",
+        "ping",
         "replace",
         "script",
         "setup",
