@@ -49,7 +49,7 @@ SSH; it says nothing about other distributions, Windows, or cloud services.
 | Azure / GCP modules | Experimental | Still require `experimental` plus provider feature flags. |
 | Terraform-like provisioning | Experimental / Incomplete | Not a Terraform replacement or a verified safe state-migration path. |
 | Beta readiness docs and checklists | In Progress | Beta gate docs exist; use them with the live tracker, explicit CLI smoke coverage, and the high-risk sign-off workflow. |
-| Default test suite | Green | `cargo test --no-fail-fast -- --test-threads=1` on 11 September 2026: 177 result groups, 12128 passed, 0 failed, 16 ignored. Docker-gated remote tests are separate and run with `RUSTIBLE_TEST_SSH_DOCKER=1`. |
+| Default test suite | Green | `cargo test --no-fail-fast -- --test-threads=1` at `39316b4a` on 11 September 2026: 177 result groups, 12132 passed, 0 failed, 16 ignored. Docker-gated remote tests are separate and run with `RUSTIBLE_TEST_SSH_DOCKER=1`. |
 
 ## Beta-Readiness Tracker
 

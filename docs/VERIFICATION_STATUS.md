@@ -40,7 +40,8 @@ still have open findings. Read each PR's migration note before using its branch.
 
 The default suite is green on the current branch. Measured on 11 September 2026
 with `cargo test --no-fail-fast -- --test-threads=1` on Debian 13 x86_64, on a
-clean tree: 177 result groups, 12128 passed, 0 failed, 16 ignored, exit 0.
+clean tree at `39316b4a`: 177 result groups, 12132 passed, 0 failed, 16
+ignored, exit 0. Commits after that one are documentation only.
 
 Two failures were found and fixed to reach this: `provides`/`requires` were
 absent from the policy traversal keyword list, so every serialized task was
