@@ -28,8 +28,10 @@ WORKDIR /app
 # ============================================================================
 FROM chef AS planner
 
-# Copy source files needed to compute dependencies
-COPY Cargo.toml Cargo.lock ./
+# Copy source files needed to compute dependencies. build.rs is part of the
+# crate: without it the build script never runs and RUSTIBLE_HOST_TARGET is
+# undefined at compile time.
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY benches ./benches
 
@@ -48,7 +50,7 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json --features "pure-rust"
 
 # Now copy the full source and build
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY benches ./benches
 
