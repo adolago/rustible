@@ -16,6 +16,27 @@ fn rustible_cmd() -> Command {
     assert_cmd::cargo::cargo_bin_cmd!("rustible")
 }
 
+/// How many times a task actually ran, counted from its `TASK [...]` banner.
+///
+/// CI sets `RUST_LOG=debug` and the tracing output goes to stdout, where it
+/// names the running task several times per execution. Counting a bare
+/// substring therefore reports nine runs for one, so only the banner line
+/// counts — a timestamped log line never starts with `TASK [`.
+fn task_runs(output: &str, task_name: &str) -> usize {
+    output
+        .lines()
+        .filter(|line| line.trim_start().starts_with("TASK ["))
+        .filter(|line| line.contains(task_name))
+        .count()
+}
+
+/// The position of a task's banner, for asserting execution order.
+fn task_banner_index(output: &str, task_name: &str) -> Option<usize> {
+    output
+        .lines()
+        .position(|line| line.trim_start().starts_with("TASK [") && line.contains(task_name))
+}
+
 /// Write a role with one debug task and optional `meta/main.yml` contents.
 fn write_role(root: &Path, name: &str, meta: Option<&str>) {
     let role = root.join("roles").join(name);
@@ -86,13 +107,14 @@ fn a_shared_dependency_runs_once() {
         .clone();
     let output = String::from_utf8(output).unwrap();
 
-    let common_runs = output.matches("common task").count();
     assert_eq!(
-        common_runs, 1,
+        task_runs(&output, "common task"),
+        1,
         "a dependency shared by two roles must run once, not once per dependent:\n{}",
         output
     );
-    assert!(output.contains("web task") && output.contains("db task"));
+    assert_eq!(task_runs(&output, "web task"), 1);
+    assert_eq!(task_runs(&output, "db task"), 1);
 }
 
 #[test]
@@ -118,7 +140,7 @@ fn allow_duplicates_opts_back_into_repeated_runs() {
     let output = String::from_utf8(output).unwrap();
 
     assert_eq!(
-        output.matches("common task").count(),
+        task_runs(&output, "common task"),
         2,
         "a role that opts in must still run per dependent:\n{}",
         output
@@ -162,8 +184,8 @@ fn a_dependency_still_runs_before_its_dependent() {
         .clone();
     let output = String::from_utf8(output).unwrap();
 
-    let common = output.find("common task").expect("dependency should run");
-    let web = output.find("web task").expect("role should run");
+    let common = task_banner_index(&output, "common task").expect("dependency should run");
+    let web = task_banner_index(&output, "web task").expect("role should run");
     assert!(
         common < web,
         "a dependency runs before the role that declares it:\n{}",
