@@ -95,6 +95,10 @@ impl TemplateEngine {
 
     /// Register Ansible-compatible filters
     fn register_filters(env: &mut Environment<'static>) {
+        // Filter plugins first: the engine-local filters below intentionally
+        // override any name they share, keeping their established behavior.
+        crate::plugins::filter::FilterRegistry::register_all(env);
+
         // String filters
         env.add_filter("default", filter_default);
         env.add_filter("d", filter_default); // Alias for default
@@ -116,15 +120,10 @@ impl TemplateEngine {
         env.add_filter("bool", filter_bool);
         env.add_filter("list", filter_list);
 
-        // Collection filters
-        env.add_filter("first", filter_first);
-        env.add_filter("last", filter_last);
-        env.add_filter("length", filter_length);
-        env.add_filter("count", filter_length); // Alias
-        env.add_filter("unique", filter_unique);
-        env.add_filter("sort", filter_sort);
-        env.add_filter("reverse", filter_reverse);
-        env.add_filter("flatten", filter_flatten);
+        // Collection filters: `first`, `last`, `length`, `count`, `sort`,
+        // `reverse`, `map`, `selectattr` and `rejectattr` come from MiniJinja's
+        // Jinja2-compatible built-ins; `unique` and `flatten` come from the
+        // filter plugins, which follow Ansible's argument list.
 
         // Path filters
         env.add_filter("basename", filter_basename);
@@ -149,9 +148,6 @@ impl TemplateEngine {
         env.add_filter("combine", filter_combine);
         env.add_filter("dict2items", filter_dict2items);
         env.add_filter("items2dict", filter_items2dict);
-        env.add_filter("selectattr", filter_selectattr);
-        env.add_filter("rejectattr", filter_rejectattr);
-        env.add_filter("map", filter_map_attr);
     }
 
     /// Register Ansible-compatible tests
@@ -565,12 +561,21 @@ fn is_truthy_value(value: &MiniJinjaValue) -> bool {
 // FILTERS
 // ============================================================================
 
+/// Substitute a fallback for an undefined value.
+///
+/// The optional second argument is Jinja2's `boolean` flag: when true, any
+/// falsy value (empty string, 0, empty list) is replaced as well, which is how
+/// `{{ x | default('y', true) }}` behaves in Ansible.
 fn filter_default(
     value: MiniJinjaValue,
     default: Option<MiniJinjaValue>,
+    boolean: Option<bool>,
     kwargs: Kwargs,
 ) -> MiniJinjaValue {
-    if value.is_undefined() || value.is_none() {
+    let fallback_wanted =
+        value.is_undefined() || value.is_none() || (boolean.unwrap_or(false) && !value.is_true());
+
+    if fallback_wanted {
         // Check for value= kwarg (Ansible/Jinja2 compatibility)
         if let Ok(v) = kwargs.get::<MiniJinjaValue>("value") {
             return v;
@@ -752,8 +757,13 @@ fn filter_bool(value: MiniJinjaValue) -> bool {
     is_truthy_value(&value)
 }
 
+/// Convert a value to a list.
+///
+/// Lazy iterables (the result of `map`, `select`, `zip`, ...) count as
+/// sequences here; otherwise `| list` would wrap the iterator itself in a
+/// one-element list.
 fn filter_list(value: MiniJinjaValue) -> Vec<MiniJinjaValue> {
-    if matches!(value.kind(), ValueKind::Seq) {
+    if matches!(value.kind(), ValueKind::Seq | ValueKind::Iterable) {
         value
             .try_iter()
             .map(|iter| iter.collect())
@@ -765,87 +775,6 @@ fn filter_list(value: MiniJinjaValue) -> Vec<MiniJinjaValue> {
     } else {
         vec![value]
     }
-}
-
-fn filter_first(value: MiniJinjaValue) -> MiniJinjaValue {
-    if matches!(value.kind(), ValueKind::Seq) {
-        value
-            .get_item(&MiniJinjaValue::from(0_i64))
-            .unwrap_or(MiniJinjaValue::UNDEFINED)
-    } else if let Some(s) = value.as_str() {
-        s.chars()
-            .next()
-            .map(|c| MiniJinjaValue::from(c.to_string()))
-            .unwrap_or(MiniJinjaValue::UNDEFINED)
-    } else {
-        MiniJinjaValue::UNDEFINED
-    }
-}
-
-fn filter_last(value: MiniJinjaValue) -> MiniJinjaValue {
-    if matches!(value.kind(), ValueKind::Seq) {
-        let len = value.len().unwrap_or(0);
-        if len > 0 {
-            value
-                .get_item(&MiniJinjaValue::from((len - 1) as i64))
-                .unwrap_or(MiniJinjaValue::UNDEFINED)
-        } else {
-            MiniJinjaValue::UNDEFINED
-        }
-    } else if let Some(s) = value.as_str() {
-        s.chars()
-            .next_back()
-            .map(|c| MiniJinjaValue::from(c.to_string()))
-            .unwrap_or(MiniJinjaValue::UNDEFINED)
-    } else {
-        MiniJinjaValue::UNDEFINED
-    }
-}
-
-fn filter_length(value: MiniJinjaValue) -> usize {
-    value.len().unwrap_or(0)
-}
-
-fn filter_unique(value: Vec<MiniJinjaValue>) -> Vec<MiniJinjaValue> {
-    let mut seen = std::collections::HashSet::new();
-    value
-        .into_iter()
-        .filter(|v| {
-            let key = v.to_string();
-            if seen.contains(&key) {
-                false
-            } else {
-                seen.insert(key);
-                true
-            }
-        })
-        .collect()
-}
-
-fn filter_sort(value: Vec<MiniJinjaValue>) -> Vec<MiniJinjaValue> {
-    let mut sorted = value;
-    sorted.sort_by_key(|a| a.to_string());
-    sorted
-}
-
-fn filter_reverse(value: Vec<MiniJinjaValue>) -> Vec<MiniJinjaValue> {
-    let mut reversed = value;
-    reversed.reverse();
-    reversed
-}
-
-fn filter_flatten(value: Vec<MiniJinjaValue>) -> Vec<MiniJinjaValue> {
-    let mut result = Vec::new();
-    for item in value {
-        if matches!(item.kind(), ValueKind::Seq) {
-            if let Ok(iter) = item.try_iter() {
-                result.extend(iter);
-            }
-        } else {
-            result.push(item);
-        }
-    }
-    result
 }
 
 fn filter_basename(value: &str) -> String {
@@ -1122,69 +1051,6 @@ fn filter_items2dict(
         }
     }
     Ok(MiniJinjaValue::from_serialize(&result))
-}
-
-fn filter_selectattr(
-    value: Vec<MiniJinjaValue>,
-    attr: &str,
-    test: Option<&str>,
-    test_value: Option<MiniJinjaValue>,
-) -> Vec<MiniJinjaValue> {
-    value
-        .into_iter()
-        .filter(|item| {
-            if let Ok(attr_val) = item.get_item(&MiniJinjaValue::from(attr)) {
-                match test.unwrap_or("truthy") {
-                    "truthy" => is_truthy_value(&attr_val),
-                    "equalto" | "eq" | "==" => test_value
-                        .as_ref()
-                        .map(|v| attr_val.to_string() == v.to_string())
-                        .unwrap_or(false),
-                    "defined" => !attr_val.is_undefined(),
-                    _ => is_truthy_value(&attr_val),
-                }
-            } else {
-                false
-            }
-        })
-        .collect()
-}
-
-fn filter_rejectattr(
-    value: Vec<MiniJinjaValue>,
-    attr: &str,
-    test: Option<&str>,
-    test_value: Option<MiniJinjaValue>,
-) -> Vec<MiniJinjaValue> {
-    value
-        .into_iter()
-        .filter(|item| {
-            if let Ok(attr_val) = item.get_item(&MiniJinjaValue::from(attr)) {
-                match test.unwrap_or("truthy") {
-                    "truthy" => !is_truthy_value(&attr_val),
-                    "equalto" | "eq" | "==" => test_value
-                        .as_ref()
-                        .map(|v| attr_val.to_string() != v.to_string())
-                        .unwrap_or(true),
-                    "defined" => attr_val.is_undefined(),
-                    _ => !is_truthy_value(&attr_val),
-                }
-            } else {
-                true
-            }
-        })
-        .collect()
-}
-
-fn filter_map_attr(value: Vec<MiniJinjaValue>, attr: Option<&str>) -> Vec<MiniJinjaValue> {
-    if let Some(attr) = attr {
-        value
-            .into_iter()
-            .filter_map(|item| item.get_item(&MiniJinjaValue::from(attr)).ok())
-            .collect()
-    } else {
-        value
-    }
 }
 
 // ============================================================================

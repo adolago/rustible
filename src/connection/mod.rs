@@ -53,6 +53,9 @@
 //! ```
 
 /// Connection configuration types.
+/// Agent-backed connection that runs commands through the rustible-agent binary
+pub mod agent;
+
 pub mod config;
 
 /// Docker container connection implementation.
@@ -485,6 +488,16 @@ pub trait Connection: Send + Sync {
     /// Get the connection identifier (hostname or container name)
     fn identifier(&self) -> &str;
 
+    /// Whether this connection targets the machine Rustible runs on.
+    ///
+    /// Modules use this to answer questions from local system databases
+    /// (`/etc/passwd`, the dpkg status file, ...) instead of spawning a
+    /// command. Every transport that reaches another machine keeps the
+    /// default.
+    fn is_local(&self) -> bool {
+        false
+    }
+
     /// Check if the connection is still alive
     async fn is_alive(&self) -> bool;
 
@@ -654,6 +667,8 @@ pub struct ConnectionFactory {
     config: Arc<ConnectionConfig>,
     /// Connection pool
     pool: AsyncConnectionPool,
+    /// Path of the agent binary on the target, when agent mode is enabled
+    agent_path: Option<String>,
 }
 
 impl ConnectionFactory {
@@ -662,6 +677,7 @@ impl ConnectionFactory {
         Self {
             config: Arc::new(config),
             pool: AsyncConnectionPool::new(10), // Default pool size of 10
+            agent_path: None,
         }
     }
 
@@ -670,6 +686,27 @@ impl ConnectionFactory {
         Self {
             config: Arc::new(config),
             pool: AsyncConnectionPool::new(pool_size),
+            agent_path: None,
+        }
+    }
+
+    /// Route commands through the agent binary at `path` on each target.
+    ///
+    /// File transfers keep using the underlying transport; only command
+    /// execution goes through the agent.
+    pub fn with_agent_path(mut self, path: impl Into<String>) -> Self {
+        self.agent_path = Some(path.into());
+        self
+    }
+
+    /// Wrap a transport in the agent when agent mode is enabled.
+    fn apply_agent_mode(
+        &self,
+        connection: Arc<dyn Connection + Send + Sync>,
+    ) -> Arc<dyn Connection + Send + Sync> {
+        match &self.agent_path {
+            Some(path) => Arc::new(agent::AgentConnection::new(connection, path.clone(), None)),
+            None => connection,
         }
     }
 
@@ -686,25 +723,78 @@ impl ConnectionFactory {
 
         if let Some(conn) = pooled_conn {
             if conn.is_alive().await {
-                return Ok(conn);
+                return Ok(self.apply_agent_mode(conn));
             }
             self.pool.remove(&pool_key).await;
         }
 
-        // Create new connection
-        let conn = self.create_connection(&conn_type).await?;
+        // Create new connection. The inventory name is the configuration key:
+        // resolving it to a hostname first would lose that host's identity
+        // file, timeouts and jump host.
+        let conn = self.create_connection(host, &conn_type).await?;
 
-        // Add to pool
+        // Add to pool. The pool holds the plain transport so the agent
+        // wrapper is applied per handout.
         let pooled = self.pool.put(pool_key, conn.clone()).await;
         if !pooled {
             tracing::debug!("Connection pool full, returning unpooled connection");
         }
 
-        Ok(conn)
+        Ok(self.apply_agent_mode(conn))
     }
 
     /// Resolve a host name to a connection type
     fn resolve_connection_type(&self, host: &str) -> ConnectionResult<ConnectionType> {
+        // An explicit transport for this host wins over its name: an inventory
+        // entry may be called anything and still say `ansible_connection: local`
+        // (or docker/podman/winrm).
+        if let Some(configured) = self
+            .config
+            .get_host(host)
+            .and_then(|host_config| host_config.connection.clone())
+        {
+            let target = self
+                .config
+                .get_host(host)
+                .and_then(|host_config| host_config.hostname.clone())
+                .unwrap_or_else(|| host.to_string());
+
+            match configured.as_str() {
+                "local" => return Ok(ConnectionType::Local),
+                "docker" => return Ok(ConnectionType::Docker { container: target }),
+                "podman" => return Ok(ConnectionType::Podman { container: target }),
+                "winrm" => {
+                    let (port, user) = self
+                        .config
+                        .get_host(host)
+                        .map(|host_config| {
+                            (
+                                host_config.port.unwrap_or(5985),
+                                host_config
+                                    .user
+                                    .clone()
+                                    .unwrap_or_else(|| self.config.defaults.user.clone()),
+                            )
+                        })
+                        .unwrap_or_else(|| (5985, self.config.defaults.user.clone()));
+                    #[cfg(feature = "winrm")]
+                    return Ok(ConnectionType::WinRm {
+                        host: target,
+                        port,
+                        user,
+                    });
+                    #[cfg(not(feature = "winrm"))]
+                    {
+                        let _ = (target, port, user);
+                        return Err(ConnectionError::InvalidConfig(
+                            "WinRM support not available. Enable 'winrm' feature.".to_string(),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Check for special connection types
         if host == "localhost" || host == "127.0.0.1" || host == "local" {
             // Check if we should use local connection
@@ -800,8 +890,12 @@ impl ConnectionFactory {
     }
 
     /// Create a new connection based on type
+    ///
+    /// `host_key` is the name the caller asked for, used to look up
+    /// host-specific configuration.
     async fn create_connection(
         &self,
+        host_key: &str,
         conn_type: &ConnectionType,
     ) -> ConnectionResult<Arc<dyn Connection + Send + Sync>> {
         match conn_type {
@@ -810,7 +904,11 @@ impl ConnectionFactory {
                 Ok(Arc::new(conn))
             }
             ConnectionType::Ssh { host, port, user } => {
-                let host_config = self.config.get_host(host).cloned();
+                let host_config = self
+                    .config
+                    .get_host(host_key)
+                    .or_else(|| self.config.get_host(host))
+                    .cloned();
                 // Prefer russh (pure Rust) when available, fall back to ssh2
                 #[cfg(feature = "russh")]
                 {

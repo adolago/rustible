@@ -20,8 +20,8 @@
 //! ```
 
 use super::{
-    Module, ModuleClassification, ModuleContext, ModuleOutput, ModuleParams, ModuleResult,
-    ParallelizationHint, ParamExt,
+    Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
+    ModuleResult, ParallelizationHint, ParamExt,
 };
 
 /// Module for testing connectivity to a target host
@@ -51,11 +51,32 @@ impl Module for PingModule {
     fn execute(
         &self,
         params: &ModuleParams,
-        _context: &ModuleContext,
+        context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
         let data = params
             .get_string("data")?
             .unwrap_or_else(|| "pong".to_string());
+
+        // Answering "pong" without asking the target would make ping useless
+        // as a reachability check, so a remote target is actually contacted.
+        if let Some(connection) = &context.connection {
+            if !connection.is_local() {
+                let connection = connection.clone();
+                let result = super::block_on_module_future(async move {
+                    connection.execute("echo pong", None).await
+                })?
+                .map_err(|error| {
+                    ModuleError::ExecutionFailed(format!("Target did not answer: {}", error))
+                })?;
+
+                if !result.success || result.stdout.trim() != "pong" {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Target did not answer as expected: {}",
+                        result.combined_output().trim()
+                    )));
+                }
+            }
+        }
 
         Ok(ModuleOutput::ok("ping: pong").with_data("ping", serde_json::json!(data)))
     }

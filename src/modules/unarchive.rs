@@ -46,6 +46,8 @@ use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
+use crate::connection::{Connection, ExecuteOptions};
+use crate::utils::shell_escape;
 use flate2::read::GzDecoder;
 #[cfg(test)]
 use flate2::write::GzEncoder;
@@ -56,6 +58,7 @@ use std::io::Read;
 #[cfg(test)]
 use std::io::Write;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Supported archive formats for extraction
 #[derive(Debug, Clone, PartialEq)]
@@ -666,6 +669,250 @@ impl UnarchiveModule {
             false
         }
     }
+
+    /// Execution options carrying the context's privilege escalation.
+    fn get_exec_options(context: &ModuleContext) -> ExecuteOptions {
+        let mut options = ExecuteOptions::new();
+        if context.r#become {
+            options = options.with_escalation(context.become_user.clone());
+            if let Some(ref method) = context.become_method {
+                options.escalate_method = Some(method.clone());
+            }
+            if let Some(ref password) = context.become_password {
+                options.escalate_password = Some(password.clone());
+            }
+        }
+        options
+    }
+
+    /// The command that extracts `archive` into `dest` on the target.
+    fn extract_command(format: &ArchiveFormat, archive: &str, dest: &str) -> String {
+        match format {
+            ArchiveFormat::Tar => format!(
+                "tar -xf {} -C {}",
+                shell_escape(archive),
+                shell_escape(dest)
+            ),
+            ArchiveFormat::TarGz => format!(
+                "tar -xzf {} -C {}",
+                shell_escape(archive),
+                shell_escape(dest)
+            ),
+            ArchiveFormat::Zip => format!(
+                "unzip -o {} -d {}",
+                shell_escape(archive),
+                shell_escape(dest)
+            ),
+        }
+    }
+
+    /// Extract an archive on a remote target.
+    ///
+    /// A local archive is uploaded to a staging path first; `remote_src: true`
+    /// uses an archive already present on the target. Extraction runs there
+    /// with `tar` or `unzip`, and a marker file under the destination records
+    /// which archive was extracted so a repeat run is a no-op — the same
+    /// contract the local path implements with `check_marker`.
+    fn execute_remote(
+        params: &ModuleParams,
+        context: &ModuleContext,
+        connection: &Arc<dyn Connection + Send + Sync>,
+    ) -> ModuleResult<ModuleOutput> {
+        let src = params.get_string_required("src")?;
+        let dest = params.get_string_required("dest")?;
+        let remote_src = params.get_bool_or("remote_src", Self::is_url(&src));
+        let creates = params.get_string("creates")?;
+        let force = params.get_bool_or("force", false);
+        let owner = params.get_string("owner")?;
+        let group = params.get_string("group")?;
+        let mode = params.get_u32("mode")?;
+
+        if Self::is_url(&src) {
+            return Err(ModuleError::Unsupported(
+                "unarchive: downloading a URL on the target is not implemented; fetch it with \
+get_url first"
+                    .into(),
+            ));
+        }
+
+        // The checksum of the local archive is what the marker records, so a
+        // re-run with the same archive can be skipped.
+        let archive_checksum = if remote_src {
+            None
+        } else {
+            let path = Path::new(&src);
+            if !path.is_file() {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "Source archive '{}' does not exist",
+                    src
+                )));
+            }
+            Some(Self::compute_checksum(path, "sha256")?)
+        };
+
+        let format = match params.get_string("format")? {
+            Some(format) => ArchiveFormat::from_str(&format)?,
+            None => ArchiveFormat::from_path(Path::new(&src)).ok_or_else(|| {
+                ModuleError::InvalidParameter(format!(
+                    "Cannot determine the archive format of '{}'; pass format",
+                    src
+                ))
+            })?,
+        };
+
+        let connection = connection.clone();
+        let options = Self::get_exec_options(context);
+        let check_mode = context.check_mode;
+
+        super::block_on_module_future(async move {
+            let run = |command: String| {
+                let connection = connection.clone();
+                let options = options.clone();
+                async move {
+                    connection
+                        .execute(&command, Some(options))
+                        .await
+                        .map_err(|error| {
+                            ModuleError::ExecutionFailed(format!("Connection error: {}", error))
+                        })
+                }
+            };
+
+            // `creates` short-circuits before anything is uploaded.
+            if let Some(creates) = &creates {
+                let probe = format!("test -e {}", shell_escape(creates));
+                if run(probe).await?.success {
+                    return Ok(ModuleOutput::ok(format!(
+                        "Skipped extraction - '{}' already exists",
+                        creates
+                    )));
+                }
+            }
+
+            let marker_path = format!("{}/.unarchive_marker", dest.trim_end_matches('/'));
+            if !force {
+                if let Some(checksum) = &archive_checksum {
+                    let probe = format!(
+                        "grep -qs -- {} {}",
+                        shell_escape(checksum),
+                        shell_escape(&marker_path)
+                    );
+                    if run(probe).await?.success {
+                        return Ok(ModuleOutput::ok(format!(
+                            "Archive '{}' already extracted to '{}'",
+                            src, dest
+                        )));
+                    }
+                }
+            }
+
+            if check_mode {
+                return Ok(ModuleOutput::changed(format!(
+                    "Would extract '{}' to '{}'",
+                    src, dest
+                )));
+            }
+
+            // Stage a local archive on the target. The upload goes over SFTP,
+            // which cannot escalate, so it lands in a world-writable path and
+            // the extraction (which can escalate) reads it from there.
+            let remote_archive = if remote_src {
+                src.clone()
+            } else {
+                let name = Path::new(&src)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "archive".to_string());
+                let staged = format!("/tmp/rustible-unarchive-{}-{}", std::process::id(), name);
+                connection
+                    .upload(Path::new(&src), Path::new(&staged), None)
+                    .await
+                    .map_err(|error| {
+                        ModuleError::ExecutionFailed(format!("Failed to upload archive: {}", error))
+                    })?;
+                staged
+            };
+
+            let result = run(format!("mkdir -p {}", shell_escape(&dest))).await?;
+            if !result.success {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "Failed to create '{}': {}",
+                    dest,
+                    result.stderr.trim()
+                )));
+            }
+
+            let result = run(Self::extract_command(&format, &remote_archive, &dest)).await?;
+            if !result.success {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "Failed to extract '{}': {}",
+                    src,
+                    result.combined_output().trim()
+                )));
+            }
+
+            // Record what was extracted so the next run can skip the work.
+            if let Some(checksum) = &archive_checksum {
+                let write_marker = format!(
+                    "printf '%s\\n' {} > {}",
+                    shell_escape(checksum),
+                    shell_escape(&marker_path)
+                );
+                let result = run(write_marker).await?;
+                if !result.success {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Extracted '{}' but could not write the marker at '{}': {}. A repeat run \
+would extract again.",
+                        src,
+                        marker_path,
+                        result.stderr.trim()
+                    )));
+                }
+            }
+
+            if !remote_src {
+                let _ = run(format!("rm -f {}", shell_escape(&remote_archive))).await;
+            }
+
+            // Ownership and mode apply to the destination tree.
+            if owner.is_some() || group.is_some() {
+                let spec = match (&owner, &group) {
+                    (Some(owner), Some(group)) => format!("{}:{}", owner, group),
+                    (Some(owner), None) => owner.clone(),
+                    (None, Some(group)) => format!(":{}", group),
+                    (None, None) => unreachable!("at least one of owner/group is set"),
+                };
+                let result = run(format!(
+                    "chown -R {} {}",
+                    shell_escape(&spec),
+                    shell_escape(&dest)
+                ))
+                .await?;
+                if !result.success {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Failed to set ownership: {}",
+                        result.stderr.trim()
+                    )));
+                }
+            }
+            if let Some(mode) = mode {
+                let result =
+                    run(format!("chmod {:o} {}", mode & 0o7777, shell_escape(&dest))).await?;
+                if !result.success {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Failed to set mode: {}",
+                        result.stderr.trim()
+                    )));
+                }
+            }
+
+            Ok(
+                ModuleOutput::changed(format!("Extracted '{}' to '{}'", src, dest))
+                    .with_data("dest", serde_json::json!(dest))
+                    .with_data("src", serde_json::json!(src)),
+            )
+        })?
+    }
 }
 
 /// Statistics about the extraction
@@ -742,6 +989,14 @@ impl Module for UnarchiveModule {
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
+        // A remote target extracts on the target; the control-node path below
+        // would otherwise unpack the archive into the wrong machine's filesystem.
+        if let Some(connection) = &context.connection {
+            if !connection.is_local() {
+                return Self::execute_remote(params, context, connection);
+            }
+        }
+
         let src_str = params.get_string_required("src")?;
         let dest_str = params.get_string_required("dest")?;
         let dest = Path::new(&dest_str);

@@ -27,7 +27,7 @@
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use super::{StateError, StateResult, TaskStatus};
@@ -286,6 +286,16 @@ impl TaskHashBuilder {
     }
 }
 
+/// On-disk format version for [`StateHashCache`] files.
+const PERSISTED_CACHE_VERSION: u32 = 1;
+
+/// On-disk representation of a [`StateHashCache`].
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedHashCache {
+    version: u32,
+    entries: std::collections::HashMap<String, CachedTaskResult>,
+}
+
 /// Cache for storing and retrieving task state hashes
 #[derive(Debug)]
 pub struct StateHashCache {
@@ -441,6 +451,58 @@ impl StateHashCache {
         self.stats
             .invalidations
             .fetch_add(count as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Load a cache from disk, or start empty when the file is absent or
+    /// unreadable.
+    ///
+    /// A cache file written by a different format version is discarded rather
+    /// than rejected: a stale cache costs one uncached run, while a hard error
+    /// would block the playbook.
+    pub fn load_or_new(path: &Path, config: HashingConfig) -> Self {
+        let cache = Self::new(config);
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            return cache;
+        };
+        let Ok(persisted) = serde_json::from_str::<PersistedHashCache>(&contents) else {
+            tracing::debug!(path = %path.display(), "ignoring unreadable task state cache");
+            return cache;
+        };
+        if persisted.version != PERSISTED_CACHE_VERSION {
+            tracing::debug!(
+                path = %path.display(),
+                version = persisted.version,
+                "ignoring task state cache written by a different version"
+            );
+            return cache;
+        }
+
+        for (key, entry) in persisted.entries {
+            cache.cache.insert(key, entry);
+        }
+        cache.cleanup_expired();
+        cache
+    }
+
+    /// Write the cache to disk, creating parent directories as needed.
+    pub fn save(&self, path: &Path) -> StateResult<()> {
+        self.cleanup_expired();
+
+        let persisted = PersistedHashCache {
+            version: PERSISTED_CACHE_VERSION,
+            entries: self
+                .cache
+                .iter()
+                .map(|entry| (entry.key().clone(), entry.value().clone()))
+                .collect(),
+        };
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(StateError::Io)?;
+        }
+        let contents = serde_json::to_string(&persisted).map_err(StateError::Serialization)?;
+        std::fs::write(path, contents).map_err(StateError::Io)?;
+        Ok(())
     }
 
     /// Get cache statistics

@@ -308,7 +308,7 @@ impl LockArgs {
     }
 
     /// Create a checkpoint
-    async fn create_checkpoint(
+    pub(crate) async fn create_checkpoint(
         &self,
         ctx: Option<&CommandContext>,
         name: Option<String>,
@@ -904,33 +904,350 @@ impl LockArgs {
             .unwrap_or_else(|| Lockfile::default_path(&self.playbook))
     }
 
-    /// Scan playbook for dependencies and add them to lockfile
-    async fn scan_dependencies(&self, _lockfile: &mut Lockfile) -> anyhow::Result<()> {
-        // In a real implementation, this would:
-        // 1. Parse the playbook
-        // 2. Find role and collection references
-        // 3. Query Galaxy for versions and checksums
-        // 4. Add them to the lockfile
+    /// Scan the playbook for files it depends on and lock their checksums.
+    ///
+    /// Local sources handed to `template`, `copy` and `script` are what make a
+    /// run reproducible: the same playbook with an edited template is a
+    /// different run. Roles installed under the playbook's `roles/` directory
+    /// are locked by a checksum over their file tree; a role that is only a
+    /// Galaxy reference with nothing on disk is not, because `lock verify`
+    /// refuses to claim it verified an artifact it cannot read.
+    async fn scan_dependencies(&self, lockfile: &mut Lockfile) -> anyhow::Result<()> {
+        use rustible::lockfile::{LockedResource, ResourceType};
 
-        // For now, we just log what would happen
-        println!("  Scanning for roles and collections...");
+        println!("  Scanning the playbook for local file dependencies...");
 
-        // Example: detect roles from requirements.yml if present
-        let req_path = self
+        let content = std::fs::read_to_string(&self.playbook)
+            .with_context(|| format!("Failed to read {}", self.playbook.display()))?;
+        let plays: Vec<serde_yaml::Value> = rustible::utils::yaml::from_str(&content)
+            .with_context(|| format!("Failed to parse {}", self.playbook.display()))?;
+
+        let base = self
             .playbook
             .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join("requirements.yml");
-        if req_path.exists() {
-            println!("  Found requirements.yml, scanning...");
-            // Would parse requirements.yml and lock versions
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
+        let mut sources: Vec<(String, PathBuf)> = Vec::new();
+        for play in &plays {
+            for key in ["pre_tasks", "tasks", "post_tasks", "handlers"] {
+                if let Some(tasks) = play.get(key).and_then(|value| value.as_sequence()) {
+                    Self::collect_task_sources(tasks, &base, &mut sources);
+                }
+            }
         }
 
-        // Example: detect roles from playbook
-        // This is a placeholder - real implementation would parse YAML
-        println!("  Detected 0 roles, 0 collections (stub implementation)");
+        sources.sort();
+        sources.dedup();
 
+        let mut locked = 0;
+        for (name, path) in sources {
+            match Self::file_checksum(&path) {
+                Ok(checksum) => {
+                    lockfile.add_resource(LockedResource {
+                        name,
+                        resource_type: ResourceType::File,
+                        location: path.to_string_lossy().to_string(),
+                        checksum: Some(checksum),
+                        git_ref: None,
+                    });
+                    locked += 1;
+                }
+                Err(error) => {
+                    println!("  Skipping {}: {}", path.display(), error);
+                }
+            }
+        }
+
+        let roles = Self::lock_installed_roles(&plays, &base, lockfile);
+        let collections = Self::lock_installed_collections(&base, lockfile);
+
+        let requirements = base.join("requirements.yml");
+        if requirements.exists() && roles == 0 && collections == 0 {
+            println!(
+                "  Found requirements.yml but nothing installed under roles/ or \
+collections/ansible_collections; install them first for their content to be locked."
+            );
+        }
+
+        println!(
+            "  Locked {} local file dependency(ies), {} role(s), {} collection(s).",
+            locked, roles, collections
+        );
         Ok(())
+    }
+
+    /// Lock every role the playbook names that is installed on disk.
+    ///
+    /// The checksum covers the role's whole tree, so an edited task file or
+    /// template inside a role is a different run — the same guarantee the
+    /// file-level scan gives for `template` and `copy` sources.
+    fn lock_installed_roles(
+        plays: &[serde_yaml::Value],
+        base: &Path,
+        lockfile: &mut Lockfile,
+    ) -> usize {
+        use rustible::lockfile::{directory_checksum, DependencySource, LockedRole};
+
+        let mut names: Vec<String> = Vec::new();
+        for play in plays {
+            if let Some(roles) = play.get("roles").and_then(|value| value.as_sequence()) {
+                for role in roles {
+                    if let Some(name) = Self::role_entry_name(role) {
+                        names.push(name);
+                    }
+                }
+            }
+            for key in ["pre_tasks", "tasks", "post_tasks", "handlers"] {
+                if let Some(tasks) = play.get(key).and_then(|value| value.as_sequence()) {
+                    Self::collect_role_names(tasks, &mut names);
+                }
+            }
+        }
+        names.sort();
+        names.dedup();
+
+        let mut locked = 0;
+        for name in names {
+            let path = base.join("roles").join(&name);
+            if !path.is_dir() {
+                continue;
+            }
+            match directory_checksum(&path) {
+                Ok(checksum) => {
+                    lockfile.add_role(LockedRole {
+                        version: Self::role_version(&path),
+                        dependencies: Self::role_dependencies(&path),
+                        name,
+                        source: DependencySource::Local {
+                            path: path.to_string_lossy().to_string(),
+                        },
+                        checksum,
+                    });
+                    locked += 1;
+                }
+                Err(error) => println!("  Skipping role {}: {}", name, error),
+            }
+        }
+        locked
+    }
+
+    /// Lock every collection installed under `collections/ansible_collections`.
+    fn lock_installed_collections(base: &Path, lockfile: &mut Lockfile) -> usize {
+        use rustible::lockfile::{directory_checksum, DependencySource, LockedCollection};
+
+        let root = base.join("collections").join("ansible_collections");
+        let Ok(namespaces) = std::fs::read_dir(&root) else {
+            return 0;
+        };
+
+        let mut installed: Vec<(String, PathBuf)> = Vec::new();
+        for namespace in namespaces.flatten() {
+            if !namespace.path().is_dir() {
+                continue;
+            }
+            let Ok(collections) = std::fs::read_dir(namespace.path()) else {
+                continue;
+            };
+            for collection in collections.flatten() {
+                if !collection.path().is_dir() {
+                    continue;
+                }
+                installed.push((
+                    format!(
+                        "{}.{}",
+                        namespace.file_name().to_string_lossy(),
+                        collection.file_name().to_string_lossy()
+                    ),
+                    collection.path(),
+                ));
+            }
+        }
+        installed.sort();
+
+        let mut locked = 0;
+        for (name, path) in installed {
+            match directory_checksum(&path) {
+                Ok(checksum) => {
+                    lockfile.add_collection(LockedCollection {
+                        version: Self::collection_version(&path),
+                        dependencies: Vec::new(),
+                        name,
+                        source: DependencySource::Local {
+                            path: path.to_string_lossy().to_string(),
+                        },
+                        checksum,
+                    });
+                    locked += 1;
+                }
+                Err(error) => println!("  Skipping collection {}: {}", name, error),
+            }
+        }
+        locked
+    }
+
+    /// The role name from a `roles:` entry, which may be a bare string or a
+    /// mapping with `role:` or `name:`.
+    fn role_entry_name(entry: &serde_yaml::Value) -> Option<String> {
+        if let Some(name) = entry.as_str() {
+            return Some(name.to_string());
+        }
+        for key in ["role", "name"] {
+            if let Some(name) = entry.get(key).and_then(|value| value.as_str()) {
+                return Some(name.to_string());
+            }
+        }
+        None
+    }
+
+    /// Collect role names from `include_role` and `import_role` tasks.
+    fn collect_role_names(tasks: &[serde_yaml::Value], names: &mut Vec<String>) {
+        for task in tasks {
+            for key in ["block", "rescue", "always"] {
+                if let Some(nested) = task.get(key).and_then(|value| value.as_sequence()) {
+                    Self::collect_role_names(nested, names);
+                }
+            }
+            for key in ["include_role", "import_role"] {
+                if let Some(args) = task.get(key) {
+                    if let Some(name) = args.get("name").and_then(|value| value.as_str()) {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    /// A role's version from `meta/main.yml`, or `local` when it declares none.
+    fn role_version(path: &Path) -> String {
+        let Ok(content) = std::fs::read_to_string(path.join("meta").join("main.yml")) else {
+            return "local".to_string();
+        };
+        let Ok(meta) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+            return "local".to_string();
+        };
+        meta.get("galaxy_info")
+            .and_then(|info| info.get("version"))
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| "local".to_string())
+    }
+
+    /// A role's declared dependency names, for the lockfile record.
+    fn role_dependencies(path: &Path) -> Vec<String> {
+        let Ok(content) = std::fs::read_to_string(path.join("meta").join("main.yml")) else {
+            return Vec::new();
+        };
+        let Ok(meta) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+            return Vec::new();
+        };
+        meta.get("dependencies")
+            .and_then(|value| value.as_sequence())
+            .map(|entries| entries.iter().filter_map(Self::role_entry_name).collect())
+            .unwrap_or_default()
+    }
+
+    /// A collection's version from `MANIFEST.json` or `galaxy.yml`.
+    fn collection_version(path: &Path) -> String {
+        if let Ok(content) = std::fs::read_to_string(path.join("MANIFEST.json")) {
+            if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(version) = manifest
+                    .get("collection_info")
+                    .and_then(|info| info.get("version"))
+                    .and_then(|value| value.as_str())
+                {
+                    return version.to_string();
+                }
+            }
+        }
+        if let Ok(content) = std::fs::read_to_string(path.join("galaxy.yml")) {
+            if let Ok(galaxy) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                if let Some(version) = galaxy.get("version").and_then(|value| value.as_str()) {
+                    return version.to_string();
+                }
+            }
+        }
+        "local".to_string()
+    }
+
+    /// Collect local sources from a task list, descending into blocks.
+    fn collect_task_sources(
+        tasks: &[serde_yaml::Value],
+        base: &Path,
+        sources: &mut Vec<(String, PathBuf)>,
+    ) {
+        for task in tasks {
+            let Some(mapping) = task.as_mapping() else {
+                continue;
+            };
+
+            for key in ["block", "rescue", "always"] {
+                if let Some(nested) = task.get(key).and_then(|value| value.as_sequence()) {
+                    Self::collect_task_sources(nested, base, sources);
+                }
+            }
+
+            for (module, args) in mapping {
+                let Some(module) = module.as_str() else {
+                    continue;
+                };
+                // `script: path args...` is a bare string; template and copy
+                // take a src argument.
+                let source = match module {
+                    "script" => args
+                        .as_str()
+                        .and_then(|value| value.split_whitespace().next())
+                        .map(str::to_string),
+                    "template" | "copy" | "ansible.builtin.template" | "ansible.builtin.copy" => {
+                        args.get("src")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string)
+                    }
+                    _ => None,
+                };
+                let Some(source) = source else { continue };
+
+                // A templated source is only known at run time.
+                if source.contains("{{") {
+                    continue;
+                }
+
+                if let Some(path) = Self::resolve_source(base, module, &source) {
+                    sources.push((source, path));
+                }
+            }
+        }
+    }
+
+    /// Resolve a source the way Ansible looks one up from a playbook.
+    fn resolve_source(base: &Path, module: &str, source: &str) -> Option<PathBuf> {
+        let candidate = Path::new(source);
+        if candidate.is_absolute() {
+            return candidate.is_file().then(|| candidate.to_path_buf());
+        }
+
+        let subdir = if module.ends_with("template") {
+            "templates"
+        } else {
+            "files"
+        };
+        [
+            base.join(source),
+            base.join(subdir).join(source),
+            base.join("files").join(source),
+        ]
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+    }
+
+    /// SHA-256 of a local file.
+    fn file_checksum(path: &Path) -> anyhow::Result<String> {
+        use sha2::{Digest, Sha256};
+
+        let mut file = std::fs::File::open(path)?;
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut file, &mut hasher)?;
+        Ok(format!("{:x}", hasher.finalize()))
     }
 }
 

@@ -61,14 +61,15 @@ cargo build --release --features full-cloud
 | Roles | Yes | Yes | Full structure |
 | Tags | Yes | Yes | `--tags`/`--skip-tags` |
 | Fact gathering | Yes | Yes | `gather_facts`/`setup` |
-| Privilege escalation | Yes | Yes | `become`/`become_user`/`become_method` |
+| Privilege escalation | Yes | Beta | `become` reaches remote targets for modules that pass it into their commands; transfer-based modules and control-node escalation are refused |
 | Vault encryption | Yes | Yes | Different format (AES-256-GCM) |
 | Check mode | Yes | Yes | `--check` flag |
 | Diff mode | Yes | Yes | `--diff` flag |
 | Async tasks (`async_tasks`) | Yes | Partial | Beta async execution |
 | Delegation (`delegate_to`) | Yes | Yes | Targeted host delegation |
 | Run once (`run_once`) | Yes | Yes | Single host execution |
-| SSH pipelining (`ssh_pipelining`) | Yes | Yes | Reduce SSH round trips |
+| SSH pipelining (`ssh_pipelining`) | Yes | Beta | Fact gathering is batched into one round trip; general task pipelining is not wired |
+| Declared task order (`provides`/`requires`) | No | Yes | Rustible extension: stable topological ordering within a play |
 
 ---
 
@@ -94,8 +95,8 @@ cargo build --release --features full-cloud
 | Docker | Yes | Yes | `docker` | Via Bollard |
 | Kubernetes | Yes | Yes | `kubernetes` | Via kube-rs |
 | WinRM | Yes | Partial | `winrm` | Experimental |
-| Podman | Yes | No | - | Planned for v1.0 |
-| AWS SSM | Yes | No | - | Planned for v1.0 |
+| Podman | Yes | Yes | none (always built) | Rootless containers, via the `podman` CLI |
+| AWS SSM | Yes | Yes | `aws` | EC2 Session Manager |
 
 ---
 
@@ -105,14 +106,38 @@ cargo build --release --features full-cloud
 |---------|---------|----------|-------|
 | Resource graph (`resource_graph`) | No | Partial | Terraform-like dependencies |
 | State management (`state_management`) | No | Partial | Terraform-style state tracking |
-| Drift detection (`drift_detection`) | No | No | Experimental |
-| Agent mode (`agent_mode`) | No | No | Experimental persistent agent |
-| Native bindings (`native_bindings`) | No | No | Experimental system integrations |
+| Drift detection (`drift_detection`) | No | Yes | `drift detect` checks each host through its own connection |
+| Agent mode (`agent_mode`) | No | Partial | `agent build/deploy/status/stop` and `run --agent-mode`; the deployed agent is one-shot per command |
+| Native bindings (`native_bindings`) | No | Partial | Local user, group and package checks read the system databases directly |
 | Checkpoints/rollback (`checkpoints`) | No | Yes | Checkpoint and rollback support, 18 tests |
 
 ---
 
 ## Module Compatibility
+
+Module availability is one question; running a module against a *remote* host
+is another. Modules that reach the executor's dispatch carry one of three
+classifications, and `tests/remote_transport_coverage_tests.rs` fails if one of
+them carries none — including under a feature build, where the gated HPC,
+cloud and database modules register and are classified control-node-only. One
+group sits outside that check: the seven modules the executor handles before
+dispatch without any connection (`assert`, `debug`, `fail`, `include_vars`,
+`meta`, `pause`, `set_fact`), which the test exempts by name.
+
+- **Verified** — routes all of its work through the connection and has been
+  exercised against a live SSH target. See `Task::REMOTE_VERIFIED_MODULES`.
+- **Connection-only** — routes all of its work through the connection, but no
+  environment here can exercise it end to end (systemd, firewalls, RPM
+  distributions, switches, PostgreSQL).
+- **Control-node-only** — does its work on the control node by design, whether
+  through `std::fs` or its own protocol. A remote task is refused with a
+  pointer to `delegate_to: localhost` rather than run against the wrong
+  machine.
+
+`docs/FEATURE_STATUS.md` carries the current lists, including which of the verified entries are actually exercised against a live target and which rest on a source review of their transport path.
+
+`replace`, `fetch`, `slurp`, `unarchive`, `wait_for`, `archive` and `raw` were
+added to the verified set alongside the existing modules, each with a live-target test.
 
 ### Stable Modules (No Feature Flag Required)
 
@@ -134,8 +159,8 @@ cargo build --release --features full-cloud
 | `lineinfile` | Yes | Yes | Needs tests |
 | `blockinfile` | Yes | Yes | Needs tests |
 | `stat` | Yes | Yes | 19 tests |
-| `archive` | Yes | Yes | 17 tests |
-| `unarchive` | Yes | Yes | Needs tests |
+| `archive` | Yes | Yes | 17 tests plus live remote packing |
+| `unarchive` | Yes | Yes | Unit tests plus live remote extraction |
 
 #### Command Execution
 | Module | Ansible | Rustible | Test Coverage |
@@ -171,7 +196,7 @@ cargo build --release --features full-cloud
 | Module | Ansible | Rustible | Test Coverage |
 |--------|---------|----------|---------------|
 | `uri` | Yes | Yes | 25 tests |
-| `wait_for` | Yes | Yes | 37 tests |
+| `wait_for` | Yes | Yes | 37 tests plus live remote port/path checks |
 | `get_url` | Yes | No | Use `uri` |
 
 #### Utility & Logic

@@ -8,6 +8,11 @@
 //! - **hash**: Cryptographic hashing and checksums
 //! - **encoding**: Base64 encoding/decoding
 //! - **collections**: Set operations (combine, union, difference, intersect)
+//! - **datetime**: Timestamp formatting and parsing (strftime, to_datetime)
+//! - **math**: Numeric helpers (log, pow, root, human-readable sizes)
+//! - **network**: IP address filters (ipaddr, ipv4, ipsubnet, nthhost, ...)
+//! - **strings**: String helpers (center, truncate, wordwrap, comment, to_uuid)
+//! - **paths**: Path manipulation (path_join, splitext, relpath, Windows paths)
 //!
 //! # Usage
 //!
@@ -30,10 +35,15 @@
 //! See individual modules for detailed compatibility notes.
 
 pub mod collections;
+pub mod datetime;
 pub mod encoding;
 pub mod hash;
+pub mod math;
+pub mod network;
+pub mod paths;
 pub mod regex;
 pub mod serialization;
+pub mod strings;
 
 use minijinja::Environment;
 
@@ -69,6 +79,11 @@ impl FilterRegistry {
         hash::register_filters(env);
         encoding::register_filters(env);
         collections::register_filters(env);
+        datetime::register_filters(env);
+        math::register_filters(env);
+        network::register_filters(env);
+        paths::register_filters(env);
+        strings::register_filters(env);
     }
 
     /// Register only regex filters.
@@ -94,6 +109,31 @@ impl FilterRegistry {
     /// Register only collection filters (combine, union, difference, etc.).
     pub fn register_collections(env: &mut Environment<'static>) {
         collections::register_filters(env);
+    }
+
+    /// Register only date/time filters (strftime, to_datetime).
+    pub fn register_datetime(env: &mut Environment<'static>) {
+        datetime::register_filters(env);
+    }
+
+    /// Register only math filters (log, pow, root, human_readable, ...).
+    pub fn register_math(env: &mut Environment<'static>) {
+        math::register_filters(env);
+    }
+
+    /// Register only network filters (ipaddr, ipv4, ipsubnet, ...).
+    pub fn register_network(env: &mut Environment<'static>) {
+        network::register_filters(env);
+    }
+
+    /// Register only path filters (path_join, splitext, relpath, ...).
+    pub fn register_paths(env: &mut Environment<'static>) {
+        paths::register_filters(env);
+    }
+
+    /// Register only string filters (center, truncate, comment, ...).
+    pub fn register_strings(env: &mut Environment<'static>) {
+        strings::register_filters(env);
     }
 }
 

@@ -65,12 +65,14 @@ use super::{
     Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
-use crate::utils::get_regex;
+use crate::connection::{Connection, ExecuteOptions};
+use crate::utils::{get_regex, shell_escape};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Default timeout in seconds
@@ -612,6 +614,167 @@ impl WaitForModule {
             }
         }
     }
+
+    /// The shell probe that tests the condition on the target.
+    ///
+    /// `None` means the condition cannot be reduced to a single command and is
+    /// evaluated by reading the file instead (a `search_regex` check, which
+    /// keeps Rust regex semantics rather than delegating to `grep`).
+    fn remote_probe(config: &WaitForConfig) -> Option<String> {
+        match config.state {
+            // `nc -z` is the portable probe; bash's /dev/tcp covers images
+            // without netcat. When neither exists the command exits 127 and
+            // the caller reports that instead of guessing.
+            WaitState::Started | WaitState::Stopped => {
+                let port = config.port?;
+                // The host reaches both branches as a positional argument, so a
+                // quote in it cannot close the quoting and run as a command.
+                Some(format!(
+                    "set -- {} {}; \
+if command -v nc >/dev/null 2>&1; then nc -z -w {} \"$1\" \"$2\"; \
+elif command -v bash >/dev/null 2>&1; then \
+bash -c 'exec 3<>/dev/tcp/$0/$1' \"$1\" \"$2\" 2>/dev/null; else exit 127; fi",
+                    shell_escape(&config.host),
+                    port,
+                    config.connect_timeout
+                ))
+            }
+            WaitState::Present if config.compiled_regex.is_none() => {
+                Some(format!("test -e {}", shell_escape(config.path.as_ref()?)))
+            }
+            WaitState::Present => None,
+            WaitState::Absent => Some(format!("test -e {}", shell_escape(config.path.as_ref()?))),
+            WaitState::Drained => Some(
+                "if command -v ss >/dev/null 2>&1; then ss -tn state all; \
+elif command -v netstat >/dev/null 2>&1; then netstat -tn; else exit 127; fi"
+                    .to_string(),
+            ),
+        }
+    }
+
+    /// Wait for the condition on a remote target.
+    ///
+    /// Every probe runs through the connection, so the answer describes the
+    /// managed host. Without this the module would poll the control node and
+    /// report its ports and files as the target's.
+    fn wait_for_condition_remote(
+        &self,
+        config: &WaitForConfig,
+        context: &ModuleContext,
+        connection: &Arc<dyn Connection + Send + Sync>,
+    ) -> ModuleResult<ModuleOutput> {
+        if context.check_mode {
+            let condition = self.describe_condition(config);
+            return Ok(ModuleOutput::ok(format!(
+                "Would wait for condition: {}",
+                condition
+            )));
+        }
+
+        let condition = self.describe_condition(config);
+        let probe = Self::remote_probe(config);
+        let config = config.clone();
+        let connection = connection.clone();
+        let options = {
+            let mut options = ExecuteOptions::new();
+            if context.r#become {
+                options = options.with_escalation(context.become_user.clone());
+                if let Some(ref method) = context.become_method {
+                    options.escalate_method = Some(method.clone());
+                }
+                if let Some(ref password) = context.become_password {
+                    options.escalate_password = Some(password.clone());
+                }
+            }
+            options
+        };
+
+        super::block_on_module_future(async move {
+            let start = Instant::now();
+            let timeout = Duration::from_secs(config.timeout);
+
+            if config.delay > 0 {
+                tokio::time::sleep(Duration::from_secs(config.delay)).await;
+            }
+
+            loop {
+                let elapsed = start.elapsed();
+                if elapsed >= timeout {
+                    let message = config.msg.clone().unwrap_or_else(|| {
+                        format!(
+                            "Timeout waiting for condition: {} (waited {} seconds)",
+                            condition,
+                            elapsed.as_secs()
+                        )
+                    });
+                    return Err(ModuleError::ExecutionFailed(message));
+                }
+
+                let met = match &probe {
+                    Some(command) => {
+                        let result = connection
+                            .execute(command, Some(options.clone()))
+                            .await
+                            .map_err(|error| {
+                                ModuleError::ExecutionFailed(format!(
+                                    "Connection error while checking {}: {}",
+                                    condition, error
+                                ))
+                            })?;
+                        if result.exit_code == 127 {
+                            return Err(ModuleError::ExecutionFailed(format!(
+                                "Cannot check {}: the target has neither of the tools this probe \
+needs. Install netcat or bash for port checks, or ss/netstat for drained checks.",
+                                condition
+                            )));
+                        }
+                        match config.state {
+                            WaitState::Started | WaitState::Present => result.success,
+                            WaitState::Stopped | WaitState::Absent => !result.success,
+                            WaitState::Drained => Self::parse_port_drained_output(
+                                &result.stdout,
+                                config.port.unwrap_or(0),
+                                &config.exclude_hosts,
+                                &config.active_connection_states,
+                            ),
+                        }
+                    }
+                    // A `search_regex` check reads the remote file and applies
+                    // the compiled pattern here, so remote and local agree.
+                    None => {
+                        let path = config.path.clone().unwrap_or_default();
+                        match connection.download_content(Path::new(&path)).await {
+                            Ok(bytes) => {
+                                let content = String::from_utf8_lossy(&bytes);
+                                config
+                                    .compiled_regex
+                                    .as_ref()
+                                    .map(|regex| regex.is_match(&content))
+                                    .unwrap_or(false)
+                            }
+                            // A missing file is simply "not yet".
+                            Err(_) => false,
+                        }
+                    }
+                };
+
+                if met {
+                    let elapsed_secs = start.elapsed().as_secs();
+                    return Ok(ModuleOutput::ok(format!(
+                        "Condition met: {} (waited {} seconds)",
+                        condition, elapsed_secs
+                    ))
+                    .with_data("elapsed", serde_json::json!(elapsed_secs))
+                    .with_data(
+                        "state",
+                        serde_json::json!(format!("{:?}", config.state).to_lowercase()),
+                    ));
+                }
+
+                tokio::time::sleep(Duration::from_secs(config.sleep)).await;
+            }
+        })?
+    }
 }
 
 impl Module for WaitForModule {
@@ -637,7 +800,12 @@ impl Module for WaitForModule {
         let config = WaitForConfig::from_params(params)?;
         config.validate()?;
 
-        self.wait_for_condition(&config, context.check_mode)
+        match &context.connection {
+            Some(connection) if !connection.is_local() => {
+                self.wait_for_condition_remote(&config, context, connection)
+            }
+            _ => self.wait_for_condition(&config, context.check_mode),
+        }
     }
 
     fn validate_params(&self, params: &ModuleParams) -> ModuleResult<()> {

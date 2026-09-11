@@ -12,6 +12,8 @@
 //! - `urldecode`: URL-decode a string
 //! - `quote`: Shell-quote a string
 //! - `unquote`: Remove shell quotes from a string
+//! - `vault`: Encrypt a string with a vault password
+//! - `unvault`: Decrypt a vault string with its password
 //!
 //! # Examples
 //!
@@ -34,6 +36,50 @@ pub fn register_filters(env: &mut Environment<'static>) {
     env.add_filter("urldecode", urldecode_filter);
     env.add_filter("quote", quote_filter);
     env.add_filter("unquote", unquote_filter);
+    env.add_filter("vault", vault_filter);
+    env.add_filter("unvault", unvault_filter);
+}
+
+/// Encrypt a string with a vault password.
+///
+/// The password is an ordinary template argument, so it is only as protected
+/// as the variable it comes from; feed it from a vaulted var or a lookup
+/// rather than writing it into the playbook.
+///
+/// # Ansible Compatibility
+///
+/// Matches Ansible's `vault` filter in shape. The ciphertext uses Rustible's
+/// own vault format, so it is readable by `unvault` and `rustible vault`, not
+/// by `ansible-vault`.
+fn vault_filter(input: String, password: String) -> Result<String, minijinja::Error> {
+    crate::vault::Vault::new(password)
+        .encrypt(&input)
+        .map_err(|error| {
+            minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("vault: {}", error),
+            )
+        })
+}
+
+/// Decrypt a vault string with its password.
+///
+/// A wrong password or a corrupted payload is an error rather than an empty
+/// string, so a template never quietly renders a blank where a secret belongs.
+///
+/// # Ansible Compatibility
+///
+/// Matches Ansible's `unvault` filter in shape; it reads Rustible's vault
+/// format.
+fn unvault_filter(input: String, password: String) -> Result<String, minijinja::Error> {
+    crate::vault::Vault::new(password)
+        .decrypt(&input)
+        .map_err(|error| {
+            minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("unvault: {}", error),
+            )
+        })
 }
 
 /// Encode a string to Base64.
@@ -321,6 +367,51 @@ mod form_urlencoded {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn test_vault_round_trips_through_the_filters() {
+        let mut env = Environment::new();
+        register_filters(&mut env);
+        let rendered = env
+            .render_str(
+                "{{ 'hunter2' | vault('pw') | unvault('pw') }}",
+                minijinja::context! {},
+            )
+            .unwrap();
+        assert_eq!(rendered, "hunter2");
+    }
+
+    #[test]
+    fn test_vault_output_is_not_the_plaintext() {
+        let mut env = Environment::new();
+        register_filters(&mut env);
+        let rendered = env
+            .render_str("{{ 'hunter2' | vault('pw') }}", minijinja::context! {})
+            .unwrap();
+        assert!(
+            !rendered.contains("hunter2"),
+            "the ciphertext must not carry the secret: {}",
+            rendered
+        );
+        assert!(rendered.starts_with("$RUSTIBLE_VAULT"));
+    }
+
+    #[test]
+    fn test_unvault_reports_a_wrong_password() {
+        let mut env = Environment::new();
+        register_filters(&mut env);
+        let error = env
+            .render_str(
+                "{{ 'hunter2' | vault('right') | unvault('wrong') }}",
+                minijinja::context! {},
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("unvault"),
+            "a wrong password must fail loudly, not render an empty secret: {}",
+            error
+        );
+    }
     use super::*;
 
     #[test]

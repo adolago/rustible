@@ -1086,6 +1086,7 @@ mod tests {
             msg: Some("Package installed".to_string()),
             result: None,
             diff: None,
+            before_state: None,
         };
 
         let result_info = ResultInfo::from_task_result(&task_result, Duration::from_millis(1500));

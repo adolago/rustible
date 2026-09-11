@@ -60,6 +60,12 @@ The `run` command executes an Ansible-compatible playbook against the specified 
 | `--user <USER>` | `-u` | Remote SSH user | current user |
 | `--private-key <PATH>` | - | Path to SSH private key | - |
 | `--ssh-common-args <ARGS>` | - | Additional SSH arguments | - |
+| `--cache-state` | - | Skip tasks whose inputs are unchanged since the last run | false |
+| `--cache-state-ttl <SECONDS>` | - | How long a cached task result stays valid | 3600 |
+| `--checkpoint [NAME]` | - | Checkpoint before the run and record what tasks change | - |
+| `--agent-mode` | - | Run commands through the agent binary on each target | false |
+| `--agent-path <PATH>` | - | Path of the agent binary on the target | `/usr/local/bin/rustible-agent` |
+| `--manifest [DIR]` | - | Record a per-host manifest of the resources this run applied | `.rustible/manifests` |
 
 ### Examples
 
@@ -92,6 +98,67 @@ rustible run playbook.yml --step --start-at-task "Install packages"
 ```bash
 rustible run playbook.yml --vault-password-file ~/.vault_pass
 ```
+
+**Take a checkpoint so the run can be undone:**
+```bash
+rustible run -i inventory.yml site.yml --checkpoint before-deploy
+rustible lock site.yml rollback before-deploy --dry-run
+rustible lock site.yml rollback before-deploy
+```
+
+`--checkpoint` records the state of each managed resource before a task
+changes it, which is what a rollback needs to tell a created resource from an
+edited one. Without it a rollback finds nothing to undo. Rollback covers the
+modules whose reversal is well defined — files and directories, packages,
+services, users and groups — and reports the plan first with `--dry-run`.
+
+**Skip work that is already done:**
+```bash
+rustible run site.yml --cache-state
+```
+
+With `--cache-state`, Rustible hashes each task's module, arguments, target
+host and any local source file, and records the hash when the task reports no
+change. A later run with the same hash skips the task without contacting the
+target, which makes a repeat run of an unchanged playbook close to instant.
+
+The cache lives in `.rustible/state/task-cache.json` next to the playbook, and
+entries expire after `--cache-state-ttl` seconds (one hour by default).
+
+Because a skipped task never inspects the target, drift introduced outside
+Rustible is invisible while the entry is valid. Guard rails:
+
+- Only tasks that reported **no change** are cached; a task that changed
+  something runs again next time.
+- Only idempotent modules are eligible (`file`, `copy`, `template`,
+  `lineinfile`, package, service, user and similar). Command-like modules,
+  fact-producing modules and `state: latest` package tasks always run.
+- Check mode never reads or writes the cache.
+- Delete `.rustible/state/task-cache.json`, or run without `--cache-state`, to
+  force a full run.
+
+**Record what the run applied, and check it later:**
+```bash
+rustible run -i inventory.yml site.yml --manifest
+rustible drift manifest list
+rustible drift manifest check -i inventory.yml
+```
+
+`--manifest` writes one JSON manifest per host under `.rustible/manifests`
+(pass a directory to put them elsewhere). It records every resource the run
+applied, including tasks that found nothing to change, so the manifest
+describes the whole managed surface rather than the last diff.
+
+`rustible drift manifest check` replays each recorded resource in check mode
+through a connection to its host: a module that would change something is
+drift, one that reports no change is in sync, and a host that cannot be
+reached leaves its resources unknown rather than counting as clean. It exits
+`0` when everything is in sync, `2` when something drifted, and `1` when a
+resource could not be checked.
+
+Modules that manage nothing durable (`command`, `shell`, `debug`, `assert`,
+`set_fact`, and similar) are not recorded: there would be nothing to compare
+against on the next check.
 
 ### Exit Codes
 
@@ -602,6 +669,75 @@ privilege_escalation:
   become_method: sudo
   become_user: root
 ```
+
+---
+
+## rustible agent
+
+Build, deploy and inspect the agent binary that can run tasks on a target.
+
+### Synopsis
+
+```bash
+rustible agent build [--target <TRIPLE>] [--debug] [-o <DIR>]
+rustible agent deploy -i <INVENTORY> (--binary <PATH> | --build) [--remote-path <PATH>]
+rustible agent status -i <INVENTORY> [--detailed]
+rustible agent stop -i <INVENTORY> [--force]
+```
+
+### Description
+
+`rustible run --agent-mode` sends each command to the agent on the target
+instead of running it directly over the transport. File transfers keep using
+the transport itself.
+
+### Examples
+
+**Build for the host and deploy to an inventory:**
+```bash
+rustible agent build --debug -o /tmp/agent
+rustible agent deploy -i inventory.yml --binary /tmp/agent/rustible-agent-x86_64-unknown-linux-gnu
+```
+
+**Check which hosts have an agent:**
+```bash
+rustible agent status -i inventory.yml --detailed
+```
+
+**Run a playbook through the deployed agents:**
+```bash
+rustible run -i inventory.yml site.yml --agent-mode
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | A host could not be reached, or has no agent |
+
+---
+
+## rustible explain
+
+Explain a Rustible error code.
+
+### Synopsis
+
+```bash
+rustible explain <CODE>
+rustible explain --list
+```
+
+### Examples
+
+```bash
+rustible explain E0003
+rustible explain --list
+```
+
+Each entry gives the meaning of the code, its common causes and suggested
+fixes.
 
 ---
 

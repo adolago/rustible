@@ -1137,7 +1137,7 @@ impl Parser {
 
     /// Parse a playbook from a string
     pub fn parse_playbook_str(&self, content: &str) -> ParseResult<Playbook> {
-        let docs: Vec<serde_yaml::Value> = serde_yaml::from_str(content)?;
+        let docs: Vec<serde_yaml::Value> = crate::utils::yaml::from_str(content)?;
 
         let mut playbook = Playbook::new();
 
@@ -1171,7 +1171,7 @@ impl Parser {
 
     /// Parse tasks from a string
     pub fn parse_tasks_str(&self, content: &str) -> ParseResult<Vec<Task>> {
-        let tasks: Vec<Task> = serde_yaml::from_str(content)?;
+        let tasks: Vec<Task> = crate::utils::yaml::from_str(content)?;
         Ok(tasks)
     }
 
@@ -1183,7 +1183,7 @@ impl Parser {
 
     /// Parse handlers from a string
     pub fn parse_handlers_str(&self, content: &str) -> ParseResult<Vec<Handler>> {
-        let handlers: Vec<Handler> = serde_yaml::from_str(content)?;
+        let handlers: Vec<Handler> = crate::utils::yaml::from_str(content)?;
         Ok(handlers)
     }
 
@@ -1201,7 +1201,7 @@ impl Parser {
         &self,
         content: &str,
     ) -> ParseResult<IndexMap<String, serde_yaml::Value>> {
-        let vars: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(content)?;
+        let vars: IndexMap<String, serde_yaml::Value> = crate::utils::yaml::from_str(content)?;
         Ok(vars)
     }
 

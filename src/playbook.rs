@@ -150,7 +150,7 @@ impl Playbook {
             )
         })?;
 
-        let value = resolve_merge_keys(value);
+        let value = crate::utils::yaml::resolve_merge_keys(value);
 
         // Playbooks are a list of plays at the top level.
         let plays: Vec<Play> = serde_yaml::from_value(value).map_err(|e| {
@@ -394,57 +394,6 @@ where
     deserializer.deserialize_option(OptionBoolVisitor)
 }
 
-fn resolve_merge_keys(value: serde_yaml::Value) -> serde_yaml::Value {
-    match value {
-        serde_yaml::Value::Mapping(mapping) => {
-            let mut merged = serde_yaml::Mapping::new();
-            let mut explicit = Vec::new();
-
-            for (key, value) in mapping {
-                if matches!(&key, serde_yaml::Value::String(s) if s == "<<") {
-                    match value {
-                        serde_yaml::Value::Mapping(_) => {
-                            if let serde_yaml::Value::Mapping(source) = resolve_merge_keys(value) {
-                                for (k, v) in source {
-                                    merged.insert(k, v);
-                                }
-                            }
-                        }
-                        serde_yaml::Value::Sequence(seq) => {
-                            for item in seq {
-                                if let serde_yaml::Value::Mapping(source) = resolve_merge_keys(item)
-                                {
-                                    for (k, v) in source {
-                                        merged.insert(k, v);
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                } else {
-                    explicit.push((key, value));
-                }
-            }
-
-            for (key, value) in explicit {
-                merged.insert(key, resolve_merge_keys(value));
-            }
-
-            serde_yaml::Value::Mapping(merged)
-        }
-        serde_yaml::Value::Sequence(seq) => {
-            serde_yaml::Value::Sequence(seq.into_iter().map(resolve_merge_keys).collect())
-        }
-        serde_yaml::Value::Tagged(tagged) => {
-            let mut tagged = *tagged;
-            tagged.value = resolve_merge_keys(tagged.value);
-            serde_yaml::Value::Tagged(Box::new(tagged))
-        }
-        other => other,
-    }
-}
-
 impl Play {
     /// Creates a new play with the given name and host pattern.
     pub fn new(name: impl Into<String>, hosts: impl Into<String>) -> Self {
@@ -660,6 +609,14 @@ pub struct Task {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
 
+    /// Resources this task produces, for dependency-ordered execution
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub provides: Vec<String>,
+
+    /// Resources this task needs before it can run
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+
     /// Block of tasks (for block/rescue/always error handling)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block: Option<Vec<Task>>,
@@ -718,6 +675,8 @@ impl<'de> Deserialize<'de> for Task {
             "retries",
             "delay",
             "until",
+            "provides",
+            "requires",
             "block",
             "rescue",
             "always",
@@ -770,6 +729,20 @@ impl<'de> Deserialize<'de> for Task {
                 .collect(),
             _ => Vec::new(),
         };
+
+        // Parse provides/requires as a single string or a list
+        let string_list = |value: Option<&serde_json::Value>| -> Vec<String> {
+            match value {
+                Some(serde_json::Value::String(s)) => vec![s.clone()],
+                Some(serde_json::Value::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        let provides = string_list(obj.get("provides"));
+        let requires = string_list(obj.get("requires"));
 
         // Parse tags
         let tags = match obj.get("tags") {
@@ -887,6 +860,8 @@ impl<'de> Deserialize<'de> for Task {
                 .map(|v| v as u32),
             delay: obj.get("delay").and_then(|v| v.as_u64()),
             until: obj.get("until").and_then(|v| v.as_str()).map(String::from),
+            provides,
+            requires,
             block: obj
                 .get("block")
                 .and_then(|v| serde_json::from_value::<Vec<Task>>(v.clone()).ok()),
@@ -938,6 +913,8 @@ impl Task {
             retries: None,
             delay: None,
             until: None,
+            provides: Vec::new(),
+            requires: Vec::new(),
             block: None,
             rescue: None,
             always: None,

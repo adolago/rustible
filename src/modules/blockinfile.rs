@@ -7,9 +7,11 @@ use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
+use crate::connection::{Connection, TransferOptions};
 use crate::utils::secure_write_file;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Desired state for a block
 #[derive(Debug, Clone, PartialEq)]
@@ -228,6 +230,145 @@ impl BlockinfileModule {
     }
 }
 
+impl BlockinfileModule {
+    /// Manage a block in a file on a remote target.
+    ///
+    /// The file is downloaded, edited with the same helpers the local path
+    /// uses, and uploaded again, so both paths agree on marker handling and
+    /// insertion order.
+    #[allow(clippy::too_many_arguments)]
+    fn execute_remote(
+        context: &ModuleContext,
+        connection: &Arc<dyn Connection + Send + Sync>,
+        path: &str,
+        state: BlockState,
+        block: Option<String>,
+        begin_marker: String,
+        end_marker: String,
+        insertafter: Option<String>,
+        insertbefore: Option<String>,
+        create: bool,
+        backup: bool,
+        backup_suffix: String,
+        mode: Option<u32>,
+    ) -> ModuleResult<ModuleOutput> {
+        let connection = connection.clone();
+        let path = path.to_string();
+        let check_mode = context.check_mode;
+        let diff_mode = context.diff_mode;
+
+        crate::modules::block_on_module_future(async move {
+            let remote_path = Path::new(&path);
+            let file_exists = connection.path_exists(remote_path).await.unwrap_or(false);
+
+            if !file_exists && !create {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "File '{}' does not exist",
+                    path
+                )));
+            }
+
+            let file_bytes = if file_exists {
+                connection
+                    .download_content(remote_path)
+                    .await
+                    .map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to download file: {}", e))
+                    })?
+            } else {
+                Vec::new()
+            };
+
+            let content = String::from_utf8_lossy(&file_bytes);
+            let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+            let original_lines = diff_mode.then(|| lines.clone());
+
+            let changed = match state {
+                BlockState::Present => {
+                    let block = block.ok_or_else(|| {
+                        ModuleError::MissingParameter(
+                            "block is required for state=present".to_string(),
+                        )
+                    })?;
+                    Self::ensure_block_present(
+                        &mut lines,
+                        &block,
+                        &begin_marker,
+                        &end_marker,
+                        insertafter.as_deref(),
+                        insertbefore.as_deref(),
+                    )?
+                }
+                BlockState::Absent => {
+                    Self::ensure_block_absent(&mut lines, &begin_marker, &end_marker)?
+                }
+            };
+
+            if !changed {
+                if mode.is_some() {
+                    // Uploading unchanged content to apply a mode would rewrite
+                    // the file and move its mtime.
+                    return Err(ModuleError::Unsupported(
+                        "Remote mode-only updates are unsupported by blockinfile; no file was uploaded"
+                            .to_string(),
+                    ));
+                }
+                return Ok(ModuleOutput::ok(format!(
+                    "File '{}' already has desired block state",
+                    path
+                )));
+            }
+
+            if check_mode {
+                let mut output = ModuleOutput::changed(format!("Would modify '{}'", path));
+                if let Some(original) = &original_lines {
+                    output = output.with_diff(Diff::new(original.join("\n"), lines.join("\n")));
+                }
+                return Ok(output);
+            }
+
+            if backup && file_exists {
+                let backup_path = format!("{}{}", path, backup_suffix);
+                connection
+                    .upload_content(&file_bytes, Path::new(&backup_path), None)
+                    .await
+                    .map_err(|e| {
+                        ModuleError::ExecutionFailed(format!("Failed to create backup: {}", e))
+                    })?;
+            }
+
+            let new_content = if lines.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", lines.join("\n"))
+            };
+
+            let mut transfer = TransferOptions::new().with_create_dirs();
+            if let Some(mode) = mode {
+                transfer = transfer.with_mode(mode);
+            }
+            connection
+                .upload_content(new_content.as_bytes(), remote_path, Some(transfer))
+                .await
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Failed to upload file: {}", e))
+                })?;
+
+            let mut output = ModuleOutput::changed(format!("Modified '{}'", path));
+            if let Some(original) = &original_lines {
+                output = output.with_diff(Diff::new(original.join("\n"), lines.join("\n")));
+            }
+            if backup && file_exists {
+                output = output.with_data(
+                    "backup_file",
+                    serde_json::json!(format!("{}{}", path, backup_suffix)),
+                );
+            }
+            Ok(output)
+        })?
+    }
+}
+
 impl Module for BlockinfileModule {
     fn name(&self) -> &'static str {
         "blockinfile"
@@ -284,6 +425,28 @@ impl Module for BlockinfileModule {
         let mode = params.get_u32("mode")?;
 
         let (begin_marker, end_marker) = Self::create_markers(&marker);
+
+        // A remote target is edited through the connection; the local path
+        // below uses std::fs and would otherwise edit the control node.
+        if let Some(connection) = &context.connection {
+            if !connection.is_local() {
+                return Self::execute_remote(
+                    context,
+                    connection,
+                    &path_str,
+                    state,
+                    block,
+                    begin_marker,
+                    end_marker,
+                    insertafter,
+                    insertbefore,
+                    create,
+                    backup,
+                    backup_suffix,
+                    mode,
+                );
+            }
+        }
 
         // Check if file exists
         if !path.exists() && !create {

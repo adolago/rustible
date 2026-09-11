@@ -41,6 +41,7 @@ use crate::executor::parallelization::ParallelizationManager;
 use crate::executor::runtime::{ExecutionContext, RegisteredResult, RuntimeContext};
 use crate::executor::{ExecutorError, ExecutorResult};
 use crate::modules::ModuleRegistry;
+use crate::state::{StateHashCache, TaskHashBuilder, TaskStateHash};
 use crate::template::get_engine;
 
 /// Status of a task execution
@@ -74,6 +75,12 @@ pub struct TaskResult {
     pub result: Option<JsonValue>,
     /// Diff showing what changed (if diff_mode enabled)
     pub diff: Option<TaskDiff>,
+    /// State of the managed resource before the task ran.
+    ///
+    /// Only captured when rollback tracking is on; it is what lets a rollback
+    /// tell "this file was created" from "this file was edited".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_state: Option<JsonValue>,
 }
 
 impl TaskResult {
@@ -324,6 +331,26 @@ pub struct Task {
     /// Task-level variables
     #[serde(default)]
     pub vars: IndexMap<String, JsonValue>,
+    /// Resources this task produces, for dependency-ordered execution
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provides: Vec<String>,
+    /// Resources this task needs before it can run
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+}
+
+/// How a module behaves when a task addresses a remote host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteTransport {
+    /// Routes all of its work through the connection, and has been exercised
+    /// against a live remote target.
+    Verified,
+    /// Routes all of its work through the connection, but no environment here
+    /// can exercise it end to end.
+    ConnectionOnly,
+    /// Does its work on the control node by design, so a remote task is
+    /// refused rather than run against the wrong machine.
+    ControlNodeOnly,
 }
 
 /// Role of a task within a block structure
@@ -379,6 +406,8 @@ impl Default for Task {
             delay: None,
             until: None,
             vars: IndexMap::new(),
+            provides: Vec::new(),
+            requires: Vec::new(),
         }
     }
 }
@@ -450,6 +479,8 @@ impl From<crate::playbook::Task> for Task {
         });
 
         Self {
+            provides: pt.provides,
+            requires: pt.requires,
             name: pt.name,
             module: pt.module.name,
             args,
@@ -475,6 +506,133 @@ impl From<crate::playbook::Task> for Task {
             until: pt.until,
             vars: pt.vars.as_map().clone(),
         }
+    }
+}
+
+/// Largest file whose content is kept for a content rollback (64 KiB).
+const MAX_CAPTURED_CONTENT: u64 = 64 * 1024;
+
+/// A pending lookup in the cross-run task state cache.
+///
+/// Holds everything needed to answer "did this exact task, with these exact
+/// inputs, already leave this host in the desired state?" and to record the
+/// answer after execution.
+struct StateCacheProbe {
+    cache: Arc<StateHashCache>,
+    host: String,
+    task_id: String,
+    hash: TaskStateHash,
+}
+
+impl StateCacheProbe {
+    /// Modules whose result depends only on their arguments and the target's
+    /// state, so an unchanged run can stand in for a repeat run.
+    ///
+    /// Deliberately an allowlist: command-like, fact-producing and
+    /// flow-control modules must always run, and a module missing from this
+    /// list simply executes as usual.
+    const CACHEABLE_MODULES: &'static [&'static str] = &[
+        "apt",
+        "archive",
+        "authorized_key",
+        "blockinfile",
+        "copy",
+        "cron",
+        "dnf",
+        "file",
+        "firewalld",
+        "group",
+        "hostname",
+        "known_hosts",
+        "lineinfile",
+        "mount",
+        "package",
+        "pip",
+        "selinux",
+        "service",
+        "sysctl",
+        "systemd",
+        "systemd_unit",
+        "template",
+        "timezone",
+        "ufw",
+        "unarchive",
+        "user",
+        "yum",
+    ];
+
+    /// Argument keys that name a file on the controller whose content is part
+    /// of the task's identity.
+    const LOCAL_SOURCE_KEYS: &'static [&'static str] = &["src"];
+
+    /// Build a probe, or `None` when this task must not be cached.
+    fn build(
+        cache: Arc<StateHashCache>,
+        module: &str,
+        task_name: &str,
+        args: &IndexMap<String, JsonValue>,
+        host: &str,
+    ) -> Option<Self> {
+        if !Self::CACHEABLE_MODULES.contains(&module) {
+            return None;
+        }
+
+        // `state: latest` asks about the world, not just this host, so a
+        // previous no-op says nothing about the next run.
+        if let Some(state) = args.get("state").and_then(|value| value.as_str()) {
+            if state == "latest" {
+                return None;
+            }
+        }
+
+        let args_value = serde_json::to_value(args).ok()?;
+        let mut builder = TaskHashBuilder::new()
+            .module(module)
+            .host(host)
+            .arguments(&args_value);
+
+        for key in Self::LOCAL_SOURCE_KEYS {
+            let Some(source) = args.get(*key).and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let path = std::path::PathBuf::from(source);
+            // A remote-only or unreadable source cannot be pinned to a hash,
+            // so the task stays uncached rather than being skipped blindly.
+            if !path.is_file() {
+                return None;
+            }
+            builder = builder.file_content(&path).ok()?;
+        }
+
+        Some(Self {
+            cache,
+            host: host.to_string(),
+            task_id: format!("{}:{}", task_name, module),
+            hash: builder.build(),
+        })
+    }
+
+    /// A previous no-op result for these inputs, if one is still valid.
+    fn lookup(&self) -> Option<crate::state::CachedTaskResult> {
+        self.cache.check_skip(&self.host, &self.task_id, &self.hash)
+    }
+
+    /// Record this run's outcome so a later identical run can skip the task.
+    fn record(&self, result: &TaskResult) {
+        // Only a successful run says anything about the target's state, and
+        // only an unchanged one proves the task is now a no-op.
+        if !matches!(result.status, TaskStatus::Ok) || result.changed {
+            return;
+        }
+        self.cache.store(
+            &self.host,
+            &self.task_id,
+            self.hash.clone(),
+            crate::state::TaskStatus::Ok,
+            false,
+            result.msg.clone(),
+            result.result.clone(),
+        );
     }
 }
 
@@ -736,6 +894,7 @@ impl Task {
                 msg: Some(format!("Ignored error: {}", result.msg.unwrap_or_default())),
                 result: result.result,
                 diff: result.diff,
+                before_state: None,
             });
         }
 
@@ -909,6 +1068,7 @@ impl Task {
             msg: Some(format!("Completed {} loop iterations", loop_results.len())),
             result: Some(serde_json::to_value(&loop_results).unwrap_or(JsonValue::Null)),
             diff: None,
+            before_state: None,
         };
 
         // Register combined result if needed
@@ -1038,6 +1198,7 @@ impl Task {
             )),
             result: last_result.as_ref().and_then(|r| r.result.clone()),
             diff: None,
+            before_state: None,
         })
     }
 
@@ -1098,7 +1259,45 @@ impl Task {
             .acquire(hint, lock_host, &self.module)
             .await;
 
-        match module_name {
+        // Cross-run state cache: a task whose inputs are unchanged since a
+        // previous no-op run on this host does not need to run again. Tasks
+        // with `until` retries are excluded because their outcome depends on
+        // the world, not only on their arguments.
+        let cache_probe = match (&ctx.state_cache, self.until.is_some()) {
+            (Some(cache), false) => {
+                StateCacheProbe::build(cache.clone(), module_name, &self.name, &args, &ctx.host)
+            }
+            _ => None,
+        };
+
+        if let Some(probe) = &cache_probe {
+            if let Some(cached) = probe.lookup() {
+                debug!(
+                    "Task '{}' skipped: state cache hit for host {}",
+                    self.name, ctx.host
+                );
+                let mut result = TaskResult::ok().with_msg(
+                    cached
+                        .message
+                        .unwrap_or_else(|| "Unchanged since the last run".to_string()),
+                );
+                result.result = Some(serde_json::json!({
+                    "cached": true,
+                    "state_hash": probe.hash.hash,
+                }));
+                return Ok(result);
+            }
+        }
+
+        // Capture what the task is about to change, so a later rollback knows
+        // whether the resource existed before.
+        let before_state = if ctx.capture_rollback_state {
+            Self::capture_before_state(module_name, &args, ctx).await
+        } else {
+            None
+        };
+
+        let result = match module_name {
             "debug" => self.execute_debug(&args, ctx).await,
             "set_fact" => self.execute_set_fact(&args, ctx, runtime).await,
             "fail" => self.execute_fail(&args).await,
@@ -1122,7 +1321,105 @@ impl Task {
                 self.execute_native(module_name, &args, ctx, runtime, module_registry)
                     .await
             }
+        };
+
+        if let (Some(probe), Ok(task_result)) = (&cache_probe, &result) {
+            probe.record(task_result);
         }
+
+        let mut result = result;
+        if let (Some(before_state), Ok(task_result)) = (before_state, &mut result) {
+            task_result.before_state = Some(before_state);
+        }
+
+        result
+    }
+
+    /// Read the current state of the resource a task manages.
+    ///
+    /// Returns `None` for modules whose rollback needs no prior state (a
+    /// package that was installed is simply removed) and when the state cannot
+    /// be read.
+    async fn capture_before_state(
+        module_name: &str,
+        args: &IndexMap<String, JsonValue>,
+        ctx: &ExecutionContext,
+    ) -> Option<JsonValue> {
+        // Only the file-writing modules need it; the others reverse from their
+        // own arguments.
+        let path = match module_name {
+            "file" => args.get("path").or_else(|| args.get("dest")),
+            "copy" | "template" | "lineinfile" | "blockinfile" => args.get("dest"),
+            _ => return None,
+        }?
+        .as_str()?
+        .to_string();
+
+        match &ctx.connection {
+            Some(connection) => Self::remote_path_state(connection.as_ref(), &path).await,
+            None => Some(Self::local_path_state(&path)),
+        }
+    }
+
+    /// State of a path on the control node.
+    fn local_path_state(path: &str) -> JsonValue {
+        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::PermissionsExt;
+
+        let Ok(metadata) = std::fs::symlink_metadata(path) else {
+            return serde_json::json!({ "exists": false });
+        };
+
+        let mut state = serde_json::json!({
+            "exists": true,
+            "mode": format!("{:04o}", metadata.permissions().mode() & 0o7777),
+            "uid": metadata.uid(),
+            "gid": metadata.gid(),
+            "is_dir": metadata.is_dir(),
+        });
+
+        // A small regular file's content makes a content rollback possible.
+        // Only world-readable files qualify: recording the contents of
+        // /etc/shadow or a private key in a state snapshot would hand it to
+        // anyone who can read the state directory.
+        let world_readable = metadata.permissions().mode() & 0o004 != 0;
+        if metadata.is_file() && world_readable && metadata.len() <= MAX_CAPTURED_CONTENT {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                state["content"] = JsonValue::String(content);
+            }
+        }
+        state
+    }
+
+    /// State of a path on a remote target.
+    async fn remote_path_state(
+        connection: &(dyn crate::connection::Connection + Send + Sync),
+        path: &str,
+    ) -> Option<JsonValue> {
+        let quoted = crate::utils::shell_escape(path);
+        let command = format!(
+            "if [ -e {p} ] || [ -L {p} ]; then stat -c '%a %u %g %F' {p}; else echo missing; fi",
+            p = quoted
+        );
+        let result = connection.execute(&command, None).await.ok()?;
+        let output = result.stdout.trim();
+        if !result.success || output.is_empty() || output == "missing" {
+            return Some(serde_json::json!({ "exists": false }));
+        }
+
+        let fields: Vec<&str> = output.split_whitespace().collect();
+        let mut state = serde_json::json!({ "exists": true });
+        if let Some(mode) = fields.first() {
+            state["mode"] = JsonValue::String(format!("{:0>4}", mode));
+        }
+        if let Some(uid) = fields.get(1).and_then(|value| value.parse::<u32>().ok()) {
+            state["uid"] = serde_json::json!(uid);
+        }
+        if let Some(gid) = fields.get(2).and_then(|value| value.parse::<u32>().ok()) {
+            state["gid"] = serde_json::json!(gid);
+        }
+        state["is_dir"] = serde_json::json!(fields.get(3) == Some(&"directory"));
+        Some(state)
     }
 
     /// The transport configured for this task's host: a task-level
@@ -1152,6 +1449,264 @@ impl Task {
                 && matches!(ctx.host.as_str(), "localhost" | "127.0.0.1" | "::1"))
     }
 
+    /// Modules exercised against a live remote target.
+    ///
+    /// `tests/remote_modules_ssh_tests.rs` applies these through a real SSH
+    /// connection and checks the effect on the target.
+    const REMOTE_VERIFIED_MODULES: &'static [&'static str] = &[
+        "apt",
+        "archive",
+        "authorized_key",
+        "blockinfile",
+        "command",
+        "copy",
+        "cron",
+        "fetch",
+        "file",
+        "gather_facts",
+        "git",
+        "group",
+        "lineinfile",
+        "package",
+        "ping",
+        "raw",
+        "replace",
+        "script",
+        "setup",
+        "shell",
+        "slurp",
+        "stat",
+        "template",
+        "timezone",
+        "unarchive",
+        "user",
+        "wait_for",
+    ];
+
+    /// Modules whose implementation is connection-only but which no test
+    /// environment here can exercise end to end (they need systemd, a
+    /// firewall, an RPM distribution, mount privileges, a switch, a database
+    /// server, and so on).
+    ///
+    /// Each one fails without a connection and performs every operation
+    /// through it, so it cannot fall back to the control node; what is missing
+    /// is live confirmation of the behavior, not the transport.
+    const REMOTE_CONNECTION_ONLY_MODULES: &'static [&'static str] = &[
+        "dnf",
+        "eos_config",
+        "firewalld",
+        "get_url",
+        "hostname",
+        "ios_config",
+        "junos_config",
+        "locale",
+        "mount",
+        "nxos_config",
+        "pip",
+        "postgresql_db",
+        "postgresql_query",
+        "postgresql_user",
+        "selinux",
+        "service",
+        "sysctl",
+        "systemd_unit",
+        "ufw",
+        "yum",
+    ];
+
+    /// Modules that pass privilege escalation through to the target.
+    ///
+    /// Each one builds its remote commands with the context's become user and
+    /// method. Transfer-based modules (`copy`, `template`, `lineinfile`) are
+    /// absent on purpose: they write over SFTP, which cannot escalate, so a
+    /// `become` request there would silently write as the login user.
+    const BECOME_CAPABLE_MODULES: &'static [&'static str] = &[
+        "apt",
+        "archive",
+        "authorized_key",
+        "blockinfile",
+        "command",
+        "cron",
+        "dnf",
+        "file",
+        "firewalld",
+        "git",
+        "group",
+        "hostname",
+        "locale",
+        "mount",
+        "package",
+        "pip",
+        "raw",
+        "script",
+        "selinux",
+        "service",
+        "shell",
+        "stat",
+        "sysctl",
+        "systemd_unit",
+        "timezone",
+        "ufw",
+        "unarchive",
+        "user",
+        "wait_for",
+        "yum",
+    ];
+
+    /// Modules that do their work on the control node by design, so a task
+    /// addressed to a remote host is refused rather than run here.
+    ///
+    /// Two kinds sit here. Some read and write the control node's filesystem
+    /// with `std::fs` and have no connection path at all (`known_hosts`,
+    /// `synchronize`, the HPC toolchain helpers). Others reach their subject
+    /// over their own protocol — a BMC, a Proxmox API, an HTTP endpoint — and
+    /// would behave identically from any machine; running them against the
+    /// inventory host would still not be running them *on* it, so the honest
+    /// answer is to refuse and let the playbook delegate explicitly.
+    const CONTROL_NODE_ONLY_MODULES: &'static [&'static str] = &[
+        "hpc_baseline",
+        "hpc_facts",
+        "hpc_healthcheck",
+        "hpc_job",
+        "hpc_queue",
+        "hpc_server",
+        "hpc_toolchain",
+        "ipmi_boot",
+        "ipmi_power",
+        "known_hosts",
+        "lmod",
+        "mpi_config",
+        "munge",
+        "nfs_client",
+        "nfs_server",
+        "proxmox_lxc",
+        "proxmox_vm",
+        "synchronize",
+        "uri",
+    ];
+
+    /// Feature-gated modules that also run on the control node by design.
+    ///
+    /// These register only under a Cargo feature (`hpc`, `aws`, `database`,
+    /// ...), so a default build never sees them; they are listed separately so
+    /// the stale-entry test can hold the always-registered lists to a stricter
+    /// rule. Like `CONTROL_NODE_ONLY_MODULES`, every one of them drives its
+    /// subject over its own protocol — a scheduler, a BMC, a cloud API, a
+    /// database socket — or shells out locally, and none takes a connection.
+    const FEATURE_GATED_CONTROL_NODE_MODULES: &'static [&'static str] = &[
+        "aws_ebs_volume",
+        "aws_ec2_instance",
+        "aws_ec2_security_group",
+        "aws_ec2_vpc",
+        "aws_iam_policy",
+        "aws_iam_role",
+        "aws_s3",
+        "aws_security_group_rule",
+        "azure_network_interface",
+        "azure_resource_group",
+        "azure_vm",
+        "beegfs_client",
+        "beegfs_target",
+        "cuda_toolkit",
+        "dcgm",
+        "fabric_manager",
+        "gcp_compute_firewall",
+        "gcp_compute_instance",
+        "gcp_compute_network",
+        "gcp_service_account",
+        "gdrcopy",
+        "ib_diagnostics",
+        "ib_partition",
+        "ib_validate",
+        "ipoib",
+        "kerberos_client",
+        "lsf_host",
+        "lsf_policy",
+        "lsf_queue",
+        "lustre_client",
+        "lustre_mount",
+        "lustre_ost",
+        "mig_config",
+        "mysql_db",
+        "mysql_query",
+        "mysql_user",
+        "nccl",
+        "nvidia_container_toolkit",
+        "nvidia_driver",
+        "nvidia_gpu",
+        "nvidia_peermem",
+        "opensm_config",
+        "pbs_job",
+        "pbs_queue",
+        "pbs_server",
+        "pxe_host",
+        "pxe_profile",
+        "rdma_stack",
+        "redfish_info",
+        "redfish_power",
+        "slurm_account",
+        "slurm_config",
+        "slurm_info",
+        "slurm_job",
+        "slurm_node",
+        "slurm_ops",
+        "slurm_partition",
+        "slurm_qos",
+        "slurmrestd",
+        "sssd_config",
+        "sssd_domain",
+        "warewulf_image",
+        "warewulf_node",
+    ];
+
+    /// Whether a module can run under privilege escalation.
+    fn supports_become(module_name: &str) -> bool {
+        Self::BECOME_CAPABLE_MODULES.contains(&module_name)
+    }
+
+    /// Whether a module may run against a remote target.
+    fn has_remote_transport(module_name: &str) -> bool {
+        Self::REMOTE_VERIFIED_MODULES.contains(&module_name)
+            || Self::REMOTE_CONNECTION_ONLY_MODULES.contains(&module_name)
+    }
+
+    /// Every module name that carries a classification.
+    ///
+    /// Used to catch a stale entry: a name on one of the lists that no module
+    /// registers grants remote execution to nothing and hides a rename.
+    pub fn classified_modules() -> impl Iterator<Item = &'static str> {
+        Self::REMOTE_VERIFIED_MODULES
+            .iter()
+            .chain(Self::REMOTE_CONNECTION_ONLY_MODULES.iter())
+            .chain(Self::CONTROL_NODE_ONLY_MODULES.iter())
+            .copied()
+    }
+
+    /// Classified names that register only under a Cargo feature.
+    pub fn feature_gated_modules() -> impl Iterator<Item = &'static str> {
+        Self::FEATURE_GATED_CONTROL_NODE_MODULES.iter().copied()
+    }
+
+    /// How a module behaves when a task addresses a remote host.
+    ///
+    /// Every registered module has to land in one of these, so a new module is
+    /// classified on purpose instead of being silently refused; the guard in
+    /// `execute_module` and the test in `tests/remote_transport_coverage_tests.rs`
+    /// both read this.
+    pub fn remote_transport(module_name: &str) -> Option<RemoteTransport> {
+        if Self::REMOTE_VERIFIED_MODULES.contains(&module_name) {
+            Some(RemoteTransport::Verified)
+        } else if Self::REMOTE_CONNECTION_ONLY_MODULES.contains(&module_name) {
+            Some(RemoteTransport::ConnectionOnly)
+        } else if Self::CONTROL_NODE_ONLY_MODULES.contains(&module_name)
+            || Self::FEATURE_GATED_CONTROL_NODE_MODULES.contains(&module_name)
+        {
+            Some(RemoteTransport::ControlNodeOnly)
+        } else {
+            None
+        }
+    }
+
     /// Native modules may run locally only for an explicitly local inventory target.
     /// A missing or unsupported remote connection must never become a local fallback.
     async fn execute_native(
@@ -1170,27 +1725,64 @@ impl Task {
                 "Local get_url destination writes are not implemented; refusing execution",
             ));
         }
-        if !local && ctx.connection.is_none() {
-            return Ok(TaskResult::unreachable(
-                "Remote execution requires an established connection; local fallback is disabled",
-            ));
-        }
-        // These implementations have a reviewed transport path. Classification alone
-        // is not sufficient: several filesystem modules ignore ModuleContext.connection.
+        // A task whose transport is remote must never run through a local
+        // connection: an inventory that says local while the play asks for ssh
+        // would otherwise execute on the control node.
         if !local
-            && !matches!(
-                module_name,
-                "command" | "shell" | "copy" | "template" | "gather_facts" | "setup"
-            )
+            && ctx
+                .connection
+                .as_ref()
+                .is_some_and(|connection| connection.is_local())
         {
+            return Ok(TaskResult::unreachable(format!(
+                "Host '{}' is configured for {} but only a local connection is available; \
+refusing to run on the control node",
+                ctx.host,
+                connection_kind.as_deref().unwrap_or("a remote transport")
+            )));
+        }
+
+        if !local && ctx.connection.is_none() {
+            return Ok(TaskResult::unreachable(match &ctx.connection_error {
+                Some(error) => format!("Failed to connect: {}", error),
+                None => "Remote execution requires an established connection; local fallback is \
+disabled"
+                    .to_string(),
+            }));
+        }
+        // Classification alone is not sufficient: several modules operate on
+        // std::fs and would silently act on the control node, so a module may
+        // only run remotely once its transport path has been reviewed.
+        if !local && !Self::has_remote_transport(module_name) {
+            if matches!(
+                Self::remote_transport(module_name),
+                Some(RemoteTransport::ControlNodeOnly)
+            ) {
+                return Ok(TaskResult::failed(format!(
+                    "Module '{module_name}' runs on the control node by design; address it with \
+delegate_to: localhost instead of a remote host"
+                )));
+            }
             return Ok(TaskResult::failed(format!(
                 "Module '{module_name}' does not have a verified remote transport"
             )));
         }
-        if ctx.r#become && (local || !matches!(module_name, "command" | "shell")) {
-            return Ok(TaskResult::failed(
-                "Privilege escalation is not verified for this module; refusing execution",
-            ));
+        // Fact gathering runs as the login user: it reads public system
+        // information and never applies escalation, so a play-level `become`
+        // must not block it.
+        let escalating = ctx.r#become && !matches!(module_name, "gather_facts" | "setup");
+        if escalating {
+            if local {
+                return Ok(TaskResult::failed(
+                    "Privilege escalation on the control node is not verified; refusing execution",
+                ));
+            }
+            if !Self::supports_become(module_name) {
+                return Ok(TaskResult::failed(format!(
+                    "Module '{module_name}' cannot pass privilege escalation to the target; \
+refusing execution"
+                )));
+            }
         }
         if module_name == "gather_facts" || module_name == "setup" {
             return self.execute_gather_facts(args, ctx).await;
@@ -1280,6 +1872,7 @@ impl Task {
                         before_header: None,
                         after_header: None,
                     }),
+                    before_state: None,
                 })
             }
             Err(crate::modules::ModuleError::CommandFailed { code, message }) => {
@@ -2838,17 +3431,19 @@ mod tests {
 
     #[tokio::test]
     async fn diligence_remote_file_guard_applies_even_with_a_connection() {
+        // `archive` still writes through std::fs and has no connection path,
+        // so a remote host must refuse it rather than act on the control node.
         let scratch = tempfile::tempdir().unwrap();
         let sentinel = scratch.path().join("must-not-exist");
-        let task = Task::new("guard", "file")
-            .arg("path", sentinel.to_str().unwrap())
-            .arg("state", "touch");
+        let task = Task::new("guard", "archive")
+            .arg("path", scratch.path().to_str().unwrap())
+            .arg("dest", sentinel.to_str().unwrap());
         let ctx = ExecutionContext::new("remote.invalid")
             .with_connection(Arc::new(crate::connection::local::LocalConnection::new()));
         let runtime = Arc::new(RwLock::new(RuntimeContext::new()));
         let result = task
             .execute_native(
-                "file",
+                "archive",
                 &task.args,
                 &ctx,
                 &runtime,
@@ -2856,7 +3451,13 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(result.status, TaskStatus::Failed);
+        // Either refusal is correct: the module has no remote transport, and
+        // the stand-in connection is local while the host is not.
+        assert!(
+            matches!(result.status, TaskStatus::Failed | TaskStatus::Unreachable),
+            "unexpected status: {:?}",
+            result.status
+        );
         assert!(!sentinel.exists());
     }
 

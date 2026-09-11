@@ -414,6 +414,14 @@ pub struct TaskDefinition {
     #[serde(default)]
     pub become_user: Option<String>,
     /// Block of tasks
+    /// Resources this task produces, for dependency-ordered execution
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub provides: Vec<String>,
+
+    /// Resources this task needs before it can run
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub requires: Vec<String>,
+
     #[serde(default)]
     pub block: Option<Vec<TaskDefinition>>,
     /// Rescue tasks (run if block fails)
@@ -752,6 +760,8 @@ pub struct Role {
     pub handlers_from: Option<String>,
     /// Dependencies
     pub dependencies: Vec<Role>,
+    /// Whether the role may run more than once in a play (`meta/main.yml`)
+    pub allow_duplicates: bool,
 }
 
 impl Role {
@@ -773,6 +783,7 @@ impl Role {
             defaults_from: None,
             handlers_from: None,
             dependencies: Vec::new(),
+            allow_duplicates: false,
         }
     }
 
@@ -780,6 +791,39 @@ impl Role {
     pub fn from_definition(
         def: RoleDefinition,
         playbook_path: Option<&PathBuf>,
+    ) -> ExecutorResult<Self> {
+        Self::from_definition_in_chain(def, playbook_path, &mut Vec::new())
+    }
+
+    /// Load a role, refusing to follow a dependency back to a role already on
+    /// the chain.
+    ///
+    /// Two roles that depend on each other used to recurse until the stack
+    /// overflowed, which aborts the process before a single task runs.
+    fn from_definition_in_chain(
+        def: RoleDefinition,
+        playbook_path: Option<&PathBuf>,
+        chain: &mut Vec<String>,
+    ) -> ExecutorResult<Self> {
+        let name = def.name().to_string();
+        if let Some(start) = chain.iter().position(|entry| entry == &name) {
+            let mut cycle: Vec<&str> = chain[start..].iter().map(String::as_str).collect();
+            cycle.push(&name);
+            return Err(ExecutorError::ParseError(format!(
+                "Role dependency cycle: {}",
+                cycle.join(" -> ")
+            )));
+        }
+        chain.push(name);
+        let role = Self::load_definition(def, playbook_path, chain);
+        chain.pop();
+        role
+    }
+
+    fn load_definition(
+        def: RoleDefinition,
+        playbook_path: Option<&PathBuf>,
+        chain: &mut Vec<String>,
     ) -> ExecutorResult<Self> {
         let mut role = Role::new(def.name());
         role.vars = def.vars();
@@ -899,9 +943,13 @@ impl Role {
                 if meta_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&meta_file) {
                         if let Ok(meta) = serde_yaml::from_str::<RoleMeta>(&content) {
+                            role.allow_duplicates = meta.allow_duplicates;
                             for dep in meta.dependencies {
-                                role.dependencies
-                                    .push(Role::from_definition(dep, Some(playbook_path))?);
+                                role.dependencies.push(Role::from_definition_in_chain(
+                                    dep,
+                                    Some(playbook_path),
+                                    chain,
+                                )?);
                             }
                         }
                     }
@@ -910,6 +958,20 @@ impl Role {
         }
 
         Ok(role)
+    }
+
+    /// How this role is identified when deciding whether it has already run.
+    ///
+    /// Ansible treats a role invoked with different parameters as a different
+    /// role, so the variables are part of the identity.
+    pub fn dedupe_key(&self) -> String {
+        let mut vars: Vec<(&str, String)> = self
+            .vars
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.to_string()))
+            .collect();
+        vars.sort_unstable();
+        format!("{}::{:?}", self.name, vars)
     }
 
     /// Get all tasks including from dependencies
@@ -924,17 +986,34 @@ impl Role {
         // Then add our tasks, retaining role selection and conditions.
         all_tasks.extend(self.tasks.clone());
         for task in &mut all_tasks {
-            task.tags.extend(self.tags.iter().cloned());
-            task.r#become |= self.r#become.unwrap_or(false);
-            if let Some(condition) = &self.when {
-                task.when = Some(match &task.when {
-                    Some(child) => format!("({condition}) and ({child})"),
-                    None => condition.clone(),
-                });
-            }
+            self.decorate(task);
         }
 
         all_tasks
+    }
+
+    /// This role's own tasks, carrying its tags, `become` and `when`.
+    ///
+    /// Unlike `get_all_tasks` this stops at the role itself, so a caller that
+    /// walks the dependency graph does not re-expand it.
+    pub fn own_tasks(&self) -> Vec<Task> {
+        let mut tasks = self.tasks.clone();
+        for task in &mut tasks {
+            self.decorate(task);
+        }
+        tasks
+    }
+
+    /// Apply this role's tags, escalation and condition to one of its tasks.
+    fn decorate(&self, task: &mut Task) {
+        task.tags.extend(self.tags.iter().cloned());
+        task.r#become |= self.r#become.unwrap_or(false);
+        if let Some(condition) = &self.when {
+            task.when = Some(match &task.when {
+                Some(child) => format!("({condition}) and ({child})"),
+                None => condition.clone(),
+            });
+        }
     }
 
     /// Get all handlers including from dependencies
@@ -1014,6 +1093,48 @@ impl Role {
 
         all_role_vars
     }
+}
+
+/// Flatten a play's roles into the task list they contribute, in Ansible's
+/// order: each role's dependencies first, then the role itself.
+///
+/// A role reached more than once runs only the first time, which is Ansible's
+/// default. Two roles that both depend on `common` used to run `common` twice;
+/// a role that opts in with `allow_duplicates: true` still does.
+pub fn flatten_role_tasks(roles: &[Role]) -> Vec<Task> {
+    fn visit<'a>(
+        role: &'a Role,
+        ancestors: &mut Vec<&'a Role>,
+        seen: &mut std::collections::HashSet<String>,
+        out: &mut Vec<Task>,
+    ) {
+        ancestors.push(role);
+        for dependency in &role.dependencies {
+            visit(dependency, ancestors, seen, out);
+        }
+        ancestors.pop();
+
+        if !role.allow_duplicates && !seen.insert(role.dedupe_key()) {
+            return;
+        }
+
+        let mut tasks = role.own_tasks();
+        // A role's tags, `become` and `when` reach the roles it depends on, so
+        // the chain is applied from the nearest ancestor outwards.
+        for ancestor in ancestors.iter().rev() {
+            for task in &mut tasks {
+                ancestor.decorate(task);
+            }
+        }
+        out.extend(tasks);
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut tasks = Vec::new();
+    for role in roles {
+        visit(role, &mut Vec::new(), &mut seen, &mut tasks);
+    }
+    tasks
 }
 
 /// Role metadata
@@ -1323,6 +1444,8 @@ fn parse_task_definition(
         delay: def.delay.map(|n| n as u64),
         until: def.until.as_ref().map(WhenCondition::to_condition),
         vars: extract_task_vars(&def.module),
+        provides: def.provides,
+        requires: def.requires,
     };
 
     tasks.push(task);

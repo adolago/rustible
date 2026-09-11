@@ -31,6 +31,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest;
@@ -40,6 +41,7 @@ use rustible::drift::history::{
 };
 use rustible::inventory::Inventory;
 use rustible::modules::{ModuleContext, ModuleError, ModuleOutput, ModuleParams, ModuleRegistry};
+use rustible::state::{DriftState, DriftSummary as ManifestDriftSummary, ManifestStore};
 
 use super::CommandContext;
 
@@ -87,6 +89,58 @@ pub enum DriftCommands {
 
     /// Remove old snapshots recorded before a given date
     Prune(PruneArgs),
+
+    /// Work with the host manifests recorded by `rustible run --manifest`
+    Manifest(ManifestArgs),
+}
+
+/// Arguments for the manifest subcommand
+#[derive(Parser, Debug, Clone)]
+pub struct ManifestArgs {
+    /// Manifest subcommand
+    #[command(subcommand)]
+    pub command: ManifestCommands,
+
+    /// Directory holding the manifests
+    #[arg(
+        long,
+        value_name = "DIR",
+        default_value = ".rustible/manifests",
+        global = true
+    )]
+    pub dir: PathBuf,
+}
+
+/// Available manifest subcommands
+#[derive(Subcommand, Debug, Clone)]
+pub enum ManifestCommands {
+    /// List the hosts that have a recorded manifest
+    List {
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show the resources recorded for one host
+    Show {
+        /// Hostname
+        host: String,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Re-check every recorded resource against the target
+    Check {
+        /// Limit the check to one host
+        #[arg(short = 'l', long)]
+        limit: Option<String>,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Arguments for the detect subcommand (original drift detection)
@@ -389,6 +443,7 @@ impl DriftArgs {
             DriftCommands::Timeline(args) => args.execute(ctx).await,
             DriftCommands::Compare(args) => args.execute(ctx).await,
             DriftCommands::Prune(args) => args.execute(ctx).await,
+            DriftCommands::Manifest(args) => args.execute(ctx).await,
         }
     }
 }
@@ -710,9 +765,13 @@ impl DetectArgs {
             self.print_report(ctx, &report);
         }
 
-        // Determine base exit code from drift status
+        // Determine base exit code from drift status. A resource that could
+        // not be checked must not read as "no drift": an unreachable host
+        // would otherwise report a clean run.
         let mut exit_code = if report.summary.drifted > 0 || report.summary.missing > 0 {
             2 // Drift detected
+        } else if report.summary.unknown > 0 {
+            1 // Nothing drifted, but some resources could not be checked
         } else {
             0 // No drift
         };
@@ -801,6 +860,13 @@ impl DetectArgs {
             )
         })?;
 
+        // Drift is a question about the target, so every check runs through a
+        // connection to that host rather than against the control node.
+        let connection_factory = rustible::connection::ConnectionFactory::with_pool_size(
+            super::run::build_connection_config(&inventory, None, None, ctx.timeout),
+            ctx.forks.max(1),
+        );
+
         let mut findings = Vec::new();
         let mut hosts_checked = Vec::new();
 
@@ -848,8 +914,17 @@ impl DetectArgs {
             if let Some(tasks) = play.get("tasks").and_then(|t| t.as_sequence()) {
                 for task in tasks {
                     for host in &play_hosts {
-                        if let Some(finding) =
-                            self.check_task_drift(ctx, host, task, &registry).await?
+                        let connection = match connection_factory.get_connection(host).await {
+                            Ok(connection) => Some(connection),
+                            Err(error) => {
+                                ctx.output
+                                    .warning(&format!("Cannot reach {}: {}", host, error));
+                                None
+                            }
+                        };
+                        if let Some(finding) = self
+                            .check_task_drift(ctx, host, task, &registry, connection)
+                            .await?
                         {
                             let status = finding.status.clone();
                             findings.push(finding);
@@ -901,6 +976,7 @@ impl DetectArgs {
         host: &str,
         task: &serde_yaml::Value,
         registry: &ModuleRegistry,
+        connection: Option<Arc<dyn rustible::connection::Connection + Send + Sync>>,
     ) -> Result<Option<DriftFinding>> {
         let task_name = task
             .get("name")
@@ -922,8 +998,14 @@ impl DetectArgs {
         }
 
         // Execute the module in check_mode to detect drift
-        let finding =
-            self.execute_drift_check(host, task_name, &module_type, &module_args, registry)?;
+        let finding = self.execute_drift_check(
+            host,
+            task_name,
+            &module_type,
+            &module_args,
+            registry,
+            connection,
+        )?;
 
         if self.detailed && finding.status != DriftStatus::InSync {
             ctx.output.debug(&format!(
@@ -943,14 +1025,34 @@ impl DetectArgs {
         module_type: &str,
         module_args: &serde_yaml::Value,
         registry: &ModuleRegistry,
+        connection: Option<Arc<dyn rustible::connection::Connection + Send + Sync>>,
     ) -> Result<DriftFinding> {
         let params = yaml_to_module_params(module_args);
         let desired_state = serde_json::to_value(module_args).ok();
 
+        // Without a connection the check would inspect the control node and
+        // report someone else's state as this host's drift.
+        let Some(connection) = connection else {
+            return Ok(DriftFinding {
+                host: host.to_string(),
+                resource: task_name.to_string(),
+                resource_type: module_type.to_string(),
+                status: DriftStatus::Unknown,
+                current_state: None,
+                desired_state,
+                description: format!(
+                    "Cannot check {} on {}: no connection to the host",
+                    task_name, host
+                ),
+                diff: None,
+            });
+        };
+
         // Build module context with check_mode and diff_mode enabled
         let module_ctx = ModuleContext::new()
             .with_check_mode(true)
-            .with_diff_mode(true);
+            .with_diff_mode(true)
+            .with_connection(connection);
 
         // Execute with timeout
         let timeout_duration = Duration::from_secs(self.timeout);
@@ -1199,12 +1301,23 @@ impl DetectArgs {
             }
         }
 
-        // Print Terraform-style summary
-        ctx.output.plan_summary(
-            report.summary.missing, // to_add (missing resources need to be created)
-            report.summary.drifted, // to_change (drifted resources need updates)
-            report.summary.extra,   // to_destroy (extra resources should be removed)
-        );
+        // Print Terraform-style summary. When nothing could be checked at all,
+        // "no changes" would be a claim the run cannot support.
+        let checked_something = report.summary.in_sync
+            + report.summary.drifted
+            + report.summary.missing
+            + report.summary.extra
+            > 0;
+        if checked_something || report.summary.unknown == 0 {
+            ctx.output.plan_summary(
+                report.summary.missing, // to_add (missing resources need to be created)
+                report.summary.drifted, // to_change (drifted resources need updates)
+                report.summary.extra,   // to_destroy (extra resources should be removed)
+            );
+        } else {
+            ctx.output
+                .warning("No resource could be checked; drift status is unknown.");
+        }
 
         // Additional statistics
         if report.summary.in_sync > 0 || report.summary.unknown > 0 {
@@ -1216,10 +1329,17 @@ impl DetectArgs {
                 ));
             }
             if report.summary.unknown > 0 {
-                ctx.output.debug(&format!(
-                    "{} resource(s) with unknown status (could not determine drift)",
+                // A resource that could not be checked is not a resource in
+                // sync; say so where the summary is read, not only under -v.
+                ctx.output.warning(&format!(
+                    "{} resource(s) could not be checked; their drift status is unknown",
                     report.summary.unknown
                 ));
+                for finding in &report.findings {
+                    if finding.status == DriftStatus::Unknown {
+                        ctx.output.warning(&format!("  {}", finding.description));
+                    }
+                }
             }
         }
 
@@ -1297,6 +1417,267 @@ impl DetectArgs {
         ));
 
         Ok(())
+    }
+}
+
+impl ManifestArgs {
+    /// Execute the manifest subcommand.
+    pub async fn execute(&self, ctx: &mut CommandContext) -> Result<i32> {
+        let store = ManifestStore::new(&self.dir);
+
+        match &self.command {
+            ManifestCommands::List { json } => self.list(ctx, &store, *json),
+            ManifestCommands::Show { host, json } => self.show(ctx, &store, host, *json),
+            ManifestCommands::Check { limit, json } => {
+                self.check(ctx, &store, limit.as_deref(), *json).await
+            }
+        }
+    }
+
+    fn list(&self, ctx: &mut CommandContext, store: &ManifestStore, json: bool) -> Result<i32> {
+        let manifests = match store.load_all() {
+            Ok(manifests) => manifests,
+            Err(error) => {
+                ctx.output
+                    .error(&format!("Failed to read {}: {}", self.dir.display(), error));
+                return Ok(1);
+            }
+        };
+
+        if manifests.is_empty() {
+            ctx.output.warning(&format!(
+                "No manifests in {}. Record one with `rustible run --manifest`.",
+                self.dir.display()
+            ));
+            return Ok(0);
+        }
+
+        if json {
+            let rows: Vec<serde_json::Value> = manifests
+                .iter()
+                .map(|manifest| {
+                    serde_json::json!({
+                        "host": manifest.hostname,
+                        "resources": manifest.resources.len(),
+                        "playbook": manifest.source_playbook,
+                        "last_updated": manifest.last_updated.to_rfc3339(),
+                        "last_drift_check": manifest.last_drift_check.map(|t| t.to_rfc3339()),
+                        "drift_count": manifest.drift_count,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+            return Ok(0);
+        }
+
+        ctx.output.banner("HOST MANIFESTS");
+        for manifest in &manifests {
+            let checked = match manifest.last_drift_check {
+                Some(time) => time.format("%Y-%m-%d %H:%M:%SZ").to_string(),
+                None => "never checked".to_string(),
+            };
+            println!(
+                "{}: {} resource(s), {} drifted, last check {}",
+                manifest.hostname,
+                manifest.resources.len(),
+                manifest.drift_count,
+                checked
+            );
+        }
+        Ok(0)
+    }
+
+    fn show(
+        &self,
+        ctx: &mut CommandContext,
+        store: &ManifestStore,
+        host: &str,
+        json: bool,
+    ) -> Result<i32> {
+        let manifest = match store.load(host) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                ctx.output
+                    .error(&format!("No manifest for '{}': {}", host, error));
+                return Ok(1);
+            }
+        };
+
+        if json {
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
+            return Ok(0);
+        }
+
+        ctx.output.banner(&format!("MANIFEST: {}", host));
+        if let Some(playbook) = &manifest.source_playbook {
+            println!("Playbook: {}", playbook);
+        }
+
+        let mut resources: Vec<_> = manifest.resources.values().collect();
+        resources.sort_by(|a, b| {
+            (&a.resource_type, &a.resource_id).cmp(&(&b.resource_type, &b.resource_id))
+        });
+        for resource in resources {
+            println!(
+                "{} {} [{}] via {}",
+                resource.drift_status,
+                resource.resource_id,
+                resource.resource_type,
+                resource.module
+            );
+        }
+        Ok(0)
+    }
+
+    /// Re-check every recorded resource through a connection to its host.
+    ///
+    /// The recorded arguments are replayed in check mode: a module that would
+    /// change something is drift, one that reports no change is in sync, and a
+    /// host that cannot be reached is left unknown rather than counted clean.
+    async fn check(
+        &self,
+        ctx: &mut CommandContext,
+        store: &ManifestStore,
+        limit: Option<&str>,
+        json: bool,
+    ) -> Result<i32> {
+        let Some(inventory_path) = ctx.inventory().cloned() else {
+            ctx.output
+                .error("No inventory specified. Use -i <inventory>");
+            return Ok(1);
+        };
+        let inventory = Inventory::load(&inventory_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to load inventory from {}: {}",
+                inventory_path.display(),
+                e
+            )
+        })?;
+
+        let manifests = store
+            .load_all()
+            .map_err(|error| anyhow::anyhow!("Failed to read {}: {}", self.dir.display(), error))?;
+        let manifests: Vec<_> = manifests
+            .into_iter()
+            .filter(|manifest| limit.is_none_or(|host| manifest.hostname == host))
+            .collect();
+
+        if manifests.is_empty() {
+            ctx.output
+                .warning(&format!("No manifests to check in {}.", self.dir.display()));
+            return Ok(0);
+        }
+
+        let registry = ModuleRegistry::with_builtins();
+        let connection_factory = rustible::connection::ConnectionFactory::with_pool_size(
+            super::run::build_connection_config(&inventory, None, None, ctx.timeout),
+            ctx.forks.max(1),
+        );
+
+        let mut total = ManifestDriftSummary::default();
+        let mut unreachable = Vec::new();
+
+        for mut manifest in manifests {
+            let connection = match connection_factory.get_connection(&manifest.hostname).await {
+                Ok(connection) => Some(connection),
+                Err(error) => {
+                    ctx.output.warning(&format!(
+                        "{} is unreachable ({}); its resources stay unknown",
+                        manifest.hostname, error
+                    ));
+                    unreachable.push(manifest.hostname.clone());
+                    None
+                }
+            };
+
+            for resource in manifest.resources.values_mut() {
+                let Some(connection) = connection.clone() else {
+                    resource.drift_status = DriftState::Unknown;
+                    continue;
+                };
+
+                let params: ModuleParams = resource
+                    .desired_state
+                    .as_object()
+                    .map(|map| {
+                        map.iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let module_ctx = ModuleContext::new()
+                    .with_check_mode(true)
+                    .with_diff_mode(true)
+                    .with_connection(connection);
+
+                match registry.execute(&resource.module, &params, &module_ctx) {
+                    Ok(output) if output.changed => {
+                        resource.set_actual_state(output.to_result_json());
+                        resource.drift_status = DriftState::Drifted;
+                    }
+                    Ok(output) => {
+                        resource.actual_state = Some(output.to_result_json());
+                        resource.last_checked = Some(chrono::Utc::now());
+                        resource.drift_status = DriftState::InSync;
+                    }
+                    Err(error) => {
+                        ctx.output.warning(&format!(
+                            "{}: could not check {} ({})",
+                            manifest.hostname, resource.resource_id, error
+                        ));
+                        resource.drift_status = DriftState::Unknown;
+                    }
+                }
+            }
+
+            manifest.update_drift_status();
+            let summary = manifest.drift_summary();
+            total.total += summary.total;
+            total.in_sync += summary.in_sync;
+            total.drifted += summary.drifted;
+            total.missing += summary.missing;
+            total.extra += summary.extra;
+            total.unknown += summary.unknown;
+
+            if let Err(error) = store.save(&manifest) {
+                ctx.output.warning(&format!(
+                    "Checked {} but could not update its manifest: {}",
+                    manifest.hostname, error
+                ));
+            }
+
+            if !json {
+                println!(
+                    "{}: {} in sync, {} drifted, {} unknown",
+                    manifest.hostname, summary.in_sync, summary.drifted, summary.unknown
+                );
+            }
+        }
+
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "total": total.total,
+                    "in_sync": total.in_sync,
+                    "drifted": total.drifted,
+                    "missing": total.missing,
+                    "extra": total.extra,
+                    "unknown": total.unknown,
+                    "unreachable_hosts": unreachable,
+                }))?
+            );
+        }
+
+        // An unchecked resource must not read as a clean fleet.
+        if total.drifted > 0 || total.missing > 0 {
+            Ok(2)
+        } else if total.unknown > 0 {
+            Ok(1)
+        } else {
+            Ok(0)
+        }
     }
 }
 

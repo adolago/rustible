@@ -19,8 +19,9 @@ Rustible is currently in alpha. Expect breaking changes, incomplete features, an
 performance/security characteristics.
 
 The ongoing diligence has found execution, state, input-handling, and verification
-defects. Focused repairs are being reviewed in draft PRs; they are not yet a
-combined, passing release. Read [Verification status](docs/VERIFICATION_STATUS.md)
+defects. Some are repaired and exercised against a disposable SSH target; others
+remain open. Read [Feature status](docs/FEATURE_STATUS.md) for what is verified
+and [Verification status](docs/VERIFICATION_STATUS.md) for the review baseline
 before choosing a workflow. No production-readiness or comparative speed claim
 is made for this alpha.
 
@@ -77,34 +78,41 @@ Ansible semantics. The verification status lists known limits and draft repairs.
 rustible run <PLAYBOOK> [OPTIONS]
 
 Options:
-  -i, --inventory <FILE>   Inventory file
-  -l, --limit <PATTERN>    Limit to specific hosts
-  -e, --extra-vars <VARS>  Extra variables
-      --check             Request check mode
-  -v, --verbose            Increase verbosity
-  -f, --forks <N>          Requested parallelism [default: 5]
-      --step               Step through tasks interactively
+  -i, --inventory <FILE>     Inventory file
+  -l, --limit <PATTERN>      Limit to specific hosts
+  -e, --extra-vars <VARS>    Extra variables
+      --check                Request check mode
+  -v, --verbose              Increase verbosity
+  -f, --forks <N>            Requested parallelism [default: 5]
+      --step                 Step through tasks interactively
+  -b, --become               Escalate privileges on the target
+      --checkpoint [NAME]    Checkpoint before the run so it can be rolled back
+      --cache-state          Skip tasks whose inputs are unchanged since the last run
+      --agent-mode           Run commands through the deployed agent binary
 ```
 
 ### Additional Commands
 
 ```bash
-rustible check <PLAYBOOK>     # Execute in requested check mode
-rustible lock checkpoint NAME # Create a rollback checkpoint
-rustible lock rollback NAME   # Dry-run or execute rollback from a checkpoint
-rustible vault encrypt <FILE> # AES-256-GCM encryption
-rustible vault decrypt <FILE> # Decrypt files
-rustible galaxy install <PKG> # Install collections/roles
-rustible init <PATH>          # Initialize new project
+rustible check <PLAYBOOK>        # Execute in requested check mode
+rustible drift detect <PLAYBOOK> # Report resources that differ from the playbook
+rustible lock <PLAYBOOK>         # Record the files the playbook depends on
+rustible lock <PB> rollback NAME # Dry-run or execute rollback from a checkpoint
+rustible agent deploy            # Install the agent binary on inventory hosts
+rustible explain <CODE>          # Explain an error code
+rustible vault encrypt <FILE>    # AES-256-GCM encryption
+rustible vault decrypt <FILE>    # Decrypt files
+rustible galaxy install <PKG>    # Install collections/roles
+rustible init <PATH>             # Initialize new project
 ```
 
 ## Features
 
 | Feature | Status |
 |---------|--------|
-| Playbook syntax | Ansible-style subset; full compatibility not established |
+| Playbook syntax | Ansible-style subset, plus `provides`/`requires` task ordering; full compatibility not established |
 | Inventory formats | YAML, INI, JSON, dynamic scripts |
-| Templating | Jinja2 via minijinja |
+| Templating | Jinja2 via minijinja, with the Ansible filter set registered |
 | Vault encryption | AES-256-GCM |
 | Roles | Partial; loading, inheritance, and dependency behavior need further verification |
 | Handlers | Partial; scheduling and failure-propagation repairs are in draft |
@@ -112,8 +120,10 @@ rustible init <PATH>          # Initialize new project
 
 ### Connection Implementations
 
-These implementations exist in the source tree. Their presence does not certify
-CLI routing, transfer correctness, authentication parity, or real-host behavior.
+SSH and local execution are routed from the CLI and exercised against a
+disposable sshd container (`tests/remote_modules_ssh_tests.rs`). The remaining
+implementations exist in the source tree; their presence does not certify CLI
+routing, transfer correctness, authentication parity, or real-host behavior.
 
 - **SSH** (default): Via russh
 - **Local**: Direct local execution

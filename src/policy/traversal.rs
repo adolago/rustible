@@ -77,6 +77,8 @@ fn task_keyword(key: &str) -> bool {
             | "async"
             | "async_"
             | "poll"
+            | "provides"
+            | "requires"
     )
 }
 

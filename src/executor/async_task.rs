@@ -627,6 +627,7 @@ impl AsyncTaskManager {
             msg: Some(format!("Async job started: {}", jid)),
             result: Some(result_data),
             diff: None,
+            before_state: None,
         }
     }
 
@@ -663,6 +664,7 @@ impl AsyncTaskManager {
                 msg: info.msg,
                 result: Some(result_data),
                 diff: None,
+                before_state: None,
             }
         } else {
             TaskResult::failed(format!("Job not found: {}", jid))

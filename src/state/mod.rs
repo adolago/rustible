@@ -109,7 +109,8 @@ pub use hashing::{
     CachedTaskResult, HashCacheStats, HashingConfig, StateHashCache, TaskHashBuilder, TaskStateHash,
 };
 pub use manifest::{
-    DriftDetails, DriftState, DriftSummary, FieldDiff, HostManifest, ManifestStore, ResourceState,
+    resource_from_task_args, DriftDetails, DriftState, DriftSummary, FieldDiff, HostManifest,
+    ManifestStore, ResourceState,
 };
 pub use persistence::{JsonPersistence, PersistenceBackend, SqlitePersistence, StatePersistence};
 pub use rollback::{RollbackAction, RollbackExecutor, RollbackPlan, RollbackStatus};

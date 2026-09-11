@@ -38,3 +38,5 @@ __pycache__/
 test_output.txt
 bench_security
 .rustible_state/
+# State directory playbook runs create next to the playbook (test fixtures included)
+.rustible/

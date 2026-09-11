@@ -54,6 +54,14 @@ pub struct UserInfo {
     pub groups: Vec<String>,
 }
 
+/// Convert a `YYYY-MM-DD` expiry date to days since the epoch, as
+/// `usermod -e` and /etc/shadow use.
+fn expiry_days(expires: &str) -> Option<i64> {
+    let date = chrono::NaiveDate::parse_from_str(expires.trim(), "%Y-%m-%d").ok()?;
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)?;
+    Some((date - epoch).num_days())
+}
+
 /// Module for user management
 pub struct UserModule;
 
@@ -110,6 +118,13 @@ impl UserModule {
         name: &str,
         context: &ModuleContext,
     ) -> ModuleResult<bool> {
+        // On the control node the answer is in /etc/passwd; no process needed.
+        if connection.is_local() {
+            if let Ok(user) = crate::native::users::get_user_by_name(name) {
+                return Ok(user.is_some());
+            }
+        }
+
         let command = format!("id {}", shell_escape(name));
         let (success, _, _) = Self::execute_command(connection, &command, context)?;
         Ok(success)
@@ -121,6 +136,23 @@ impl UserModule {
         name: &str,
         context: &ModuleContext,
     ) -> ModuleResult<Option<UserInfo>> {
+        // On the control node, read the user and group databases directly
+        // instead of spawning getent and groups.
+        if connection.is_local() {
+            if let Ok(Some(user)) = crate::native::users::get_user_by_name(name) {
+                let groups = crate::native::users::get_user_groups(name).unwrap_or_default();
+                return Ok(Some(UserInfo {
+                    name: user.name,
+                    uid: user.uid,
+                    gid: user.gid,
+                    comment: user.gecos,
+                    home: user.home,
+                    shell: user.shell,
+                    groups,
+                }));
+            }
+        }
+
         // Use getent to get passwd info
         let command = format!("getent passwd {}", shell_escape(name));
         let (success, stdout, _) = Self::execute_command(connection, &command, context)?;
@@ -281,23 +313,55 @@ impl UserModule {
         }
 
         if let Some(group) = group {
-            cmd_parts.push("-g".to_string());
-            cmd_parts.push(shell_escape(group).into_owned());
-            needs_change = true;
+            // Compare against the group the account actually has, so a repeat
+            // run of the same task is a no-op.
+            let current_primary = Self::group_name_for_gid(connection, current.gid, context)?;
+            let differs = match &current_primary {
+                Some(current_group) => current_group != group,
+                // An unresolvable gid may still match a numeric request.
+                None => group.parse::<u32>() != Ok(current.gid),
+            };
+            if differs {
+                cmd_parts.push("-g".to_string());
+                cmd_parts.push(shell_escape(group).into_owned());
+                needs_change = true;
+            }
         }
 
         if let Some(groups) = groups {
             if !groups.is_empty() {
-                let groups_str = shell_escape(&groups.join(",")).into_owned();
-                if append_groups {
-                    cmd_parts.push("-a".to_string());
-                    cmd_parts.push("-G".to_string());
-                    cmd_parts.push(groups_str);
+                // `groups` lists the primary group too; supplementary
+                // membership is what usermod -G changes.
+                let primary = Self::group_name_for_gid(connection, current.gid, context)?;
+                let current_supplementary: std::collections::BTreeSet<&str> = current
+                    .groups
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|name| Some(*name) != primary.as_deref())
+                    .collect();
+                let requested: std::collections::BTreeSet<&str> =
+                    groups.iter().map(String::as_str).collect();
+
+                let differs = if append_groups {
+                    requested
+                        .iter()
+                        .any(|group| !current_supplementary.contains(group))
                 } else {
-                    cmd_parts.push("-G".to_string());
-                    cmd_parts.push(groups_str);
+                    current_supplementary != requested
+                };
+
+                if differs {
+                    let groups_str = shell_escape(&groups.join(",")).into_owned();
+                    if append_groups {
+                        cmd_parts.push("-a".to_string());
+                        cmd_parts.push("-G".to_string());
+                        cmd_parts.push(groups_str);
+                    } else {
+                        cmd_parts.push("-G".to_string());
+                        cmd_parts.push(groups_str);
+                    }
+                    needs_change = true;
                 }
-                needs_change = true;
             }
         }
 
@@ -329,9 +393,21 @@ impl UserModule {
         }
 
         if let Some(expires) = expires {
-            cmd_parts.push("-e".to_string());
-            cmd_parts.push(shell_escape(expires).into_owned());
-            needs_change = true;
+            // /etc/shadow stores the expiry as days since the epoch; compare
+            // with the requested date rather than reapplying it every run.
+            let current_expiry = Self::account_expiry_days(connection, name, context)?;
+            let requested_expiry = expiry_days(expires);
+            let differs = match (current_expiry, requested_expiry) {
+                (Some(current), Some(requested)) => current != requested,
+                // An unparseable request or missing shadow entry keeps the old
+                // behavior of applying the value.
+                _ => true,
+            };
+            if differs {
+                cmd_parts.push("-e".to_string());
+                cmd_parts.push(shell_escape(expires).into_owned());
+                needs_change = true;
+            }
         }
 
         if !needs_change {
@@ -348,6 +424,51 @@ impl UserModule {
         } else {
             Err(ModuleError::ExecutionFailed(stderr))
         }
+    }
+
+    /// The group name for a gid, or `None` when the gid has no entry.
+    fn group_name_for_gid(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        gid: u32,
+        context: &ModuleContext,
+    ) -> ModuleResult<Option<String>> {
+        if connection.is_local() {
+            if let Ok(group) = crate::native::users::get_group_by_gid(gid) {
+                return Ok(group.map(|group| group.name));
+            }
+        }
+
+        let command = format!("getent group {}", gid);
+        let (success, stdout, _) = Self::execute_command(connection, &command, context)?;
+        if !success {
+            return Ok(None);
+        }
+        Ok(stdout
+            .trim()
+            .split(':')
+            .next()
+            .filter(|name| !name.is_empty())
+            .map(|name| name.to_string()))
+    }
+
+    /// The account expiry from /etc/shadow, in days since the epoch.
+    ///
+    /// `None` means the account never expires or the entry is unreadable.
+    fn account_expiry_days(
+        connection: &Arc<dyn Connection + Send + Sync>,
+        name: &str,
+        context: &ModuleContext,
+    ) -> ModuleResult<Option<i64>> {
+        let command = format!("getent shadow {}", shell_escape(name));
+        let (success, stdout, _) = Self::execute_command(connection, &command, context)?;
+        if !success {
+            return Ok(None);
+        }
+        Ok(stdout
+            .trim()
+            .split(':')
+            .nth(7)
+            .and_then(|field| field.trim().parse::<i64>().ok()))
     }
 
     /// Delete a user via connection

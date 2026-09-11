@@ -152,6 +152,12 @@ Host variables control how Rustible connects to and interacts with each host.
 | `ansible_become` | Enable privilege escalation | `false` |
 | `ansible_become_user` | User to become | `root` |
 | `ansible_become_method` | Escalation method (`sudo`, `su`) | `sudo` |
+| `ansible_host_key_checking` | Reject hosts missing from `known_hosts` | `false` |
+| `ansible_ssh_known_hosts_file` | `known_hosts` file to verify against | `~/.ssh/known_hosts` |
+
+A host key that differs from the recorded one is always rejected. With
+`ansible_host_key_checking: true` an unknown host is rejected as well, instead
+of being accepted and recorded on first connection.
 
 ## Group Variables
 

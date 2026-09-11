@@ -107,6 +107,43 @@ pub struct RunArgs {
     #[arg(long)]
     pub no_pipelining: bool,
 
+    /// Create a checkpoint before the run and record what each task changes
+    ///
+    /// Roll back later with `rustible lock <playbook> rollback <name>`.
+    #[arg(long, value_name = "NAME", num_args = 0..=1, default_missing_value = "auto")]
+    pub checkpoint: Option<String>,
+
+    /// Run commands through the rustible-agent binary on each target
+    ///
+    /// Deploy it first with `rustible agent deploy`.
+    #[arg(long)]
+    pub agent_mode: bool,
+
+    /// Path of the agent binary on the target
+    #[arg(
+        long,
+        value_name = "PATH",
+        default_value = "/usr/local/bin/rustible-agent"
+    )]
+    pub agent_path: String,
+
+    /// Skip tasks whose inputs are unchanged since the last run
+    ///
+    /// A task is skipped only when an earlier run with identical module
+    /// arguments, host and local source files reported no change.
+    #[arg(long)]
+    pub cache_state: bool,
+
+    /// How long a cached task result stays valid, in seconds
+    #[arg(long, value_name = "SECONDS", default_value = "3600")]
+    pub cache_state_ttl: u64,
+
+    /// Record a per-host state manifest of the resources this run applied
+    ///
+    /// Check them later with `rustible drift manifest check`.
+    #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "")]
+    pub manifest: Option<String>,
+
     /// Enable distributed execution across worker nodes
     #[arg(long)]
     pub distributed: bool,
@@ -185,6 +222,173 @@ fn state_dir_for_playbook(playbook: &Path) -> PathBuf {
         .unwrap_or_else(|| Path::new("."))
         .join(".rustible")
         .join("state")
+}
+
+/// Persist the cross-run task cache, if one is enabled.
+///
+/// A cache that cannot be written costs the next run its skips; it is never a
+/// reason to fail the current one.
+fn save_task_cache(
+    state_cache: Option<&(Arc<rustible::state::StateHashCache>, PathBuf)>,
+    ctx: &CommandContext,
+) {
+    let Some((cache, path)) = state_cache else {
+        return;
+    };
+    if let Err(err) = cache.save(path) {
+        ctx.output
+            .warning(&format!("Failed to save task state cache: {}", err));
+    }
+}
+
+/// Read an inventory value that may be written as a YAML bool or a string.
+pub(crate) fn yaml_bool(value: &serde_yaml::Value) -> Option<bool> {
+    match value {
+        serde_yaml::Value::Bool(value) => Some(*value),
+        serde_yaml::Value::String(text) => match text.to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => Some(true),
+            "false" | "no" | "off" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Build transport configuration for every inventory host.
+///
+/// The executor reaches hosts through a [`ConnectionFactory`]; without one
+/// every remote task reports "requires an established connection". Inventory
+/// values win over the command line, matching how `ansible_user` overrides
+/// `--user`.
+pub(crate) fn build_connection_config(
+    inventory: &rustible::inventory::Inventory,
+    cli_user: Option<&str>,
+    cli_private_key: Option<&Path>,
+    timeout: u64,
+) -> rustible::connection::ConnectionConfig {
+    use rustible::connection::HostConfig;
+
+    let mut config = rustible::connection::ConnectionConfig::default();
+    if let Some(user) = cli_user {
+        config.defaults.user = user.to_string();
+    }
+    config.defaults.timeout = timeout;
+
+    for host in inventory.hosts() {
+        let ssh = &host.connection.ssh;
+        // Group variables matter here too, so read the merged set.
+        let vars = inventory.get_host_vars(host);
+        let host_config = HostConfig {
+            hostname: host.ansible_host.clone(),
+            port: Some(ssh.port),
+            user: ssh
+                .user
+                .clone()
+                .or_else(|| cli_user.map(|user| user.to_string())),
+            identity_file: ssh
+                .private_key_file
+                .clone()
+                .or_else(|| cli_private_key.map(|path| path.to_string_lossy().to_string())),
+            connect_timeout: Some(timeout),
+            // Ansible does not retry the initial connection, and retrying
+            // multiplies the wait for an unreachable host by four. Opt back in
+            // per host with `ansible_ssh_retries`.
+            retries: vars
+                .get("ansible_ssh_retries")
+                .and_then(|value| value.as_u64())
+                .map(|value| value as u32)
+                .or(Some(0)),
+            connection: Some(host.connection.connection.to_string()),
+            strict_host_key_checking: vars.get("ansible_host_key_checking").and_then(yaml_bool),
+            user_known_hosts_file: vars
+                .get("ansible_ssh_known_hosts_file")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            ..Default::default()
+        };
+        config.add_host(host.name.clone(), host_config);
+    }
+
+    config
+}
+
+fn task_cache_path(playbook: &Path) -> PathBuf {
+    state_dir_for_playbook(playbook).join("task-cache.json")
+}
+
+/// Where host manifests live when `--manifest` is given without a directory.
+pub(crate) fn manifest_dir_for_playbook(playbook: &Path) -> PathBuf {
+    playbook
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".rustible")
+        .join("manifests")
+}
+
+/// Write one manifest per host from the records this run applied.
+///
+/// Each manifest keeps what was applied, not only what changed, so the next
+/// check sees the whole desired surface. A manifest that cannot be written is
+/// reported and does not fail the run, which has already happened.
+fn save_host_manifests(
+    dir: &Path,
+    playbook: &Path,
+    records: &[rustible::state::TaskStateRecord],
+    ctx: &mut CommandContext,
+) {
+    use rustible::state::{resource_from_task_args, HostManifest, ManifestStore, ResourceState};
+
+    let store = ManifestStore::new(dir);
+    let playbook_name = playbook.display().to_string();
+    let mut manifests: IndexMap<String, HostManifest> = IndexMap::new();
+
+    for record in records {
+        let Some((resource_type, resource_ids, desired)) =
+            resource_from_task_args(&record.module, &record.args)
+        else {
+            continue;
+        };
+
+        let manifest = manifests.entry(record.host.clone()).or_insert_with(|| {
+            HostManifest::with_playbook(record.host.clone(), playbook_name.clone())
+        });
+
+        for id in resource_ids {
+            let mut state = ResourceState::new(
+                resource_type.clone(),
+                id,
+                record.module.clone(),
+                desired.clone(),
+            );
+            if !record.task_name.is_empty() {
+                state = state.with_task_name(record.task_name.clone());
+            }
+            if !record.tags.is_empty() {
+                state = state.with_tags(record.tags.clone());
+            }
+            manifest.record_resource(state);
+        }
+    }
+
+    // One host's failure must not silently drop every host after it.
+    let mut count = 0;
+    for manifest in manifests.values() {
+        match store.save(manifest) {
+            Ok(()) => count += 1,
+            Err(error) => ctx.output.warning(&format!(
+                "Failed to write the manifest for {}: {}",
+                manifest.hostname, error
+            )),
+        }
+    }
+
+    if count > 0 {
+        ctx.output.info(&format!(
+            "Recorded {} host manifest(s) in {}",
+            count,
+            dir.display()
+        ));
+    }
 }
 
 fn build_host_states(
@@ -671,7 +875,8 @@ impl RunArgs {
             ctx.output
                 .warning("Running in PLAN MODE - showing execution plan only");
             let playbook_content = std::fs::read_to_string(&self.playbook)?;
-            let playbook_yaml: serde_yaml::Value = serde_yaml::from_str(&playbook_content)?;
+            let playbook_yaml: serde_yaml::Value =
+                rustible::utils::yaml::from_str(&playbook_content)?;
             let mut plan_lines: Vec<String> = Vec::new();
             if let Some(plays) = playbook_yaml.as_sequence() {
                 let extra_vars_for_plan: std::collections::HashMap<String, serde_yaml::Value> =
@@ -780,6 +985,74 @@ impl RunArgs {
             self.start_at_task.clone(),
         );
 
+        // Give the executor a transport for every inventory host.
+        let connection_config = build_connection_config(
+            &inventory,
+            self.user.as_deref(),
+            self.private_key.as_deref(),
+            ctx.timeout,
+        );
+        let mut connection_factory = rustible::connection::ConnectionFactory::with_pool_size(
+            connection_config,
+            ctx.forks.max(1),
+        );
+        if self.agent_mode {
+            ctx.output.info(&format!(
+                "Agent mode: commands run through {}",
+                self.agent_path
+            ));
+            connection_factory = connection_factory.with_agent_path(self.agent_path.clone());
+        }
+        executor = executor.with_connection_factory(connection_factory);
+
+        // Rollback tracking: take a checkpoint and record each managed
+        // resource's state before a task changes it, so `lock rollback` can
+        // undo the run.
+        if let Some(name) = &self.checkpoint {
+            executor = executor.with_rollback_state_capture(true);
+
+            let name = (name != "auto").then(|| name.clone());
+            let lock_args = super::lock::LockArgs {
+                subcommand: None,
+                playbook: self.playbook.clone(),
+                lockfile: None,
+                update: false,
+                check: false,
+            };
+            if let Err(error) = lock_args
+                .create_checkpoint(Some(ctx), name, Some("Created by rustible run".to_string()))
+                .await
+            {
+                ctx.output
+                    .error(&format!("Failed to create checkpoint: {}", error));
+                return Ok(1);
+            }
+        }
+
+        // Cross-run task state cache, persisted next to the playbook. Check
+        // mode has to report what a real run would do, so it never reuses a
+        // cached verdict.
+        let state_cache = if self.cache_state && !ctx.check_mode {
+            let path = task_cache_path(&self.playbook);
+            let config = rustible::state::HashingConfig {
+                enabled: true,
+                cache_ttl: std::time::Duration::from_secs(self.cache_state_ttl),
+                ..Default::default()
+            };
+            let cache = Arc::new(rustible::state::StateHashCache::load_or_new(&path, config));
+            executor = executor.with_state_cache(Arc::clone(&cache));
+            Some((cache, path))
+        } else {
+            None
+        };
+
+        // A manifest describes the whole applied surface, so tasks that found
+        // nothing to do are recorded alongside the ones that changed something.
+        // Without this the manifest holds only the last run's diff.
+        if self.manifest.is_some() {
+            executor = executor.with_manifest_recording(true);
+        }
+
         // Wire up RecoveryManager when auto_rollback or checkpoint_dir is set
         if self.auto_rollback || self.checkpoint_dir.is_some() {
             use rustible::recovery::{RecoveryConfig, RecoveryManager};
@@ -871,6 +1144,8 @@ impl RunArgs {
                     ));
                 }
 
+                save_task_cache(state_cache.as_ref(), ctx);
+
                 if let Some(bundle) = output_bundle.as_ref() {
                     let mut bundle = bundle.lock().expect("output bundle lock poisoned");
                     let end_timestamp = timestamp();
@@ -917,6 +1192,8 @@ impl RunArgs {
         // Close all pooled connections
         ctx.close_connections().await;
 
+        save_task_cache(state_cache.as_ref(), ctx);
+
         // Convert executor results to RecapStats
         let mut stats = RecapStats::new();
         let mut has_failures = false;
@@ -936,6 +1213,16 @@ impl RunArgs {
             if result.failed || result.unreachable {
                 has_failures = true;
             }
+        }
+
+        if let Some(manifest_dir) = &self.manifest {
+            let dir = if manifest_dir.is_empty() {
+                manifest_dir_for_playbook(&self.playbook)
+            } else {
+                PathBuf::from(manifest_dir)
+            };
+            let records = executor.applied_task_records().await;
+            save_host_manifests(&dir, &self.playbook, &records, ctx);
         }
 
         if let Err(save_err) = persist_execution_snapshot(
@@ -1114,7 +1401,7 @@ impl RunArgs {
                 if role_tasks_path.exists() {
                     if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
                         if let Ok(role_tasks) =
-                            serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                            rustible::utils::yaml::from_str::<Vec<serde_yaml::Value>>(&content)
                         {
                             role_task_count += role_tasks.len();
                         }
@@ -1232,7 +1519,7 @@ impl RunArgs {
                 if role_tasks_path.exists() {
                     if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
                         if let Ok(role_tasks) =
-                            serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                            rustible::utils::yaml::from_str::<Vec<serde_yaml::Value>>(&content)
                         {
                             for task in &role_tasks {
                                 task_num += 1;
@@ -1334,7 +1621,7 @@ impl RunArgs {
                     if role_tasks_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&role_tasks_path) {
                             if let Ok(role_tasks) =
-                                serde_yaml::from_str::<Vec<serde_yaml::Value>>(&content)
+                                rustible::utils::yaml::from_str::<Vec<serde_yaml::Value>>(&content)
                             {
                                 for task in &role_tasks {
                                     if self.should_run_task(task) {
@@ -1863,7 +2150,7 @@ impl RunArgs {
             if role_tasks_path.exists() {
                 if let Ok(role_content) = std::fs::read_to_string(&role_tasks_path) {
                     if let Ok(role_tasks) =
-                        serde_yaml::from_str::<Vec<serde_yaml::Value>>(&role_content)
+                        rustible::utils::yaml::from_str::<Vec<serde_yaml::Value>>(&role_content)
                     {
                         // Merge role vars if present
                         let mut role_vars = vars.clone();
@@ -1877,7 +2164,9 @@ impl RunArgs {
                         if defaults_path.exists() {
                             if let Ok(defaults_content) = std::fs::read_to_string(&defaults_path) {
                                 if let Ok(defaults) =
-                                    serde_yaml::from_str::<serde_yaml::Value>(&defaults_content)
+                                    rustible::utils::yaml::from_str::<serde_yaml::Value>(
+                                        &defaults_content,
+                                    )
                                 {
                                     if let Some(mapping) = defaults.as_mapping() {
                                         for (k, v) in mapping {
@@ -1901,7 +2190,9 @@ impl RunArgs {
                         if vars_path.exists() {
                             if let Ok(vars_content) = std::fs::read_to_string(&vars_path) {
                                 if let Ok(role_vars_file) =
-                                    serde_yaml::from_str::<serde_yaml::Value>(&vars_content)
+                                    rustible::utils::yaml::from_str::<serde_yaml::Value>(
+                                        &vars_content,
+                                    )
                                 {
                                     if let Some(mapping) = role_vars_file.as_mapping() {
                                         for (k, v) in mapping {
@@ -1957,7 +2248,7 @@ impl RunArgs {
             if let Some(inv_path) = ctx.inventory() {
                 if inv_path.exists() {
                     let content = std::fs::read_to_string(inv_path)?;
-                    let inventory: serde_yaml::Value = serde_yaml::from_str(&content)?;
+                    let inventory: serde_yaml::Value = rustible::utils::yaml::from_str(&content)?;
 
                     let mut hosts = Vec::new();
                     if let Some(all) = inventory.get("all") {
@@ -2336,7 +2627,7 @@ impl RunArgs {
         if let Some(inv_path) = ctx.inventory() {
             if inv_path.exists() {
                 let content = std::fs::read_to_string(inv_path)?;
-                let inventory: serde_yaml::Value = serde_yaml::from_str(&content)?;
+                let inventory: serde_yaml::Value = rustible::utils::yaml::from_str(&content)?;
 
                 // Look for host-specific vars
                 if let Some(all) = inventory.get("all") {

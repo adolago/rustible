@@ -12,7 +12,6 @@ use crate::utils::shell_escape;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
-use tokio::runtime::Handle;
 use uuid::Uuid;
 
 /// Regex pattern for validating cron time fields
@@ -116,32 +115,42 @@ impl CronJob {
         for (i, line) in lines.iter().enumerate() {
             if let Some(name_start) = line.find("RUSTIBLE_CRON_NAME=") {
                 let name = line[name_start + 19..].trim().to_string();
-                let disabled = line.starts_with('#');
 
                 // Next line should be the actual cron entry
                 if i + 1 < lines.len() {
-                    let job_line = lines[i + 1];
+                    let raw_job_line = lines[i + 1];
+                    // The marker line is a comment either way; only the entry
+                    // itself is commented out when the job is disabled.
+                    let disabled = raw_job_line.trim_start().starts_with('#');
+                    let job_line = raw_job_line.trim_start();
                     let job_line = job_line.strip_prefix('#').unwrap_or(job_line);
 
                     // Parse the cron line
                     let parts: Vec<&str> = job_line.split_whitespace().collect();
-                    if parts.len() >= 6 {
-                        if parts[0].starts_with('@') {
-                            // Special time syntax
-                            return Some(Self {
-                                name,
-                                minute: "*".to_string(),
-                                hour: "*".to_string(),
-                                day: "*".to_string(),
-                                month: "*".to_string(),
-                                weekday: "*".to_string(),
-                                job: parts[1..].join(" "),
-                                user: None,
-                                special_time: Some(parts[0].to_string()),
-                                disabled,
-                                env_vars: Vec::new(),
-                            });
+
+                    // A special time (`@reboot /bin/true`) is two fields, not
+                    // six, so it must be recognised before the field count is
+                    // checked.
+                    if parts.first().is_some_and(|field| field.starts_with('@')) {
+                        if parts.len() < 2 {
+                            return None;
                         }
+                        return Some(Self {
+                            name,
+                            minute: "*".to_string(),
+                            hour: "*".to_string(),
+                            day: "*".to_string(),
+                            month: "*".to_string(),
+                            weekday: "*".to_string(),
+                            job: parts[1..].join(" "),
+                            user: None,
+                            special_time: Some(parts[0].to_string()),
+                            disabled,
+                            env_vars: Vec::new(),
+                        });
+                    }
+
+                    if parts.len() >= 6 {
                         return Some(Self {
                             name,
                             minute: parts[0].to_string(),
@@ -190,9 +199,12 @@ impl CronModule {
     ) -> ModuleResult<(bool, String, String)> {
         let options = Self::get_exec_options(context);
 
-        let result = Handle::current()
-            .block_on(async { connection.execute(command, Some(options)).await })
-            .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
+        let connection = connection.clone();
+        let command = command.to_string();
+        let result = super::block_on_module_future(async move {
+            connection.execute(&command, Some(options)).await
+        })?
+        .map_err(|e| ModuleError::ExecutionFailed(format!("Connection error: {}", e)))?;
 
         Ok((result.success, result.stdout, result.stderr))
     }
@@ -519,6 +531,64 @@ mod tests {
         assert_eq!(CronState::from_str("present").unwrap(), CronState::Present);
         assert_eq!(CronState::from_str("absent").unwrap(), CronState::Absent);
         assert!(CronState::from_str("invalid").is_err());
+    }
+
+    /// A written job must parse back to the same job, or every repeat run
+    /// reports a change.
+    #[test]
+    fn test_cron_job_round_trips() {
+        for disabled in [false, true] {
+            let job = CronJob {
+                name: "round_trip".to_string(),
+                minute: "5".to_string(),
+                hour: "*".to_string(),
+                day: "*".to_string(),
+                month: "*".to_string(),
+                weekday: "*".to_string(),
+                job: "/bin/true".to_string(),
+                user: None,
+                special_time: None,
+                disabled,
+                env_vars: Vec::new(),
+            };
+
+            let rendered = job.to_crontab_line();
+            let lines: Vec<&str> = rendered.lines().collect();
+            let parsed = CronJob::from_crontab_lines(&lines).expect("written job should parse");
+
+            assert_eq!(parsed.name, job.name);
+            assert_eq!(parsed.minute, job.minute);
+            assert_eq!(parsed.hour, job.hour);
+            assert_eq!(parsed.job, job.job);
+            assert_eq!(
+                parsed.disabled, job.disabled,
+                "disabled state must survive a round trip (disabled={})",
+                disabled
+            );
+        }
+    }
+
+    #[test]
+    fn test_cron_job_round_trips_with_special_time() {
+        let job = CronJob {
+            name: "reboot".to_string(),
+            minute: "*".to_string(),
+            hour: "*".to_string(),
+            day: "*".to_string(),
+            month: "*".to_string(),
+            weekday: "*".to_string(),
+            job: "/bin/true".to_string(),
+            user: None,
+            special_time: Some("@reboot".to_string()),
+            disabled: false,
+            env_vars: Vec::new(),
+        };
+
+        let rendered = job.to_crontab_line();
+        let lines: Vec<&str> = rendered.lines().collect();
+        let parsed = CronJob::from_crontab_lines(&lines).expect("written job should parse");
+        assert_eq!(parsed.special_time.as_deref(), Some("@reboot"));
+        assert!(!parsed.disabled);
     }
 
     #[test]

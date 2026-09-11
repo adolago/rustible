@@ -185,8 +185,8 @@ impl TaskIncluder {
             .map_err(|_e| Error::VariablesFileNotFound(resolved_path.clone()))?;
 
         // Parse YAML variables
-        let vars: indexmap::IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(&content)
-            .map_err(|e| Error::Other {
+        let vars: indexmap::IndexMap<String, serde_yaml::Value> =
+            crate::utils::yaml::from_str(&content).map_err(|e| Error::Other {
                 message: format!("Failed to parse variables file: {}", e),
                 source: Some(Box::new(e)),
             })?;
@@ -272,7 +272,7 @@ impl TaskIncluder {
             )
         })?;
 
-        let document: serde_yaml::Value = serde_yaml::from_str(&content)
+        let document: serde_yaml::Value = crate::utils::yaml::from_str(&content)
             .map_err(|_| Error::playbook_parse(path, "Invalid included YAML", None))?;
         crate::executor::playbook::reject_unprotected_no_log(&document).map_err(|_| {
             Error::playbook_parse(
@@ -281,7 +281,7 @@ impl TaskIncluder {
                 None,
             )
         })?;
-        let tasks: Vec<Task> = serde_yaml::from_str(&content).map_err(|e| {
+        let tasks: Vec<Task> = crate::utils::yaml::from_str(&content).map_err(|e| {
             Error::playbook_parse(
                 path,
                 format!("Failed to parse tasks: {}", e),

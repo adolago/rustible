@@ -2513,7 +2513,9 @@ fn test_shell_complex_pipeline() {
     let mut params = HashMap::new();
     params.insert(
         "cmd".to_string(),
-        serde_json::json!("echo -e 'apple\\nbanana\\ncherry' | sort | head -1"),
+        // printf is portable; `echo -e` prints its own flag under dash, and
+        // the stray "-e" then sorts differently depending on the locale.
+        serde_json::json!("printf 'apple\\nbanana\\ncherry\\n' | sort | head -1"),
     );
 
     let context = ModuleContext::default();

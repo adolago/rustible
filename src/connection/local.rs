@@ -131,6 +131,10 @@ impl Connection for LocalConnection {
         &self.identifier
     }
 
+    fn is_local(&self) -> bool {
+        true
+    }
+
     async fn is_alive(&self) -> bool {
         // Local connection is always alive
         true

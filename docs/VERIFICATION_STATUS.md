@@ -36,10 +36,59 @@ full remote execution or Ansible parity. The state draft contains bounded guards
 and integrity fixes; planning, concurrent updates, provider coverage, and recovery
 still have open findings. Read each PR's migration note before using its branch.
 
+## Default test suite
+
+The default suite is green on the current branch. Measured on 11 September 2026
+with `cargo test --no-fail-fast -- --test-threads=1` on Debian 13 x86_64, on a
+clean tree at `39316b4a`: 177 result groups, 12132 passed, 0 failed, 16
+ignored, exit 0. Commits after that one are documentation only.
+
+Two failures were found and fixed to reach this: `provides`/`requires` were
+absent from the policy traversal keyword list, so every serialized task was
+rejected as ambiguous; and the latency-stability check measured its first ten
+iterations against its last with no warm-up, so ordinary start-up cost tripped
+its lower bound. Both are pinned by the tests that caught them.
+
+What this does and does not establish: it is one run of the default suite on
+one platform, at one commit, by one person. It is not the required GitHub
+workflows (`ci.yml`, `security.yml`, `docker.yml`), which have not been run on
+this commit from here, and it does not include the Docker-gated remote suite —
+`tests/remote_modules_ssh_tests.rs` runs only with `RUSTIBLE_TEST_SSH_DOCKER=1`
+and passed separately (12 tests, against a throwaway sshd container).
+
+## Pre-PR adversarial review (11 September 2026)
+
+The branch behind the green suite above was reviewed by a fan-out of
+independent reviewers, each finding verified adversarially before being kept.
+Forty findings survived, ten rated high. A green suite and a clean review are
+different claims, and this page records both.
+
+Fixed on the branch: `run --manifest` never enabled unchanged-task recording,
+so the feature recorded only the last run's diff — the exact failure its own
+design note warned about; the test meant to catch that could not fail; the
+`wait_for` remote port probe interpolated `host` unescaped into a `bash -c`
+string; `ManifestStore` built a filename straight from an inventory hostname;
+and a manifest write failure skipped every remaining host.
+
+Known and not fixed here, disclosed rather than hidden: the manifest's recorded
+desired state is the task's untemplated arguments; a task naming several
+resources replays in full once per resource; the replay drops `become`, vars and
+facts; `unarchive` stages a remote upload at a predictable `/tmp` path and drops
+`checksum`, `exclude` and `include` on the remote path; lockfile paths resolve
+against the working directory; and role dedupe keys ignore `when`, `tags` and
+`tasks_from`. The full list is in the pull request.
+
+Separately, the review surfaced a **pre-existing** defect outside this branch:
+`file: state=directory` defaults `recurse` to `true` (changed in `13471667`,
+December 2025, with a comment claiming it matches Ansible — Ansible defaults it
+to `no`), so setting `mode` on a directory silently rewrites the mode of
+everything inside it. Observed widening a `0640` file to `0750`.
+
 ## Verification still required
 
 - Required CI on the final combined source and its dependency graph, including
-  applicable feature and platform builds.
+  applicable feature and platform builds. The default `cargo test` suite is
+  green locally; the workflows themselves are not verified here.
 - Real transport, cloud, Windows-target, and physical-cluster behavior in
   disposable environments with explicit workflow expectations.
 - Full package verification, distribution support, and exact-image scanning.

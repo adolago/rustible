@@ -36,6 +36,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -173,6 +174,92 @@ impl HostManifest {
     pub fn get_fact(&self, key: &str) -> Option<&JsonValue> {
         self.host_facts.get(key)
     }
+}
+
+/// Modules that manage no durable resource, so a manifest ignores them.
+///
+/// A command's output, a debug message or a fact assignment has nothing to
+/// compare against on the next run; recording them would inflate the manifest
+/// with rows that can only ever be `Unknown`.
+const UNTRACKED_MODULES: &[&str] = &[
+    "assert",
+    "command",
+    "debug",
+    "fail",
+    "fetch",
+    "gather_facts",
+    "import_role",
+    "import_tasks",
+    "include_role",
+    "include_tasks",
+    "include_vars",
+    "meta",
+    "pause",
+    "ping",
+    "raw",
+    "script",
+    "set_fact",
+    "setup",
+    "shell",
+    "slurp",
+    "stat",
+    "wait_for",
+];
+
+/// The argument keys that identify a resource, most specific first.
+const IDENTITY_KEYS: &[&str] = &["path", "dest", "name", "repo", "src", "key", "user"];
+
+/// The resource family a module belongs to.
+///
+/// Grouping modules that manage the same kind of thing keeps
+/// `resources_by_type("file")` meaningful whether the file was written by
+/// `copy`, `template` or `lineinfile`.
+fn resource_type_for(module: &str) -> &str {
+    match module {
+        "blockinfile" | "copy" | "file" | "get_url" | "lineinfile" | "replace" | "template"
+        | "unarchive" => "file",
+        "apt" | "dnf" | "package" | "pip" | "yum" => "package",
+        "service" | "systemd" | "systemd_unit" => "service",
+        other => other,
+    }
+}
+
+/// Build the resources a task's arguments address.
+///
+/// Returns `None` for modules that manage nothing durable and for arguments
+/// with no identifying key, so a manifest never records a resource it would be
+/// unable to re-check. A package module naming several packages yields one
+/// resource each, so drift can point at the one that moved.
+pub fn resource_from_task_args(
+    module: &str,
+    args: &JsonValue,
+) -> Option<(String, Vec<String>, JsonValue)> {
+    if UNTRACKED_MODULES.contains(&module) {
+        return None;
+    }
+
+    let object = args.as_object()?;
+    let (_, value) = IDENTITY_KEYS
+        .iter()
+        .find_map(|key| object.get(*key).map(|value| (*key, value)))?;
+
+    // The identity stays whole: a path is one resource even when it contains a
+    // comma, and only an actual list becomes several.
+    let ids: Vec<String> = match value {
+        JsonValue::String(text) if !text.is_empty() => vec![text.clone()],
+        JsonValue::Array(items) => items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => return None,
+    };
+    if ids.is_empty() {
+        return None;
+    }
+
+    Some((resource_type_for(module).to_string(), ids, args.clone()))
 }
 
 impl Default for HostManifest {
@@ -503,8 +590,28 @@ impl ManifestStore {
     }
 
     /// Get the path for a host's manifest
+    ///
+    /// An inventory hostname is user input: interpolating it straight into a
+    /// filename would let `../` or a separator write outside the store, so
+    /// anything that is not a plain host character is replaced.
     fn manifest_path(&self, hostname: &str) -> PathBuf {
-        self.base_dir.join(format!("{}.manifest.json", hostname))
+        let safe: String = hostname
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        // A name that is only dots would still address a directory entry.
+        let safe = if safe.is_empty() || safe.chars().all(|c| c == '.') {
+            format!("host_{:x}", Sha256::digest(hostname.as_bytes()))
+        } else {
+            safe
+        };
+        self.base_dir.join(format!("{}.manifest.json", safe))
     }
 
     /// Ensure the base directory exists
@@ -625,6 +732,40 @@ impl ManifestStore {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn resource_identity_keeps_a_path_with_a_comma_whole() {
+        let args = serde_json::json!({ "path": "/tmp/a,b.txt", "state": "touch" });
+        let (kind, ids, _) = resource_from_task_args("file", &args).expect("tracked");
+        assert_eq!(kind, "file");
+        assert_eq!(ids, vec!["/tmp/a,b.txt".to_string()]);
+    }
+
+    #[test]
+    fn a_package_list_becomes_one_resource_each() {
+        let args = serde_json::json!({ "name": ["nginx", "curl"], "state": "present" });
+        let (kind, ids, _) = resource_from_task_args("apt", &args).expect("tracked");
+        assert_eq!(kind, "package");
+        assert_eq!(ids, vec!["nginx".to_string(), "curl".to_string()]);
+    }
+
+    #[test]
+    fn modules_that_only_read_are_not_tracked() {
+        for module in ["stat", "slurp", "fetch", "command", "debug"] {
+            let args = serde_json::json!({ "path": "/etc/hosts", "src": "/etc/hosts" });
+            assert!(
+                resource_from_task_args(module, &args).is_none(),
+                "{} manages nothing durable and must stay out of a manifest",
+                module
+            );
+        }
+    }
+
+    #[test]
+    fn arguments_with_no_identity_are_not_tracked() {
+        let args = serde_json::json!({ "state": "present" });
+        assert!(resource_from_task_args("file", &args).is_none());
+    }
     use super::*;
     use serde_json::json;
     use tempfile::tempdir;
