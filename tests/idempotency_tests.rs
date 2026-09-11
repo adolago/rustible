@@ -394,6 +394,51 @@ mod file_module {
         let result2 = module.execute(&params, &context).unwrap();
         assert!(!result2.changed, "Second run should also be unchanged");
     }
+
+    /// Regression: while `recurse` defaulted to true, `file` set the mode of
+    /// every file inside the directory to 0750 and `copy` set it back to 0640,
+    /// so both tasks reported changed on every run.
+    #[test]
+    fn test_file_directory_mode_and_copy_into_it_idempotent() {
+        let temp = TempDir::new().unwrap();
+        let dir = temp.path().join("app");
+        let child = dir.join("app.conf");
+
+        let mut dir_params: ModuleParams = HashMap::new();
+        dir_params.insert("path".to_string(), serde_json::json!(dir.to_str().unwrap()));
+        dir_params.insert("state".to_string(), serde_json::json!("directory"));
+        dir_params.insert("mode".to_string(), serde_json::json!("0750"));
+
+        let mut copy_params: ModuleParams = HashMap::new();
+        copy_params.insert("content".to_string(), serde_json::json!("setting=1\n"));
+        copy_params.insert(
+            "dest".to_string(),
+            serde_json::json!(child.to_str().unwrap()),
+        );
+        copy_params.insert("mode".to_string(), serde_json::json!("0640"));
+
+        let file = FileModule;
+        let copy = CopyModule;
+        let context = ModuleContext::default();
+        let run_pair = || {
+            let file_result = file.execute(&dir_params, &context).unwrap();
+            let copy_result = copy.execute(&copy_params, &context).unwrap();
+            (file_result, copy_result)
+        };
+
+        let (file1, copy1) = run_pair();
+        assert!(file1.changed, "First file run creates: {}", file1.msg);
+        assert!(copy1.changed, "First copy run creates: {}", copy1.msg);
+
+        let (file2, copy2) = run_pair();
+        assert!(!file2.changed, "Second file run must be ok: {}", file2.msg);
+        assert!(!copy2.changed, "Second copy run must be ok: {}", copy2.msg);
+
+        let mode_of =
+            |path: &std::path::Path| fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode_of(&dir), 0o750);
+        assert_eq!(mode_of(&child), 0o640);
+    }
 }
 
 // ============================================================================

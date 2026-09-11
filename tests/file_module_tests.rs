@@ -90,9 +90,10 @@ fn test_directory_create_nested() {
     let path = temp.path().join("a").join("b").join("c").join("d");
     let path_str = path.to_str().unwrap();
 
+    // Like Ansible, parents are created without `recurse`, which only
+    // controls attributes on the directory's contents.
     let module = FileModule;
-    let mut params = params_with_state(path_str, "directory");
-    params.insert("recurse".to_string(), serde_json::json!(true));
+    let params = params_with_state(path_str, "directory");
     let context = ModuleContext::default();
 
     let result = module.execute(&params, &context).unwrap();
@@ -263,9 +264,9 @@ fn test_absent_remove_directory_with_contents() {
     fs::write(path.join("file1.txt"), "content1").unwrap();
     fs::write(path.join("subdir/file2.txt"), "content2").unwrap();
 
+    // Like Ansible, state=absent removes a directory tree without `recurse`.
     let module = FileModule;
-    let mut params = params_with_state(path_str, "absent");
-    params.insert("recurse".to_string(), serde_json::json!(true));
+    let params = params_with_state(path_str, "absent");
     let context = ModuleContext::default();
 
     let result = module.execute(&params, &context).unwrap();
@@ -557,6 +558,73 @@ fn test_mode_change_on_directory() {
         meta.permissions().mode() & 0o7777,
         0o700,
         "Directory should have updated permissions"
+    );
+}
+
+/// Permission bits of `path`
+fn mode_of(path: &std::path::Path) -> u32 {
+    fs::metadata(path).unwrap().permissions().mode() & 0o7777
+}
+
+/// A 0700 directory holding a 0640 file and a 0700 subdirectory
+fn directory_with_contents(
+    temp: &TempDir,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let dir = temp.path().join("testdir");
+    let child = dir.join("child.txt");
+    let subdir = dir.join("subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(&child, "content").unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&subdir, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o640)).unwrap();
+    (dir, child, subdir)
+}
+
+/// Regression: `recurse` used to default to true, so setting a directory's
+/// mode also rewrote everything inside it (a 0640 file became 0750).
+/// Ansible defaults `recurse` to false.
+#[test]
+fn test_mode_on_directory_leaves_contents_alone_by_default() {
+    let temp = TempDir::new().unwrap();
+    let (dir, child, subdir) = directory_with_contents(&temp);
+
+    let module = FileModule;
+    let mut params = params_with_state(dir.to_str().unwrap(), "directory");
+    params.insert("mode".to_string(), serde_json::json!("0750"));
+    let context = ModuleContext::default();
+
+    let result = module.execute(&params, &context).unwrap();
+
+    assert!(
+        result.changed,
+        "Should report changed when updating directory permissions"
+    );
+    assert_eq!(mode_of(&dir), 0o750, "Directory mode should be updated");
+    assert_eq!(mode_of(&child), 0o640, "File inside must keep its mode");
+    assert_eq!(mode_of(&subdir), 0o700, "Subdirectory must keep its mode");
+}
+
+#[test]
+fn test_mode_on_directory_recurses_when_requested() {
+    let temp = TempDir::new().unwrap();
+    let (dir, child, subdir) = directory_with_contents(&temp);
+
+    let module = FileModule;
+    let mut params = params_with_state(dir.to_str().unwrap(), "directory");
+    params.insert("mode".to_string(), serde_json::json!("0750"));
+    params.insert("recurse".to_string(), serde_json::json!(true));
+    let context = ModuleContext::default();
+
+    let result = module.execute(&params, &context).unwrap();
+
+    assert!(result.changed, "Should report changed when recursing");
+    assert_eq!(mode_of(&dir), 0o750, "Directory mode should be updated");
+    assert_eq!(mode_of(&child), 0o750, "recurse=true updates files inside");
+    assert_eq!(
+        mode_of(&subdir),
+        0o750,
+        "recurse=true updates subdirectories"
     );
 }
 
