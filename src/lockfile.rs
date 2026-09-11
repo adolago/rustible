@@ -192,6 +192,100 @@ pub enum ResourceType {
     S3,
 }
 
+/// Re-hash a locally installed role or collection and compare it.
+fn verify_locked_tree(
+    kind: &str,
+    name: &str,
+    source: &DependencySource,
+    expected: &str,
+) -> LockfileResult<()> {
+    let DependencySource::Local { path } = source else {
+        return Err(LockfileError::ResolutionFailed(format!(
+            "Integrity verification for {} '{}' is not supported for {:?} sources; the artifact \
+would have to be fetched to be checked",
+            kind, name, source
+        )));
+    };
+
+    let actual = directory_checksum(Path::new(path)).map_err(|error| {
+        LockfileError::ResolutionFailed(format!(
+            "Could not re-read {} '{}' at {}: {}",
+            kind, name, path, error
+        ))
+    })?;
+    if !expected.eq_ignore_ascii_case(&actual) {
+        return Err(LockfileError::IntegrityFailed {
+            name: name.to_string(),
+            expected: expected.to_string(),
+            actual,
+        });
+    }
+    Ok(())
+}
+
+/// A checksum over every regular file in a directory tree.
+///
+/// Paths are hashed alongside contents and visited in sorted order, so the
+/// result does not depend on directory iteration order, and a renamed file
+/// changes the checksum even when the bytes are unchanged. Symlinks are
+/// recorded by their target rather than followed, so a link swapped to point
+/// elsewhere is a change and a link loop cannot hang the scan.
+pub fn directory_checksum(root: &Path) -> LockfileResult<String> {
+    let mut entries: Vec<(String, PathBuf, bool)> = Vec::new();
+    collect_tree(root, root, &mut entries)?;
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let mut hasher = Sha256::new();
+    for (relative, path, is_symlink) in entries {
+        hasher.update(relative.as_bytes());
+        hasher.update([0]);
+        if is_symlink {
+            hasher.update(b"link:");
+            hasher.update(fs::read_link(&path)?.to_string_lossy().as_bytes());
+        } else {
+            let mut file = fs::File::open(&path)?;
+            let mut buffer = [0u8; 8192];
+            loop {
+                match file.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => hasher.update(&buffer[..count]),
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        hasher.update([0]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn collect_tree(
+    root: &Path,
+    dir: &Path,
+    entries: &mut Vec<(String, PathBuf, bool)>,
+) -> LockfileResult<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned();
+
+        if metadata.is_symlink() {
+            entries.push((relative, path, true));
+        } else if metadata.is_dir() {
+            collect_tree(root, &path, entries)?;
+        } else if metadata.is_file() {
+            entries.push((relative, path, false));
+        }
+        // Anything else (a socket, a FIFO) is not part of a role's content.
+    }
+    Ok(())
+}
+
 impl Default for Lockfile {
     fn default() -> Self {
         Self {
@@ -293,10 +387,20 @@ impl Lockfile {
     /// Role/collection installation paths and remote content are not resolved by
     /// this API, so their integrity cannot be established here.
     pub fn verify_integrity(&self) -> LockfileResult<()> {
-        if !self.roles.is_empty() || !self.collections.is_empty() {
-            return Err(LockfileError::ResolutionFailed(
-                "Integrity verification for roles and collections is not supported; no installed artifacts were verified".into(),
-            ));
+        // A role or collection installed from a local path can be re-hashed
+        // from its directory. A Galaxy or Git artifact cannot be checked
+        // without fetching it, and claiming otherwise would make `verify`
+        // pass on something it never looked at.
+        for role in self.roles.values() {
+            verify_locked_tree("role", &role.name, &role.source, &role.checksum)?;
+        }
+        for collection in self.collections.values() {
+            verify_locked_tree(
+                "collection",
+                &collection.name,
+                &collection.source,
+                &collection.checksum,
+            )?;
         }
         for resource in self.resources.values() {
             if resource.resource_type != ResourceType::File {

@@ -369,9 +369,12 @@ pub struct StateKey {
 - On re-run: compare hash, skip if unchanged
 - **Target**: "Instant" re-runs for unchanged configurations
 
-**Lockfile Support:** :test_tube: Partial. `rustible lock` records the local
-files a playbook depends on with their checksums, and `lock verify` detects an
-edit. Roles and collections need Galaxy resolution and are not locked yet.
+**Lockfile Support:** :test_tube: Implemented (Beta quality). `rustible lock`
+records the local files a playbook depends on with their checksums, plus every
+role under `roles/` and every collection under `collections/ansible_collections`
+by a checksum over its file tree, and `lock verify` detects an edit to any of
+them. A role that exists only as a Galaxy reference with nothing installed is
+not recorded, because `verify` cannot check an artifact it has never read.
 
 ```yaml
 # rustible.lock
