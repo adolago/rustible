@@ -191,9 +191,11 @@ impl FeatureRegistry {
             "connection",
             "SSH remote connections",
         ));
+        // Fact gathering is batched into one round trip; general task
+        // pipelining is implemented but not wired into the executor.
         self.features.push(Feature::new(
             "ssh_pipelining",
-            FeatureStatus::Stable,
+            FeatureStatus::Beta,
             "0.1.0",
             "connection",
             "SSH pipelining for performance",
@@ -251,9 +253,11 @@ impl FeatureRegistry {
             "security",
             "Ansible Vault support",
         ));
+        // Escalation reaches remote targets for the modules that pass it into
+        // their commands; transfer-based modules and the control node refuse it.
         self.features.push(Feature::new(
             "become_escalation",
-            FeatureStatus::Stable,
+            FeatureStatus::Beta,
             "0.1.0",
             "security",
             "Privilege escalation",

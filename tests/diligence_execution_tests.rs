@@ -280,9 +280,26 @@ fn loop_notifications_keep_the_notifying_host() {
 
 #[test]
 fn play_privilege_escalation_cannot_fall_through_to_local_handlers() {
+    // Handlers inherit the play's `become`, so the notified handler must be
+    // refused rather than run as the login user. The notifying debug task
+    // needs no escalation and still runs.
     let result = run("become-handler.yml", &[], false, false);
     assert!(!result.output.status.success());
-    assert!(tasks(&result).is_empty());
+    let tasks = tasks(&result);
+    assert!(
+        tasks
+            .iter()
+            .any(|(name, _, status)| *name == "identity-handler" && *status == "failed"),
+        "the escalated handler must fail instead of running unescalated: {:?}",
+        tasks
+    );
+    assert!(
+        !tasks
+            .iter()
+            .any(|(name, _, status)| *name == "identity-handler" && *status != "failed"),
+        "the handler must never report success: {:?}",
+        tasks
+    );
 }
 
 #[test]

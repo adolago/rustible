@@ -153,7 +153,16 @@ impl JsonPersistence {
 impl StatePersistence for JsonPersistence {
     fn save_snapshot(&self, snapshot: &StateSnapshot) -> StateResult<()> {
         let file_path = self.snapshot_path(&snapshot.id);
-        let file = File::create(&file_path)?;
+        // Snapshots can carry the previous contents of managed files, so they
+        // are readable by their owner only.
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(&file_path)?;
         let writer = BufWriter::new(file);
         serde_json::to_writer_pretty(writer, snapshot)?;
 

@@ -61,14 +61,15 @@ cargo build --release --features full-cloud
 | Roles | Yes | Yes | Full structure |
 | Tags | Yes | Yes | `--tags`/`--skip-tags` |
 | Fact gathering | Yes | Yes | `gather_facts`/`setup` |
-| Privilege escalation | Yes | Yes | `become`/`become_user`/`become_method` |
+| Privilege escalation | Yes | Beta | `become` reaches remote targets for modules that pass it into their commands; transfer-based modules and control-node escalation are refused |
 | Vault encryption | Yes | Yes | Different format (AES-256-GCM) |
 | Check mode | Yes | Yes | `--check` flag |
 | Diff mode | Yes | Yes | `--diff` flag |
 | Async tasks (`async_tasks`) | Yes | Partial | Beta async execution |
 | Delegation (`delegate_to`) | Yes | Yes | Targeted host delegation |
 | Run once (`run_once`) | Yes | Yes | Single host execution |
-| SSH pipelining (`ssh_pipelining`) | Yes | Yes | Reduce SSH round trips |
+| SSH pipelining (`ssh_pipelining`) | Yes | Beta | Fact gathering is batched into one round trip; general task pipelining is not wired |
+| Declared task order (`provides`/`requires`) | No | Yes | Rustible extension: stable topological ordering within a play |
 
 ---
 
@@ -94,8 +95,8 @@ cargo build --release --features full-cloud
 | Docker | Yes | Yes | `docker` | Via Bollard |
 | Kubernetes | Yes | Yes | `kubernetes` | Via kube-rs |
 | WinRM | Yes | Partial | `winrm` | Experimental |
-| Podman | Yes | No | - | Planned for v1.0 |
-| AWS SSM | Yes | No | - | Planned for v1.0 |
+| Podman | Yes | Yes | `podman` | Rootless containers |
+| AWS SSM | Yes | Yes | `aws` | EC2 Session Manager |
 
 ---
 
@@ -105,14 +106,21 @@ cargo build --release --features full-cloud
 |---------|---------|----------|-------|
 | Resource graph (`resource_graph`) | No | Partial | Terraform-like dependencies |
 | State management (`state_management`) | No | Partial | Terraform-style state tracking |
-| Drift detection (`drift_detection`) | No | No | Experimental |
-| Agent mode (`agent_mode`) | No | No | Experimental persistent agent |
-| Native bindings (`native_bindings`) | No | No | Experimental system integrations |
+| Drift detection (`drift_detection`) | No | Yes | `drift detect` checks each host through its own connection |
+| Agent mode (`agent_mode`) | No | Partial | `agent build/deploy/status/stop` and `run --agent-mode`; the deployed agent is one-shot per command |
+| Native bindings (`native_bindings`) | No | Partial | Local user, group and package checks read the system databases directly |
 | Checkpoints/rollback (`checkpoints`) | No | Yes | Checkpoint and rollback support, 18 tests |
 
 ---
 
 ## Module Compatibility
+
+Module availability is one question; running a module against a *remote* host
+is another. The executor only dispatches a module remotely once its transport
+has been reviewed — see `docs/FEATURE_STATUS.md` for the verified list and
+`Task::REMOTE_VERIFIED_MODULES` for the source of truth. A module with a
+local-filesystem implementation and no connection path is refused on a remote
+host rather than run against the control node.
 
 ### Stable Modules (No Feature Flag Required)
 

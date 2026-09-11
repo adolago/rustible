@@ -365,19 +365,18 @@ fn modules_without_a_verified_remote_transport_are_refused() {
 
     let target = SshTarget::start();
     let inventory = target.write_inventory();
-    // blockinfile still edits through std::fs, so it must be refused rather
-    // than editing a file on the control node.
+    // archive still writes through std::fs, so it must be refused rather than
+    // creating an archive on the control node.
     let playbook = target.write_playbook(
         r#"---
 - name: Unverified module
   hosts: all
   gather_facts: false
   tasks:
-    - name: Edit a remote file
-      blockinfile:
-        path: /tmp/rustible-should-not-exist
-        block: "written remotely"
-        create: true
+    - name: Archive a remote directory
+      archive:
+        path: /etc
+        dest: /tmp/rustible-should-not-exist
 "#,
     );
 
@@ -442,6 +441,14 @@ fn file_editing_modules_act_on_the_target() {
         key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA rustible-test"
         state: present
 
+    - name: Ensure a managed block
+      blockinfile:
+        path: /etc/rustible-block.conf
+        block: |
+          setting_one = 1
+          setting_two = 2
+        create: true
+
     - name: Run a transferred script
       script: {}
 "#,
@@ -473,6 +480,12 @@ fn file_editing_modules_act_on_the_target() {
             .exec("test -e /tmp/rustible-script-marker && echo present")
             .contains("present"),
         "the script should have run on the target"
+    );
+    assert!(
+        target
+            .exec("cat /etc/rustible-block.conf")
+            .contains("setting_two = 2"),
+        "blockinfile should have written the managed block on the target"
     );
     assert!(
         !Path::new("/etc/rustible-test.conf").exists(),

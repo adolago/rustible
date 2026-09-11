@@ -284,6 +284,14 @@ pub(crate) fn build_connection_config(
                 .clone()
                 .or_else(|| cli_private_key.map(|path| path.to_string_lossy().to_string())),
             connect_timeout: Some(timeout),
+            // Ansible does not retry the initial connection, and retrying
+            // multiplies the wait for an unreachable host by four. Opt back in
+            // per host with `ansible_ssh_retries`.
+            retries: vars
+                .get("ansible_ssh_retries")
+                .and_then(|value| value.as_u64())
+                .map(|value| value as u32)
+                .or(Some(0)),
             connection: Some(host.connection.connection.to_string()),
             strict_host_key_checking: vars.get("ansible_host_key_checking").and_then(yaml_bool),
             user_known_hosts_file: vars

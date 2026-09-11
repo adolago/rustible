@@ -527,6 +527,12 @@ pub struct Executor {
     state_cache: Option<Arc<crate::state::StateHashCache>>,
     /// Whether tasks record resource state before changing it, for rollback
     capture_rollback_state: bool,
+    /// Privilege escalation settings of the play being executed.
+    ///
+    /// Handlers are stored separately from the play's task list, so they need
+    /// their own copy of the play's `become` settings; without it a play with
+    /// `become: true` would run its handlers as the login user.
+    play_become: RwLock<Option<(bool, Option<String>)>>,
 }
 
 impl Executor {
@@ -552,6 +558,7 @@ impl Executor {
             event_callback: None,
             state_cache: None,
             capture_rollback_state: false,
+            play_become: RwLock::new(None),
         }
     }
 
@@ -577,6 +584,7 @@ impl Executor {
             event_callback: None,
             state_cache: None,
             capture_rollback_state: false,
+            play_become: RwLock::new(None),
         }
     }
 
@@ -651,6 +659,26 @@ impl Executor {
         "group",
         "lineinfile",
     ];
+
+    /// Modules that never touch the target, so a play made only of them needs
+    /// no connection at all.
+    const CONNECTIONLESS_MODULES: &'static [&'static str] = &[
+        "assert",
+        "debug",
+        "fail",
+        "import_tasks",
+        "include_tasks",
+        "include_vars",
+        "meta",
+        "pause",
+        "set_fact",
+    ];
+
+    /// Whether a task requires a transport to the host.
+    fn task_needs_connection(task: &Task) -> bool {
+        let module = ModuleRegistry::normalize_module_name(&task.module);
+        !Self::CONNECTIONLESS_MODULES.contains(&module)
+    }
 
     /// Build a `TaskStateRecord` from task execution data for rollback tracking.
     ///
@@ -939,15 +967,18 @@ impl Executor {
         }
         all_tasks.extend(play.tasks.iter().cloned());
         all_tasks.extend(play.post_tasks.iter().cloned());
+        let play_become = play.r#become || self.config.r#become;
+        let play_become_user = play
+            .become_user
+            .clone()
+            .or_else(|| Some(self.config.become_user.clone()));
         for task in &mut all_tasks {
-            task.r#become |= play.r#become || self.config.r#become;
+            task.r#become |= play_become;
             if task.become_user.is_none() {
-                task.become_user = play
-                    .become_user
-                    .clone()
-                    .or_else(|| Some(self.config.become_user.clone()));
+                task.become_user = play_become_user.clone();
             }
         }
+        *self.play_become.write().await = Some((play_become, play_become_user));
 
         // Filter the actual flattened schedule, including pre/post and role tasks.
         let mut start = self.start_at_task.lock().await;
@@ -1346,8 +1377,12 @@ impl Executor {
                 unreachable: false,
             };
 
-            // Get connection for host once before running tasks
-            let (host_connection, connection_error) = self.connect_host(host).await;
+            // Connect lazily: a play of debug or set_fact tasks needs no
+            // transport, and an unreachable host should not cost a connection
+            // timeout before the executor knows whether one is needed.
+            let mut host_connection = None;
+            let mut connection_error = None;
+            let mut connection_attempted = false;
 
             for task in tasks {
                 if host_result.failed || host_result.unreachable {
@@ -1358,6 +1393,13 @@ impl Executor {
                     task: task.name.clone(),
                     host: Some(host.clone()),
                 });
+
+                if !connection_attempted && Self::task_needs_connection(task) {
+                    connection_attempted = true;
+                    let (connection, error) = self.connect_host(host).await;
+                    host_connection = connection;
+                    connection_error = error;
+                }
 
                 let mut ctx = ExecutionContext::new(host.clone())
                     .with_check_mode(self.config.check_mode)
@@ -1497,6 +1539,7 @@ impl Executor {
                 let pipelining = self.config.pipelining;
                 let state_cache = self.state_cache.clone();
                 let capture_rollback_state = self.capture_rollback_state;
+                let needs_connection = tasks.iter().any(Self::task_needs_connection);
                 let tx_id = tx_id.clone();
                 let event_callback = event_callback.clone();
 
@@ -1511,18 +1554,18 @@ impl Executor {
                     };
 
                     // Get connection for host, keeping the failure reason so a
-                    // task can report why the host is unreachable.
+                    // task can report why the host is unreachable. A task that
+                    // never touches the target skips this entirely.
                     let (host_connection, connection_error) =
-                        if let Some(ref factory) = connection_factory {
-                            match factory.get_connection(&host).await {
+                        match (&connection_factory, needs_connection) {
+                            (Some(factory), true) => match factory.get_connection(&host).await {
                                 Ok(conn) => (Some(conn), None),
                                 Err(e) => {
                                     warn!("Failed to get connection for host {}: {}", host, e);
                                     (None, Some(e.to_string()))
                                 }
-                            }
-                        } else {
-                            (None, None)
+                            },
+                            _ => (None, None),
                         };
 
                     for task in tasks.iter() {
@@ -1806,8 +1849,14 @@ impl Executor {
             let host = &hosts[0];
             let _permit = self.semaphore.acquire().await.unwrap();
 
-            // Get connection for host
-            let (host_connection, connection_error) = self.connect_host(host).await;
+            // A task that never touches the target needs no transport, and an
+            // unreachable host should not cost a connection timeout for a
+            // debug or set_fact task.
+            let (host_connection, connection_error) = if Self::task_needs_connection(task) {
+                self.connect_host(host).await
+            } else {
+                (None, None)
+            };
 
             self.emit_event(ExecutionEvent::TaskStart {
                 task: task.name.clone(),
@@ -1938,24 +1987,25 @@ impl Executor {
                 let pipelining = self.config.pipelining;
                 let state_cache = self.state_cache.clone();
                 let capture_rollback_state = self.capture_rollback_state;
+                let needs_connection = Self::task_needs_connection(&task_arc);
                 let event_callback = event_callback.clone();
 
                 tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.unwrap();
 
                     // Get connection for host, keeping the failure reason so a
-                    // task can report why the host is unreachable.
+                    // task can report why the host is unreachable. A task that
+                    // never touches the target skips this entirely.
                     let (host_connection, connection_error) =
-                        if let Some(ref factory) = connection_factory {
-                            match factory.get_connection(&host).await {
+                        match (&connection_factory, needs_connection) {
+                            (Some(factory), true) => match factory.get_connection(&host).await {
                                 Ok(conn) => (Some(conn), None),
                                 Err(e) => {
                                     warn!("Failed to get connection for host {}: {}", host, e);
                                     (None, Some(e.to_string()))
                                 }
-                            }
-                        } else {
-                            (None, None)
+                            },
+                            _ => (None, None),
                         };
 
                     if let Some(cb) = &event_callback {
@@ -2305,11 +2355,20 @@ impl Executor {
             if hosts.is_empty() {
                 continue;
             }
+            // Handlers inherit the play's escalation, as they do in Ansible.
+            let (become_enabled, become_user) = self
+                .play_become
+                .read()
+                .await
+                .clone()
+                .unwrap_or((self.config.r#become, Some(self.config.become_user.clone())));
             let task = Task {
                 name: handler.name.clone(),
                 module: handler.module.clone(),
                 args: handler.args.clone(),
                 when: handler.when.clone(),
+                r#become: become_enabled,
+                become_user,
                 ..Task::default()
             };
             let task_results = self.run_task_on_hosts(&hosts, &task, tx_id.clone()).await?;

@@ -1365,7 +1365,11 @@ impl Task {
         });
 
         // A small regular file's content makes a content rollback possible.
-        if metadata.is_file() && metadata.len() <= MAX_CAPTURED_CONTENT {
+        // Only world-readable files qualify: recording the contents of
+        // /etc/shadow or a private key in a state snapshot would hand it to
+        // anyone who can read the state directory.
+        let world_readable = metadata.permissions().mode() & 0o004 != 0;
+        if metadata.is_file() && world_readable && metadata.len() <= MAX_CAPTURED_CONTENT {
             if let Ok(content) = std::fs::read_to_string(path) {
                 state["content"] = JsonValue::String(content);
             }
@@ -1438,6 +1442,7 @@ impl Task {
     const REMOTE_VERIFIED_MODULES: &'static [&'static str] = &[
         "apt",
         "authorized_key",
+        "blockinfile",
         "command",
         "copy",
         "cron",
@@ -1488,6 +1493,7 @@ impl Task {
     const BECOME_CAPABLE_MODULES: &'static [&'static str] = &[
         "apt",
         "authorized_key",
+        "blockinfile",
         "command",
         "cron",
         "dnf",
@@ -1542,6 +1548,23 @@ impl Task {
                 "Local get_url destination writes are not implemented; refusing execution",
             ));
         }
+        // A task whose transport is remote must never run through a local
+        // connection: an inventory that says local while the play asks for ssh
+        // would otherwise execute on the control node.
+        if !local
+            && ctx
+                .connection
+                .as_ref()
+                .is_some_and(|connection| connection.is_local())
+        {
+            return Ok(TaskResult::unreachable(format!(
+                "Host '{}' is configured for {} but only a local connection is available; \
+refusing to run on the control node",
+                ctx.host,
+                connection_kind.as_deref().unwrap_or("a remote transport")
+            )));
+        }
+
         if !local && ctx.connection.is_none() {
             return Ok(TaskResult::unreachable(match &ctx.connection_error {
                 Some(error) => format!("Failed to connect: {}", error),
@@ -3222,17 +3245,19 @@ mod tests {
 
     #[tokio::test]
     async fn diligence_remote_file_guard_applies_even_with_a_connection() {
+        // `archive` still writes through std::fs and has no connection path,
+        // so a remote host must refuse it rather than act on the control node.
         let scratch = tempfile::tempdir().unwrap();
         let sentinel = scratch.path().join("must-not-exist");
-        let task = Task::new("guard", "file")
-            .arg("path", sentinel.to_str().unwrap())
-            .arg("state", "touch");
+        let task = Task::new("guard", "archive")
+            .arg("path", scratch.path().to_str().unwrap())
+            .arg("dest", sentinel.to_str().unwrap());
         let ctx = ExecutionContext::new("remote.invalid")
             .with_connection(Arc::new(crate::connection::local::LocalConnection::new()));
         let runtime = Arc::new(RwLock::new(RuntimeContext::new()));
         let result = task
             .execute_native(
-                "file",
+                "archive",
                 &task.args,
                 &ctx,
                 &runtime,
@@ -3240,7 +3265,13 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(result.status, TaskStatus::Failed);
+        // Either refusal is correct: the module has no remote transport, and
+        // the stand-in connection is local while the host is not.
+        assert!(
+            matches!(result.status, TaskStatus::Failed | TaskStatus::Unreachable),
+            "unexpected status: {:?}",
+            result.status
+        );
         assert!(!sentinel.exists());
     }
 
