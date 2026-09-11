@@ -964,7 +964,8 @@ impl Executor {
         // Combine all tasks: gather_facts (if enabled) + pre_tasks + role tasks + tasks + post_tasks
         // Pre-allocate with known capacity to avoid reallocations
         let gather_facts_count = if play.gather_facts { 1 } else { 0 };
-        let role_tasks_count: usize = play.roles.iter().map(|r| r.get_all_tasks().len()).sum();
+        let role_tasks = crate::executor::playbook::flatten_role_tasks(&play.roles);
+        let role_tasks_count = role_tasks.len();
         let total_tasks = gather_facts_count
             + play.pre_tasks.len()
             + role_tasks_count
@@ -1008,10 +1009,9 @@ impl Executor {
 
         // Ansible execution order: pre_tasks -> role tasks -> tasks -> post_tasks
         all_tasks.extend(play.pre_tasks.iter().cloned());
-        // Add role tasks (from play.roles) after pre_tasks and before regular tasks
-        for role in &play.roles {
-            all_tasks.extend(role.get_all_tasks());
-        }
+        // Add role tasks (from play.roles) after pre_tasks and before regular
+        // tasks. A role reached twice through dependencies contributes once.
+        all_tasks.extend(role_tasks);
         all_tasks.extend(play.tasks.iter().cloned());
         all_tasks.extend(play.post_tasks.iter().cloned());
         let play_become = play.r#become || self.config.r#become;

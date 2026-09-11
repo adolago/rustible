@@ -521,9 +521,25 @@ We track community requests and prioritize based on demand and alignment with pr
 | [Declarative resource graph](architecture/resource-graph-model.md) | - | :construction: Design tracked in architecture docs | Medium |
 | [Compatibility gap plan](architecture/ansible-compat-gap.md) | - | Under consideration | Medium |
 | YAML anchor/alias support | - | :white_check_mark: Complete | Medium |
-| Parallel role execution | - | Investigating | Medium |
+| Parallel role execution | - | :x: Not planned, see note below | Medium |
 | Remote execution for the remaining modules | - | :white_check_mark: Classified | High |
 | Database modules (MySQL/PostgreSQL) | - | :white_check_mark: Complete | High |
+
+#### Note: parallel role execution
+
+Roles are flattened into one ordered task list per play, and `meta/main.yml`
+dependencies now resolve once with a cycle reported instead of a crash. Running
+independent roles concurrently *within a host* is not planned, because the
+executor's per-host state is linear by construction: the runtime context keeps
+a block-variable stack that each task pushes and pops, `register` writes into
+that same context, and handler order, `serial`, `run_once` and `start_at_task`
+all assume one schedule per host. Concurrency there would also change semantics
+for real playbooks, which routinely rely on undeclared ordering between roles.
+
+Parallelism across hosts is already available through the execution strategies
+(`free`, `host_pinned`) and `forks`. Within a host, `provides`/`requires` is the
+supported way to express ordering; declaring it does not make independent tasks
+run concurrently, and that is deliberate.
 
 ### Feature Request Template
 
