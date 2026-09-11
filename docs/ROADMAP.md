@@ -299,7 +299,7 @@ is satisfied on a candidate commit.
 |------|--------|-------|
 | Docs/source-of-truth cleanup | :white_check_mark: Complete | `FEATURE_STATUS.md` is the canonical status; README, this roadmap and the compatibility pages state what was exercised against a live target versus what is only structurally safe, and cite the test that pins each claim. |
 | CLI transport for remote hosts | :white_check_mark: Complete | `rustible run` builds a connection factory from the inventory; before this every remote task reported "requires an established connection". |
-| Remote module coverage | :test_tube: Partial | 27 modules verified against a live SSH target, 20 more connection-only, 19 refused as control-node-only by design. Every registered module is classified and a test keeps it that way. See `FEATURE_STATUS.md`. |
+| Remote module coverage | :test_tube: Partial | 26 modules verified against a live SSH target (27 list entries, since `setup` aliases `gather_facts`), 20 more connection-only, 19 refused as control-node-only by design. Every registered module is classified and a test keeps it that way. See `FEATURE_STATUS.md`. |
 | Privilege escalation | :test_tube: Partial | `become` reaches the target for modules that pass it into their commands; transfer-based modules and control-node escalation are refused. |
 | Default CI baseline | :construction: In progress | The remaining beta gate is a consistently green default CI/test suite. |
 | CLI smoke coverage | :white_check_mark: Complete | `scripts/smoke_tests.sh` and `tests/cli_smoke_tests.rs` exercise `run`, `check`, and `vault`, and the default CI path runs them explicitly. |
@@ -484,7 +484,7 @@ rustible run --agent-mode playbook.yml
 | Feature | Status | Target |
 |---------|--------|--------|
 | Playbook syntax | :white_check_mark: Complete | 100% |
-| Module compatibility | Local: broad; remote: 27 verified, 20 connection-only, 19 control-node-only | 95%+ |
+| Module compatibility | Local: broad; remote: 26 verified, 20 connection-only, 19 control-node-only | 95%+ |
 | Ansible Galaxy | :white_check_mark: Complete | Full support |
 | Callback plugins | :white_check_mark: Complete | Native + Python support |
 | Dynamic inventory | :white_check_mark: Complete | Full plugin system |
