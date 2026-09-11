@@ -365,18 +365,20 @@ fn modules_without_a_verified_remote_transport_are_refused() {
 
     let target = SshTarget::start();
     let inventory = target.write_inventory();
-    // archive still writes through std::fs, so it must be refused rather than
-    // creating an archive on the control node.
+    // known_hosts still writes through std::fs, so it must be refused rather
+    // than editing the control node's file.
     let playbook = target.write_playbook(
         r#"---
 - name: Unverified module
   hosts: all
   gather_facts: false
   tasks:
-    - name: Archive a remote directory
-      archive:
-        path: /etc
-        dest: /tmp/rustible-should-not-exist
+    - name: Manage a host key
+      known_hosts:
+        name: example.invalid
+        path: /tmp/rustible-should-not-exist
+        key_data: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        scan: false
 "#,
     );
 
@@ -1009,5 +1011,68 @@ fn wait_for_checks_the_target_not_the_control_node() {
         target.exec("cat /tmp/rustible-wait-marker").trim(),
         "ready",
         "the marker should have been written inside the container"
+    );
+}
+
+#[test]
+fn archive_and_raw_run_on_the_target() {
+    if !enabled() {
+        eprintln!("skipping: set RUSTIBLE_TEST_SSH_DOCKER=1 to run");
+        return;
+    }
+
+    let target = SshTarget::start();
+    let inventory = target.write_inventory();
+
+    let playbook = target.write_playbook(
+        r#"---
+- name: Archive and raw on the target
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Create something worth archiving
+      file:
+        path: /opt/rustible-archive-src
+        state: directory
+
+    - name: Put a file in it
+      copy:
+        content: "payload\n"
+        dest: /opt/rustible-archive-src/payload.txt
+
+    - name: Archive the directory
+      archive:
+        path: /opt/rustible-archive-src
+        dest: /opt/rustible-archive.tar.gz
+        format: gz
+
+    - name: Report the target's uid with raw
+      raw: id -u
+      register: raw_id
+
+    - name: The command must have run on the target
+      assert:
+        that:
+          - raw_id.stdout is search('0')
+"#,
+    );
+
+    let output = run_playbook(&inventory, &playbook);
+    assert!(
+        output.contains("failed=0") && output.contains("unreachable=0"),
+        "the run should succeed:\n{}",
+        output
+    );
+
+    // The archive exists on the target and holds the file.
+    assert!(
+        target
+            .exec("tar -tzf /opt/rustible-archive.tar.gz")
+            .contains("payload.txt"),
+        "the archive should be created inside the container and hold the source"
+    );
+    assert!(
+        !Path::new("/opt/rustible-archive.tar.gz").exists(),
+        "archiving must not have written to the control node"
     );
 }

@@ -32,11 +32,27 @@ use super::{
     Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParallelizationHint, ParamExt,
 };
+use crate::connection::ExecuteOptions;
 
 /// Module for executing raw commands without shell processing
 pub struct RawModule;
 
 impl RawModule {
+    /// Execution options carrying the context's privilege escalation.
+    fn get_exec_options(context: &ModuleContext) -> ExecuteOptions {
+        let mut options = ExecuteOptions::new();
+        if context.r#become {
+            options = options.with_escalation(context.become_user.clone());
+            if let Some(ref method) = context.become_method {
+                options.escalate_method = Some(method.clone());
+            }
+            if let Some(ref password) = context.become_password {
+                options.escalate_password = Some(password.clone());
+            }
+        }
+        options
+    }
+
     /// Get the command from parameters
     fn get_command(&self, params: &ModuleParams) -> ModuleResult<String> {
         // Try various parameter names for the command
@@ -162,48 +178,31 @@ impl Module for RawModule {
             );
         }
 
-        // We need to use an async runtime since Connection::execute is async
-        // This is typically handled by the executor, but for the Module trait
-        // we need to handle it here
-
-        // Create a runtime to execute the async command
-        let rt = tokio::runtime::Handle::try_current()
-            .map_err(|_| ModuleError::ExecutionFailed("No async runtime available".to_string()))?;
-
+        // The command runs on the target, so the connection is what makes this
+        // module work at all; there is no control-node fallback.
         let connection = context.connection.clone();
         let cmd = command.clone();
         let exec = executable.clone();
+        let options = Self::get_exec_options(context);
 
-        // Block on the async execution, using std::thread::scope to avoid runtime nesting
-        let result = std::thread::scope(|s| {
-            s.spawn(|| {
-                rt.block_on(async move {
-                    let connection = connection.ok_or_else(|| {
-                        ModuleError::ExecutionFailed(
-                            "No connection available for raw command".to_string(),
-                        )
-                    })?;
+        let result = super::block_on_module_future(async move {
+            let connection = connection.ok_or_else(|| {
+                ModuleError::ExecutionFailed("No connection available for raw command".to_string())
+            })?;
 
-                    let actual_command = if let Some(ref exec) = exec {
-                        format!("{} -c '{}'", exec, cmd.replace('\'', "'\\''"))
-                    } else {
-                        cmd.clone()
-                    };
+            let actual_command = if let Some(ref exec) = exec {
+                format!("{} -c '{}'", exec, cmd.replace('\'', "'\\''"))
+            } else {
+                cmd.clone()
+            };
 
-                    connection
-                        .execute(&actual_command, None)
-                        .await
-                        .map_err(|e| {
-                            ModuleError::ExecutionFailed(format!(
-                                "Raw command execution failed: {}",
-                                e
-                            ))
-                        })
+            connection
+                .execute(&actual_command, Some(options))
+                .await
+                .map_err(|e| {
+                    ModuleError::ExecutionFailed(format!("Raw command execution failed: {}", e))
                 })
-            })
-            .join()
-            .unwrap()
-        })?;
+        })??;
 
         // Build output
         let mut output = if result.success {

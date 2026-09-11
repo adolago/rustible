@@ -33,11 +33,14 @@ use super::{
     Diff, Module, ModuleClassification, ModuleContext, ModuleError, ModuleOutput, ModuleParams,
     ModuleResult, ParamExt,
 };
+use crate::connection::{Connection, ExecuteOptions};
+use crate::utils::shell_escape;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Supported archive formats
 #[derive(Debug, Clone, PartialEq)]
@@ -501,6 +504,188 @@ impl ArchiveModule {
             ))),
         }
     }
+
+    /// Execution options carrying the context's privilege escalation.
+    fn get_exec_options(context: &ModuleContext) -> ExecuteOptions {
+        let mut options = ExecuteOptions::new();
+        if context.r#become {
+            options = options.with_escalation(context.become_user.clone());
+            if let Some(ref method) = context.become_method {
+                options.escalate_method = Some(method.clone());
+            }
+            if let Some(ref password) = context.become_password {
+                options.escalate_password = Some(password.clone());
+            }
+        }
+        options
+    }
+
+    /// The command that packs `source` into `dest` on the target.
+    ///
+    /// `tar` is invoked from the source's parent with the basename as the
+    /// member, so the archive holds a relative path rather than the absolute
+    /// one; `zip -r` is run from the same directory for the same reason.
+    fn archive_command(
+        format: &ArchiveFormat,
+        source: &str,
+        dest: &str,
+        excludes: &[String],
+    ) -> String {
+        let path = Path::new(source);
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(|parent| parent.to_string_lossy().into_owned())
+            .unwrap_or_else(|| ".".to_string());
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| ".".to_string());
+
+        match format {
+            ArchiveFormat::Tar | ArchiveFormat::TarGz => {
+                let flag = if matches!(format, ArchiveFormat::TarGz) {
+                    "-czf"
+                } else {
+                    "-cf"
+                };
+                let excludes: String = excludes
+                    .iter()
+                    .map(|pattern| format!(" --exclude={}", shell_escape(pattern)))
+                    .collect();
+                format!(
+                    "tar {} {} -C {}{} {}",
+                    flag,
+                    shell_escape(dest),
+                    shell_escape(&parent),
+                    excludes,
+                    shell_escape(&name)
+                )
+            }
+            ArchiveFormat::Zip => {
+                let excludes: String = excludes
+                    .iter()
+                    .map(|pattern| format!(" -x {}", shell_escape(&format!("{}/*", pattern))))
+                    .collect();
+                format!(
+                    "cd {} && zip -r -q {} {}{}",
+                    shell_escape(&parent),
+                    shell_escape(dest),
+                    shell_escape(&name),
+                    excludes
+                )
+            }
+        }
+    }
+
+    /// Create an archive on a remote target.
+    ///
+    /// Both the source and the destination live on the target; nothing is
+    /// transferred. Without this the module would pack the control node's
+    /// filesystem and call it the host's backup.
+    fn execute_remote(
+        params: &ModuleParams,
+        context: &ModuleContext,
+        connection: &Arc<dyn Connection + Send + Sync>,
+    ) -> ModuleResult<ModuleOutput> {
+        let source = params.get_string_required("path")?;
+        let dest = params.get_string_required("dest")?;
+        let force = params.get_bool_or("force", true);
+        let remove_source = params.get_bool_or("remove", false);
+        let excludes: Vec<String> = params.get_vec_string("exclude_path")?.unwrap_or_default();
+
+        let format = match params.get_string("format")? {
+            Some(format) => ArchiveFormat::from_str(&format)?,
+            None => ArchiveFormat::from_path(Path::new(&dest)).ok_or_else(|| {
+                ModuleError::InvalidParameter(
+                    "Cannot determine archive format from destination path. Specify 'format' \
+parameter."
+                        .to_string(),
+                )
+            })?,
+        };
+
+        let connection = connection.clone();
+        let options = Self::get_exec_options(context);
+        let check_mode = context.check_mode;
+
+        super::block_on_module_future(async move {
+            let run = |command: String| {
+                let connection = connection.clone();
+                let options = options.clone();
+                async move {
+                    connection
+                        .execute(&command, Some(options))
+                        .await
+                        .map_err(|error| {
+                            ModuleError::ExecutionFailed(format!("Connection error: {}", error))
+                        })
+                }
+            };
+
+            if !run(format!("test -e {}", shell_escape(&source)))
+                .await?
+                .success
+            {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "Source path '{}' does not exist",
+                    source
+                )));
+            }
+
+            let dest_exists = run(format!("test -e {}", shell_escape(&dest)))
+                .await?
+                .success;
+            if dest_exists && !force {
+                return Ok(ModuleOutput::ok(format!(
+                    "Archive '{}' already exists and force=false",
+                    dest
+                )));
+            }
+
+            if check_mode {
+                return Ok(ModuleOutput::changed(format!(
+                    "Would create {:?} archive '{}' from '{}'",
+                    format, dest, source
+                )));
+            }
+
+            let result = run(Self::archive_command(&format, &source, &dest, &excludes)).await?;
+            if !result.success {
+                return Err(ModuleError::ExecutionFailed(format!(
+                    "Failed to create '{}': {}",
+                    dest,
+                    result.combined_output().trim()
+                )));
+            }
+
+            // Only remove the source once the archive is on disk.
+            if remove_source {
+                let removed = run(format!("rm -rf {}", shell_escape(&source))).await?;
+                if !removed.success {
+                    return Err(ModuleError::ExecutionFailed(format!(
+                        "Created '{}' but failed to remove '{}': {}",
+                        dest,
+                        source,
+                        removed.stderr.trim()
+                    )));
+                }
+            }
+
+            let size = run(format!(
+                "wc -c < {} 2>/dev/null || echo 0",
+                shell_escape(&dest)
+            ))
+            .await?;
+            let archive_size: u64 = size.stdout.trim().parse().unwrap_or(0);
+
+            Ok(
+                ModuleOutput::changed(format!("Created archive '{}' from '{}'", dest, source))
+                    .with_data("dest", serde_json::json!(dest))
+                    .with_data("archive_size", serde_json::json!(archive_size)),
+            )
+        })?
+    }
 }
 
 /// Statistics about the created archive
@@ -561,6 +746,14 @@ impl Module for ArchiveModule {
         params: &ModuleParams,
         context: &ModuleContext,
     ) -> ModuleResult<ModuleOutput> {
+        // A remote target packs its own filesystem; the control-node path below
+        // would archive this machine's files and label them the host's.
+        if let Some(connection) = &context.connection {
+            if !connection.is_local() {
+                return Self::execute_remote(params, context, connection);
+            }
+        }
+
         let source_path = params.get_string_required("path")?;
         let dest_path = params.get_string_required("dest")?;
         let source = Path::new(&source_path);

@@ -1441,6 +1441,7 @@ impl Task {
     /// connection and checks the effect on the target.
     const REMOTE_VERIFIED_MODULES: &'static [&'static str] = &[
         "apt",
+        "archive",
         "authorized_key",
         "blockinfile",
         "command",
@@ -1454,6 +1455,7 @@ impl Task {
         "lineinfile",
         "package",
         "ping",
+        "raw",
         "replace",
         "script",
         "setup",
@@ -1498,6 +1500,7 @@ impl Task {
     /// `become` request there would silently write as the login user.
     const BECOME_CAPABLE_MODULES: &'static [&'static str] = &[
         "apt",
+        "archive",
         "authorized_key",
         "blockinfile",
         "command",
@@ -1512,6 +1515,7 @@ impl Task {
         "mount",
         "package",
         "pip",
+        "raw",
         "script",
         "selinux",
         "service",
